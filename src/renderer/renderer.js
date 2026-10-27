@@ -27,7 +27,7 @@ const S = {
   range: null, // {aStart, bStart, len}
   playing: false,
   speedIdx: 0,
-  filter: { type: 'all', text: '', offense: '', qtr: '', result: '' },
+  filter: { type: 'all', text: '', offense: '', qtr: '', result: '', airMin: null, airMax: null },
   visible: [], // play indices in list order
   progressFile: null,
   selected: new Set(),
@@ -339,6 +339,11 @@ function passesFilter(p) {
   if (f.offense && p.posteam !== f.offense) return false;
   if (f.qtr && String(p.qtr) !== f.qtr) return false;
   if (f.result && RESULT_FILTERS[f.result] && !RESULT_FILTERS[f.result](p)) return false;
+  if (f.airMin != null || f.airMax != null) {
+    if (p.airYards == null) return false;
+    if (f.airMin != null && p.airYards < f.airMin) return false;
+    if (f.airMax != null && p.airYards > f.airMax) return false;
+  }
   if (f.text) {
     for (const w of f.text.toLowerCase().split(/\s+/).filter(Boolean)) if (!p.searchText.includes(w)) return false;
   }
@@ -392,6 +397,7 @@ function boxHtml(p) {
   return `<div class="box"><span class="who">${esc(b.who)}</span>` +
     (b.yards ? `<span class="yds ${b.tone}">${esc(b.yards)}</span>` : '') +
     (b.result ? `<span class="res ${b.tone}">${esc(b.result)}</span>` : '') +
+    (p.airYards != null ? `<span class="res" title="Pass depth from the line of scrimmage, excluding yards after catch">Air: ${esc(p.airYards)} yd</span>` : '') +
     (b.penalty ? `<span class="pen" title="${esc(b.penalty)}">PEN</span>` : '') + '</div>';
 }
 
@@ -912,10 +918,9 @@ function navPlay(dir, autoplay) {
   if (S.plays.length && S.pairs.length || S.plays.length && !S.film) {
     let pos = S.visible.indexOf(S.curPlay);
     if (pos < 0) {
-      // Current play filtered out: find nearest visible in direction.
-      pos = dir > 0 ? S.visible.findIndex((i) => i > S.curPlay) - 1 : S.visible.findIndex((i) => i >= S.curPlay);
-      if (pos < -1) pos = dir > 0 ? -1 : S.visible.length;
-      if (dir < 0 && pos < 0) pos = S.visible.length;
+      const next = S.visible.findIndex((i) => i > S.curPlay);
+      pos = next < 0 ? S.visible.length : next;
+      if (dir > 0) pos--;
     }
     for (let k = pos + dir; k >= 0 && k < S.visible.length; k += dir) {
       const i = S.visible[k];
@@ -1274,6 +1279,14 @@ function wire() {
   $('sel-offense').addEventListener('change', (e) => { S.filter.offense = e.target.value; e.target.blur(); renderList(); });
   $('sel-qtr').addEventListener('change', (e) => { S.filter.qtr = e.target.value; e.target.blur(); renderList(); });
   $('sel-result').addEventListener('change', (e) => { S.filter.result = e.target.value; e.target.blur(); renderList(); });
+  for (const [id, field] of [['air-yards-min', 'airMin'], ['air-yards-max', 'airMax']]) {
+    $(id).addEventListener('input', (e) => {
+      if (!e.target.reportValidity()) return;
+      S.filter[field] = e.target.value === '' ? null : e.target.valueAsNumber;
+      $('air-filter-active').hidden = S.filter.airMin == null && S.filter.airMax == null;
+      renderList();
+    });
+  }
 
   const scrub = $('scrub');
   scrub.addEventListener('input', () => {

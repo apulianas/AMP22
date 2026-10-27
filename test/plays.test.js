@@ -11,6 +11,19 @@ function row(o) {
 }
 const play = (o) => P.normalizePlay(row(o));
 
+test('air yards retain positive, negative, and zero values without filling missing values', () => {
+  assert.ok(P.PBP_COLUMNS.includes('air_yards'));
+  for (const value of ['39', '-3', '0']) {
+    assert.equal(play({ air_yards: value }).airYards, Number(value));
+  }
+  for (const value of ['', 'NA', null, undefined, 'invalid', 'Infinity']) {
+    assert.equal(play({ air_yards: value }).airYards, null);
+  }
+  for (const flags of [{ complete_pass: '1' }, { incomplete_pass: '1' }, { interception: '1' }]) {
+    assert.equal(play({ play_type: 'pass', air_yards: '20', ...flags }).airYards, 20);
+  }
+});
+
 test('primary headshot player: runner, caught pass, sack, interception or defensive fumble recovery', () => {
   const primary = (fields) => P.primaryPlayer(play(fields));
   assert.deepEqual(primary({ rusher_player_name: 'D.Henry', rusher_player_id: '00-0032764' }), { id: '00-0032764', name: 'D.Henry', role: 'rusher' });

@@ -38,12 +38,18 @@ button:disabled { opacity: .4; cursor: default; }
 main { display: flex; height: calc(100% - 46px); }
 #sidebar { width: 380px; min-width: 300px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--panel); }
 .filters { padding: 8px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); }
-.filters .row select { flex: 1; }
+.filters .row select { flex: 1; min-width: 0; }
+.advanced-filters summary { cursor: pointer; }
+.advanced-filters[open] summary { margin-bottom: 8px; }
+.air-yard-bounds label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.air-yard-bounds input { width: 100%; min-width: 0; }
 #search { width: 100%; }
 .chips { display: flex; gap: 4px; }
 .chips button { flex: 1; padding: 3px 0; }
 .chips button.on { background: var(--accent); border-color: var(--accent); }
-.legend { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px; }
+.legend { display: flex; gap: 6px; color: var(--muted); font-size: 11px; }
+.legend > span { flex: none; white-space: nowrap; }
+.legend .sw { width: 8px; height: 8px; margin-right: 3px; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .sw.run { background: var(--run); } .sw.pass { background: var(--pass); } .sw.special { background: var(--special); } .sw.penalty { background: var(--penalty); } .sw.key { background: var(--key); } .sw.neg { background: var(--neg); }
 

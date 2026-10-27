@@ -4,8 +4,40 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: version
+        shell: bash
+        env:
+          CREATE_RELEASE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+        run: |
+          if [ "$CREATE_RELEASE" = "true" ]; then
+            version=$(node scripts/release-version.js)
+          else
+            version=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
     strategy:
       matrix:
         os: [macos-latest, windows-latest]
@@ -16,6 +48,10 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npm version "$APP_VERSION" --no-git-tag-version --ignore-scripts --allow-same-version
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.version.outputs.version }}
       - run: npm test
       - run: npx electron-builder --publish never
         env:
@@ -23,6 +59,37 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: a22-film-tool-${{ matrix.os }}
+          if-no-files-found: error
           path: |
             dist/*.dmg
             dist/*.exe
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: a22-film-tool-*
+          merge-multiple: true
+          path: release
+      - name: Publish installers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tag="v$APP_VERSION"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber
+          else
+            gh release create "$tag" release/* \
+              --target "$GITHUB_SHA" \
+              --title "A22 Film Tool $tag" \
+              --generate-notes \
+              --latest
+          fi
