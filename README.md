@@ -14,6 +14,7 @@ A desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays
   - Each play shows a box-score line first, for example `T.Huntley → Z.Flowers +48 TD`, with the full play description below it in smaller text.
   - The list can be searched and filtered by play type (run, pass, special teams), offense, quarter, and result. Result filters: key, negative, sacks, turnovers, scores, big plays, first downs, penalties. The quarter list includes OT only when the game went to overtime.
 - **Frame-accurate controls.** Step 1 frame or N frames at a time (N defaults to 10 and is configurable). You can also move to the next or previous play, restart the play, and change to slow-motion speeds. At the end of a play the app can stop, auto-advance, or loop.
+- **Clip export.** Click a play and then **Share** to export its sideline angle, end zone angle, or both. Shift-click another play to select the visible plays in between, or turn on **Multi-select** to choose individual plays. Checkboxes are hidden during normal single-play browsing. Selected plays are joined into one MP4 in game order, even when selected out of order. Both angles are stacked in a 1080×1920 (9:16) portrait video with the play's clock, down/distance, box-score result, badges, and description below, without camera-angle labels over the footage. Single-angle exports are 1920×1080 with a results lower third for the first three seconds of each play. Exports use normal speed and saved sync offsets, with audio from the selected angle (sideline for both). The original film is never modified.
 
 ## Getting started
 
@@ -34,6 +35,13 @@ npm 11 blocks install scripts unless they are approved. The `allowScripts` entry
    The app remembers the file chosen for each game.
 3. The first time you open a film, the app analyzes it. This takes about 3–5 minutes for a full game, and you can see the progress. Results are cached by file path, size, and modified time.
 4. Click a play, or use ↓/↑, to watch it.
+5. To save a clip, click **Share**, choose an angle, and click **Export…** to pick an MP4 destination. The suggested filename contains only the quarter, clock, main player, and yards (for example `Q2-08m34s-Z.Flowers-48yds.mp4`); multiple plays use only the game-clock range (`Q2-08m34s-to-Q3-04m12s.mp4`). Single-angle results use a compact lower-left card sized to its text rather than a full-width banner. Shift-click to select a range, or use **Multi-select** and checkboxes for individual plays. Selected plays remain selected when filtering; the selection count includes hidden plays. A normal row click outside explicit multi-select mode, or navigating to another play, returns to a single selection and hides the checkboxes. Turn **Multi-select** off to return to a single selection. Plays without linked film must be deselected or linked before export. Export progress and cancellation are available in the Share dialog. After export, **Show in Finder** (macOS) or **Show in File Explorer** (Windows) opens the containing folder with the exported file selected.
+
+Enable **Clean export (no overlays)** in the Share dialog to omit all added text, graphics, and play details for either single- or multi-play exports. Both-angle exports remain 9:16, with the stacked footage centered on a black background instead of reserving a bottom panel for play information. Overlays remain enabled by default.
+
+Overlays include a headshot matched by the play-by-play's GSIS player ID: the runner, the receiver on a completed pass, or the defender credited with an interception, lost-fumble recovery, or sack. Transparent padding is trimmed so the player fills the headshot area, with the original alpha channel preserved and no photo background or outline. Turnovers take priority over sacks and offensive players; shared sacks use the first credited defender. Nullified plays and incomplete passes do not show an offensive headshot. Headshots and the nflverse player directory are cached for offline use. If a photo cannot be found or downloaded, the export keeps its text overlay and reports a headshot notice instead of guessing a player. Clean exports do not request headshots.
+
+Export overlays describe rushing and receiving yardage as `12 yard rush` or `48 yard reception`, without a plus sign; losses retain a minus sign (for example `-3 yard rush`). Touchdown rushes and receptions still include `TD`. The compact box-score wording in the play list is unchanged.
 
 ### Keyboard shortcuts
 
@@ -113,11 +121,13 @@ npm run analyze -- "/path/to/TeamA22.mp4" --out analysis-out/team --frames 6
 
 - Schedule: [nflverse `games.csv`](https://github.com/nflverse/nfldata/raw/master/data/games.csv)
 - Play-by-play: `https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{YEAR}.csv.gz`
+- Player headshots: [nflverse player directory](https://github.com/nflverse/nflverse-data/releases/download/players/players.csv), using its NFL-hosted headshot URLs.
 
 ## Development
 
 ```sh
 npm test           # unit tests (node:test)
+A22_TEST_EXPORT=1 npm test # also encode and inspect synthetic clips (macOS / Linux)
 npm run dist:mac   # macOS .dmg   (run on macOS)
 npm run dist:win   # Windows NSIS installer (run on Windows)
 ```

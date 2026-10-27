@@ -8,8 +8,7 @@ const $ = (id) => document.getElementById(id);
 // Cut times are frame timestamps rounded to ~0.01 s, and the frame grid's phase changes from
 // clip to clip (A22 files are stitched together), so positions are kept on a grid relative to
 // each clip's start, offset slightly so a seek always lands inside the intended frame.
-const START_PAD = 0.008;
-const END_TRIM_FRAMES = 3; // detected cuts can be 1-2 frames late; avoid flashing the next shot
+const { START_PAD, END_TRIM_FRAMES } = A22.clipExport;
 
 const S = {
   settings: null,
@@ -31,6 +30,12 @@ const S = {
   filter: { type: 'all', text: '', offense: '', qtr: '', result: '' },
   visible: [], // play indices in list order
   progressFile: null,
+  selected: new Set(),
+  selectionAnchor: -1,
+  multiSelect: false,
+  exporting: false,
+  exportCancelRequested: false,
+  exportDraft: null,
 };
 
 /* ---------------- utilities ---------------- */
@@ -164,6 +169,10 @@ async function loadGame(force) {
   S.plays = [];
   S.mapping = [];
   S.curPlay = -1;
+  S.selected.clear();
+  S.selectionAnchor = -1;
+  S.multiSelect = false;
+  updateSelection();
   S.gameData = gameId ? await window.api.getGame(gameId) : {};
   const opp = S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
   fillSelect($('sel-offense'), [
@@ -364,7 +373,7 @@ function renderList() {
     if (String(p.playId) in anchors) badges.push('<span class="badge fix" title="Manually corrected">✎</span>');
     if (noFilm) badges.push('<span class="badge nofilm">no film</span>');
     html.push(
-      `<li data-i="${i}" class="${cls}"><div class="r1"><span class="clock">${esc(P.clockLabel(p))}</span>` +
+      `<li data-i="${i}" class="${cls}"><div class="r1"><input class="play-check" type="checkbox" hidden aria-label="Select ${esc(P.clockLabel(p))} for export"${S.selected.has(i) ? ' checked' : ''} /><span class="clock">${esc(P.clockLabel(p))}</span>` +
         `<span class="dd">${esc(P.downDistance(p))}</span><span class="team">${esc(p.yrdln)}</span>` +
         `<span class="badges">${badges.join('')}</span></div>${boxHtml(p)}<div class="desc">${esc(p.desc)}</div></li>`
     );
@@ -375,6 +384,7 @@ function renderList() {
     ? `${S.visible.length} of ${S.plays.length} plays shown · ${S.pairs.length ? `${filmed} linked to ${S.pairs.length} film clips` : 'film not analyzed'}`
     : '';
   scrollToSelected();
+  updateSelection();
 }
 
 function boxHtml(p) {
@@ -505,10 +515,16 @@ function loadPair(pairIdx, { autoplay = false, keepRel = false } = {}) {
   if (autoplay || (keepRel && wasPlaying)) play();
 }
 
-function selectPlay(i, { autoplay = true } = {}) {
+function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
   if (!S.plays[i]) return;
+  if (!keepSelection) {
+    S.selected = new Set([i]);
+    S.selectionAnchor = i;
+    S.multiSelect = false;
+  }
   S.curPlay = i;
   markSelected();
+  updateSelection();
   const pi = S.mapping[i];
   if (pi != null && S.pairs[pi]) {
     loadPair(pi, { autoplay });
@@ -516,6 +532,253 @@ function selectPlay(i, { autoplay = true } = {}) {
     pause();
     renderInfo();
     if (S.film && S.pairs.length) showMessage('No film linked to this play.<br><span class="muted">Browse clips with Shift+↑/↓ and press Shift+L to link one.</span>');
+  }
+}
+
+/* ---------------- clip export ---------------- */
+
+function updateSelection() {
+  const multi = S.multiSelect || S.selected.size > 1;
+  $('selection-count').textContent = `${S.selected.size} selected`;
+  $('selection-count').hidden = !multi;
+  $('btn-clear-selection').hidden = !multi;
+  $('btn-clear-selection').disabled = !S.selected.size;
+  $('btn-multi-select').setAttribute('aria-pressed', String(multi));
+  $('btn-share').disabled = S.exporting || !S.selected.size || !S.film || !S.pairs.length;
+  $('play-list').querySelectorAll('li[data-i]').forEach((el) => {
+    const selected = S.selected.has(Number(el.dataset.i));
+    el.classList.toggle('export-selected', selected && multi);
+    el.querySelector('.play-check').hidden = !multi;
+    el.querySelector('.play-check').checked = selected;
+  });
+}
+
+function drawWrapped(ctx, text, x, y, width, lineHeight, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && ctx.measureText(next).width > width) { lines.push(line); line = word; }
+    else line = next;
+  }
+  if (line) lines.push(line);
+  lines.slice(0, maxLines).forEach((value, i) => {
+    if (i === maxLines - 1 && lines.length > maxLines) value += '…';
+    while (ctx.measureText(value).width > width && value.length > 1) value = value.slice(0, -2) + '…';
+    ctx.fillText(value, x, y + i * lineHeight);
+  });
+}
+
+function trimHeadshot(image) {
+  const source = document.createElement('canvas');
+  source.width = image.naturalWidth;
+  source.height = image.naturalHeight;
+  const ctx = source.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const { data } = ctx.getImageData(0, 0, source.width, source.height);
+  let left = source.width, top = source.height, right = -1, bottom = -1;
+  for (let y = 0; y < source.height; y++) {
+    for (let x = 0; x < source.width; x++) {
+      if (!data[(y * source.width + x) * 4 + 3]) continue;
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  if (right < left) throw new Error('Headshot is fully transparent');
+  const cropped = document.createElement('canvas');
+  cropped.width = right - left + 1;
+  cropped.height = bottom - top + 1;
+  cropped.getContext('2d').drawImage(source, left, top, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height);
+  return cropped;
+}
+
+function drawHeadshot(ctx, image, x, y, size) {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const scale = Math.min(size / sourceWidth, size / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  ctx.drawImage(image, x + (size - width) / 2, y + size - height, width, height);
+}
+
+function playCard(play, mode, matchup, headshot = null) {
+  const { width, height } = A22.clipExport.dimensions(mode);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const both = mode === 'both';
+  const color = { run: '#2ea043', pass: '#388bfd', special: '#a371f7' }[play.cat] || '#6e7681';
+  const context = [P.clockLabel(play), P.downDistance(play), play.yrdln, play.posteam && `${play.posteam} ball`].filter(Boolean).join('  ·  ');
+  const box = play.box;
+  const summary = P.overlaySummary(play);
+  const notes = [box.penalty, ...play.key, ...play.neg].filter(Boolean).join('  ·  ');
+  ctx.textBaseline = 'top';
+  if (!both) {
+    const padding = 24;
+    const photoSpace = headshot ? 148 : 0;
+    const maxWidth = Math.floor(width * 0.72) - padding * 2 - photoSpace;
+    const rows = [
+      { text: context, font: '24px sans-serif', color: '#c9d1d9', height: 28 },
+      { text: summary, font: 'bold 32px sans-serif', color: '#e6edf3', height: 38 },
+      { text: notes, font: '22px sans-serif', color: '#f2cc60', height: 26 },
+    ].filter((row) => row.text);
+    const contentWidth = Math.ceil(Math.min(maxWidth, Math.max(0, ...rows.map((row) => {
+      ctx.font = row.font;
+      return ctx.measureText(row.text).width;
+    }))));
+    const cardWidth = contentWidth + padding * 2 + photoSpace;
+    const contentHeight = Math.max(headshot ? 128 : 0, rows.reduce((sum, row) => sum + row.height, 0) + Math.max(0, rows.length - 1) * 10);
+    const cardHeight = padding * 2 + contentHeight;
+    const left = 48;
+    const top = height - 48 - cardHeight;
+    ctx.fillStyle = 'rgba(13,17,23,0.88)';
+    ctx.fillRect(left, top, cardWidth, cardHeight);
+    ctx.fillStyle = color;
+    ctx.fillRect(left, top, 4, cardHeight);
+    if (headshot) drawHeadshot(ctx, headshot, left + padding, top + padding + (contentHeight - 128) / 2, 128);
+    let y = top + padding;
+    for (const row of rows) {
+      ctx.font = row.font;
+      ctx.fillStyle = row.color;
+      drawWrapped(ctx, row.text, left + padding + photoSpace, y, contentWidth, row.height, 1);
+      y += row.height + 10;
+    }
+    return canvas.toDataURL('image/png');
+  }
+  const top = 1216;
+  const left = 48;
+  const available = width - left * 2;
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, top, width, height - top);
+  ctx.fillStyle = color;
+  ctx.fillRect(0, top, width, 8);
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '28px sans-serif';
+  drawWrapped(ctx, matchup, left, top + 32, available, 34, 1);
+  ctx.fillStyle = '#e6edf3';
+  ctx.font = '32px sans-serif';
+  drawWrapped(ctx, context, left, top + 80, available, 40, 1);
+  ctx.font = 'bold 42px sans-serif';
+  const photoSpace = headshot ? 232 : 0;
+  if (headshot) drawHeadshot(ctx, headshot, left, top + 130, 208);
+  drawWrapped(ctx, summary, left + photoSpace, top + 138, available - photoSpace, 52, 2);
+  ctx.font = '30px sans-serif';
+  ctx.fillStyle = '#f2cc60';
+  drawWrapped(ctx, notes, left + photoSpace, top + 252, available - photoSpace, 38, 2);
+  ctx.fillStyle = '#c9d1d9';
+  ctx.font = '32px sans-serif';
+  drawWrapped(ctx, play.desc, left, top + 350, available, 42, 7);
+  return canvas.toDataURL('image/png');
+}
+
+async function prepareHeadshots(clips) {
+  const players = clips.map(({ play }) => P.primaryPlayer(play)).filter(Boolean);
+  const byId = new Map(players.filter((player) => player.id).map((player) => [player.id, player]));
+  const images = new Map();
+  const warnings = new Set(players.filter((player) => !player.id).map((player) => `${player.name}: no player ID available`));
+  if (!byId.size) return { images, warnings };
+  const results = await window.api.getHeadshots([...byId.keys()]);
+  for (const result of results) {
+    if (S.exportCancelRequested) break;
+    const player = byId.get(result.id);
+    if (result.warning) warnings.add(`${player.name || player.id}: ${result.warning}`);
+    if (!result.dataUrl) continue;
+    try {
+      const image = new Image();
+      image.src = result.dataUrl;
+      await image.decode();
+      images.set(result.id, trimHeadshot(image));
+    } catch (e) {
+      warnings.add(`${player.name || player.id}: could not decode headshot (${e.message})`);
+    }
+  }
+  return { images, warnings };
+}
+
+function openShare() {
+  pause();
+  toggleOverlay('share', true);
+  $('share-status').textContent = '';
+  $('share-status').classList.remove('error');
+  $('share-progress').hidden = true;
+  $('share-reveal').hidden = true;
+  S.exportDraft = null;
+  const indices = A22.clipExport.selectedIndices(S.selected);
+  $('share-summary').textContent = `${indices.length} play${indices.length === 1 ? '' : 's'} in game order, joined into one video.`;
+  try {
+    if (!S.film || !indices.length) throw new Error('Select at least one play with film.');
+    const clips = indices.map((i) => {
+      const pairIdx = S.mapping[i];
+      if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
+      return { ...A22.clipExport.clipRange(S.pairs[pairIdx], S.fps, offsetFrames(pairIdx)), play: S.plays[i] };
+    });
+    const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'A22 Film Tool';
+    S.exportDraft = { file: S.film.path, clips, matchup };
+  } catch (e) {
+    $('share-status').textContent = e.message;
+    $('share-status').classList.add('error');
+  }
+  $('share-export').disabled = !S.exportDraft;
+  $('share-angle').focus();
+}
+
+async function exportSelection() {
+  if (!S.exportDraft || S.exporting) return;
+  S.exporting = true;
+  S.exportCancelRequested = false;
+  updateSelection();
+  $('share-angle').disabled = true;
+  $('share-clean').disabled = true;
+  $('share-export').disabled = true;
+  $('share-close').hidden = true;
+  $('share-cancel').hidden = false;
+  $('share-cancel').disabled = false;
+  $('share-progress').hidden = false;
+  $('share-progress').value = 0;
+  $('share-status').classList.remove('error');
+  $('share-status').textContent = 'Choose where to save the MP4…';
+  $('share-reveal').hidden = true;
+  try {
+    const mode = $('share-angle').value;
+    const clean = $('share-clean').checked;
+    const { file, clips, matchup } = S.exportDraft;
+    let images = new Map();
+    let warnings = new Set();
+    if (!clean) {
+      $('share-status').textContent = 'Preparing player headshots…';
+      ({ images, warnings } = await prepareHeadshots(clips));
+    }
+    if (S.exportCancelRequested) {
+      $('share-status').textContent = 'Export cancelled.';
+      return;
+    }
+    $('share-status').textContent = 'Choose where to save the MP4…';
+    const result = await window.api.exportClips({
+      file, mode, clean,
+      suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play)),
+      clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id)) }),
+    });
+    $('share-status').textContent = result.cancelled ? 'Export cancelled.' : `Saved to ${result.path}`;
+    if (!result.cancelled) {
+      $('share-progress').value = 1;
+      $('share-reveal').hidden = false;
+      if (warnings.size) $('share-status').textContent += ` · Headshot notices: ${[...warnings].join('; ')}`;
+    }
+  } catch (e) {
+    $('share-status').textContent = S.exportCancelRequested ? 'Export cancelled.' : `Export failed: ${e.message}`;
+    $('share-status').classList.toggle('error', !S.exportCancelRequested);
+  } finally {
+    S.exporting = false;
+    $('share-angle').disabled = false;
+    $('share-clean').disabled = false;
+    $('share-export').disabled = false;
+    $('share-close').hidden = false;
+    $('share-cancel').hidden = true;
+    updateSelection();
   }
 }
 
@@ -751,6 +1014,7 @@ function runAction(id) {
 /* ---------------- overlays ---------------- */
 
 function toggleOverlay(id, show) {
+  if (S.exporting) return;
   const el = $(id);
   const want = show == null ? el.hidden : show;
   document.querySelectorAll('.overlay').forEach((o) => { o.hidden = true; });
@@ -860,11 +1124,13 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
-    if (!$('help').hidden || !$('settings').hidden) { toggleOverlay('help', false); draft = null; return; }
+    if (S.exporting) return;
+    if (!$('help').hidden || !$('settings').hidden || !$('share').hidden) { toggleOverlay('help', false); draft = null; return; }
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     return;
   }
-  if (!$('settings').hidden) return;
+  if (!$('settings').hidden || !$('share').hidden) return;
+  if (e.target.classList.contains('play-check') && e.key === ' ') return;
   if (isTextTarget(e.target)) {
     if (e.target.id === 'search' && (e.key === 'Enter' || e.key === 'ArrowDown')) { e.preventDefault(); e.target.blur(); if (S.visible.length) selectPlay(S.visible[0]); }
     return;
@@ -901,6 +1167,54 @@ function wire() {
   $('btn-refresh').addEventListener('click', async () => { await loadSchedule(true); await loadGame(true); });
   $('btn-settings').addEventListener('click', () => { draft = null; toggleOverlay('settings', true); });
   $('btn-help').addEventListener('click', () => toggleOverlay('help'));
+  $('btn-share').addEventListener('click', openShare);
+  $('share-clean').addEventListener('change', () => {
+    $('share-overlay-description').hidden = $('share-clean').checked;
+    $('share-clean-description').hidden = !$('share-clean').checked;
+  });
+  $('share-export').addEventListener('click', exportSelection);
+  $('share-close').addEventListener('click', () => toggleOverlay('share', false));
+  $('share-reveal').addEventListener('click', async () => {
+    try {
+      await window.api.revealExport();
+    } catch (e) {
+      $('share-status').textContent = `Could not show the exported file: ${e.message}`;
+      $('share-status').classList.add('error');
+    }
+  });
+  $('share-cancel').addEventListener('click', async () => {
+    S.exportCancelRequested = true;
+    $('share-cancel').disabled = true;
+    try {
+      await window.api.cancelExport();
+      if (S.exporting) $('share-status').textContent = 'Cancelling export…';
+    } catch (e) {
+      $('share-status').textContent = `Could not cancel export: ${e.message}`;
+      $('share-status').classList.add('error');
+      $('share-cancel').disabled = false;
+    }
+  });
+  $('btn-clear-selection').addEventListener('click', () => {
+    S.selected.clear();
+    S.selectionAnchor = -1;
+    S.multiSelect = false;
+    updateSelection();
+  });
+  $('btn-multi-select').addEventListener('click', () => {
+    if (S.multiSelect || S.selected.size > 1) {
+      const i = S.selected.has(S.curPlay) ? S.curPlay : A22.clipExport.selectedIndices(S.selected)[0];
+      S.selected = new Set(i == null ? [] : [i]);
+      S.selectionAnchor = i ?? -1;
+      S.multiSelect = false;
+    } else {
+      S.multiSelect = true;
+    }
+    updateSelection();
+  });
+  window.api.onExportProgress((p) => {
+    $('share-progress').value = p.fraction;
+    $('share-status').textContent = `${p.message} · ${Math.round(p.fraction * 100)}%`;
+  });
   $('help').addEventListener('click', (e) => { if (e.target.id === 'help') toggleOverlay('help', false); });
 
   $('btn-reset-fixes').addEventListener('click', async () => {
@@ -924,9 +1238,28 @@ function wire() {
     btn.addEventListener('click', (e) => { e.currentTarget.blur(); runAction(btn.dataset.action); })
   );
 
+  $('play-list').addEventListener('mousedown', (e) => {
+    if (e.shiftKey && e.target.closest('li[data-i]')) e.preventDefault();
+  });
   $('play-list').addEventListener('click', (e) => {
     const li = e.target.closest('li[data-i]');
-    if (li) selectPlay(Number(li.dataset.i));
+    if (!li) return;
+    const i = Number(li.dataset.i);
+    if (e.shiftKey) {
+      if (!S.visible.includes(S.selectionAnchor)) S.selectionAnchor = i;
+      S.selected = new Set(A22.clipExport.selectionRange(S.visible, S.selectionAnchor, i));
+      selectPlay(i, { autoplay: false, keepSelection: true });
+    } else if (e.target.classList.contains('play-check') || S.multiSelect) {
+      const checked = e.target.classList.contains('play-check') ? e.target.checked : !S.selected.has(i);
+      S.selectionAnchor = i;
+      if (checked) {
+        S.selected.add(i);
+        selectPlay(i, { autoplay: false, keepSelection: true });
+      } else {
+        S.selected.delete(i);
+        updateSelection();
+      }
+    } else selectPlay(i);
   });
 
   $('search').addEventListener('input', (e) => { S.filter.text = e.target.value; renderList(); });
@@ -1015,6 +1348,7 @@ function wire() {
 (async function boot() {
   wire();
   const init = await window.api.init();
+  $('share-reveal').textContent = init.platform === 'darwin' ? 'Show in Finder' : init.platform === 'win32' ? 'Show in File Explorer' : 'Show in folder';
   applySettings(init.settings);
   if (await loadSchedule(false)) await loadGame(false);
 })();
