@@ -11,6 +11,23 @@ function row(o) {
 }
 const play = (o) => P.normalizePlay(row(o));
 
+test('primary headshot player: runner, caught pass, sack, interception or defensive fumble recovery', () => {
+  const primary = (fields) => P.primaryPlayer(play(fields));
+  assert.deepEqual(primary({ rusher_player_name: 'D.Henry', rusher_player_id: '00-0032764' }), { id: '00-0032764', name: 'D.Henry', role: 'rusher' });
+  assert.deepEqual(primary({ play_type: 'pass', complete_pass: '1', receiver_player_name: 'Z.Flowers', receiver_player_id: '00-0039064' }), { id: '00-0039064', name: 'Z.Flowers', role: 'receiver' });
+  assert.equal(primary({ play_type: 'pass', receiver_player_name: 'Z.Flowers', incomplete_pass: '1' }), null);
+  const sack = { play_type: 'pass', sack: '1', sack_player_name: 'B.Mafe', sack_player_id: '00-0038133', rusher_player_name: 'L.Jackson' };
+  assert.equal(primary(sack).role, 'sacker');
+  assert.equal(primary({ play_type: 'pass', sack: '1', half_sack_1_player_name: 'B.Mafe', half_sack_1_player_id: '00-0038133' }).id, '00-0038133');
+  assert.equal(primary({ ...sack, interception: '1', interception_player_name: 'M.Humphrey', interception_player_id: '00-0033281' }).role, 'interceptor');
+  assert.equal(primary({ fumble_lost: '1', fumble_recovery_1_player_name: 'M.Humphrey', fumble_recovery_1_player_id: '00-0033281', fumble_recovery_1_team: 'CIN' }).role, 'recoverer');
+  assert.equal(primary({ fumble_lost: '1', fumble_recovery_1_player_name: 'D.Henry', fumble_recovery_1_team: 'BAL',
+    fumble_recovery_2_player_name: 'M.Humphrey', fumble_recovery_2_player_id: '00-0033281', fumble_recovery_2_team: 'CIN' }).role, 'recoverer2');
+  assert.equal(primary({ ...sack, play_type: 'no_play' }), null);
+  assert.equal(primary({ interception: '1', rusher_player_name: 'D.Henry' }), null);
+  assert.equal(primary({ rusher_player_name: 'D.Henry' }).id, '');
+});
+
 test('categories', () => {
   assert.equal(P.category(play({ play_type: 'run' })), 'run');
   assert.equal(P.category(play({ play_type: 'qb_kneel' })), 'run');
@@ -87,6 +104,23 @@ test('box score summaries', () => {
   assert.equal(b({ play_type: 'kickoff', kicker_player_name: 'T.Loop', kick_distance: '65', touchback: '1' }).result, 'Touchback');
   assert.equal(b({ play_type: 'no_play', penalty: '1', penalty_team: 'BAL', penalty_type: 'False Start', penalty_yards: '5', penalty_player_name: 'R.Stanley' }).who,
     'BAL False Start, 5 yds (R.Stanley)');
+});
+
+test('overlay summaries describe rushes and receptions without positive signs and preserve TDs', () => {
+  const summary = (fields) => P.overlaySummary(play(fields));
+  assert.equal(summary({ rusher_player_name: 'D.Henry', yards_gained: '12' }), 'D.Henry  12 yard rush');
+  assert.equal(summary({ rusher_player_name: 'D.Henry', yards_gained: '-3' }), 'D.Henry  -3 yard rush');
+  assert.equal(summary({ rusher_player_name: 'D.Henry', yards_gained: '0' }), 'D.Henry  0 yard rush');
+  assert.equal(summary({ rusher_player_name: 'D.Henry', yards_gained: '4', touchdown: '1' }), 'D.Henry  4 yard rush  TD');
+  const reception = { play_type: 'pass', passer_player_name: 'L.Jackson', receiver_player_name: 'Z.Flowers', complete_pass: '1' };
+  assert.equal(summary({ ...reception, yards_gained: '48', touchdown: '1' }), 'L.Jackson → Z.Flowers  48 yard reception  TD');
+  assert.equal(summary({ ...reception, yards_gained: '-2' }), 'L.Jackson → Z.Flowers  -2 yard reception');
+  assert.equal(summary({ ...reception, yards_gained: '0' }), 'L.Jackson → Z.Flowers  0 yard reception');
+  assert.equal(summary({ ...reception, yards_gained: '' }), 'L.Jackson → Z.Flowers  reception');
+  assert.match(summary({ play_type: 'pass', sack: '1', passer_player_name: 'L.Jackson', yards_gained: '-6' }), /sacked  −6$/);
+  assert.equal(summary({ ...reception, complete_pass: '0', incomplete_pass: '1' }), 'L.Jackson → Z.Flowers  INC');
+  assert.match(summary({ ...reception, complete_pass: '0', interception: '1' }), /INT$/);
+  assert.doesNotMatch(summary({ play_type: 'no_play', rush: '1', penalty: '1' }), /yard rush/);
 });
 
 test('drive fields prefer fixed_drive', () => {

@@ -6,6 +6,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const media = require('./media');
+const clipExport = require('./export');
+const { safeFilename } = require('../shared/export');
 const { DataService } = require('./data');
 const { JsonStore } = require('./store');
 const settingsMod = require('../shared/settings');
@@ -19,6 +21,9 @@ let settingsStore;
 let gamesStore;
 let analysisDir;
 const running = new Map(); // film path -> {controller, promise}
+let exporting = null;
+let lastExportPath = null;
+let headshotPreparation = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -93,6 +98,33 @@ function registerIpc() {
     const def = data.games ? schedule.defaultSelection(data.games.list) : null;
     return data.loadGamePlays(season, gameId, { force, current: !def || season >= def.season });
   });
+  ipcMain.handle('players:headshots', async (_e, ids) => {
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string' && /^[a-zA-Z0-9-]{1,32}$/.test(id))) {
+      throw new Error('Invalid player IDs');
+    }
+    if (headshotPreparation) throw new Error('Player headshots are already loading.');
+    const controller = new AbortController();
+    headshotPreparation = controller;
+    const unique = [...new Set(ids)];
+    try {
+      if (!unique.length) return [];
+      const directory = await data.loadPlayers({ signal: controller.signal });
+      return await media.mapLimit(unique, 4, async (id) => {
+        controller.signal.throwIfAborted();
+        try {
+          return await data.loadHeadshot(id, directory, { signal: controller.signal });
+        } catch (e) {
+          if (controller.signal.aborted) throw e;
+          return { id, dataUrl: null, warning: e.message };
+        }
+      });
+    } catch (e) {
+      if (controller.signal.aborted) throw e;
+      return unique.map((id) => ({ id, dataUrl: null, warning: e.message }));
+    } finally {
+      headshotPreparation = null;
+    }
+  });
 
   ipcMain.handle('game:get', (_e, gameId) => gamesStore.get()[gameId] || {});
   ipcMain.handle('game:save', (_e, gameId, patch) => {
@@ -162,6 +194,42 @@ function registerIpc() {
     if (r) r.controller.abort();
     return !!r;
   });
+
+  ipcMain.handle('clips:export', async (e, request) => {
+    if (exporting) throw new Error('A clip export is already in progress.');
+    clipExport.validateRequest(request);
+    const controller = new AbortController();
+    exporting = controller;
+    try {
+      const result = await dialog.showSaveDialog(win, {
+        title: 'Export selected plays',
+        defaultPath: path.join(app.getPath('videos'), safeFilename(request.suggestedName || `a22-${request.clips.length}-plays-${request.mode}`)),
+        filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+      });
+      if (result.canceled || controller.signal.aborted) return { cancelled: true };
+      const destination = /\.mp4$/i.test(result.filePath) ? result.filePath : result.filePath + '.mp4';
+      const exported = await clipExport.exportClips(request, destination, {
+        signal: controller.signal,
+        onProgress: (progress) => { if (!e.sender.isDestroyed()) e.sender.send('clips:progress', progress); },
+      });
+      lastExportPath = exported.path;
+      return exported;
+    } catch (error) {
+      if (controller.signal.aborted) return { cancelled: true };
+      throw error;
+    } finally {
+      exporting = null;
+    }
+  });
+  ipcMain.handle('clips:cancel', () => {
+    if (exporting) exporting.abort();
+    if (headshotPreparation) headshotPreparation.abort();
+  });
+  ipcMain.handle('clips:reveal', () => {
+    if (!lastExportPath) throw new Error('Export a clip before opening its folder.');
+    fs.statSync(lastExportPath);
+    shell.showItemInFolder(lastExportPath);
+  });
 }
 
 // Developer hooks: isolated profile + scripted automation (used for smoke tests / screenshots).
@@ -169,7 +237,7 @@ if (process.env.A22_USER_DATA) app.setPath('userData', path.resolve(process.env.
 
 app.whenReady().then(() => {
   const ud = app.getPath('userData');
-  data = new DataService(path.join(ud, 'cache'), (url) => net.fetch(url));
+  data = new DataService(path.join(ud, 'cache'), (url, options) => net.fetch(url, options));
   settingsStore = new JsonStore(path.join(ud, 'settings.json'), {});
   gamesStore = new JsonStore(path.join(ud, 'games.json'), {});
   analysisDir = path.join(ud, 'analysis');
@@ -187,5 +255,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   for (const r of running.values()) r.controller.abort();
+  if (exporting) exporting.abort();
+  if (headshotPreparation) headshotPreparation.abort();
   if (process.platform !== 'darwin') app.quit();
 });

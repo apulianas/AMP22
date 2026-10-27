@@ -19,6 +19,9 @@
     'td_player_name', 'complete_pass', 'incomplete_pass', 'touchback', 'punt_blocked', 'first_down', 'qb_kneel',
     'kick_distance', 'return_yards', 'penalty_team', 'penalty_player_name', 'penalty_yards', 'penalty_type',
     'fixed_drive', 'fixed_drive_result', 'drive_play_count', 'drive_time_of_possession', 'ydsnet',
+    'rusher_player_id', 'receiver_player_id', 'sack_player_id', 'half_sack_1_player_id',
+    'interception_player_id', 'fumble_recovery_1_player_id', 'fumble_recovery_2_player_id',
+    'fumble_recovery_2_player_name', 'fumble_recovery_2_team',
   ];
 
   const FLAG_COLUMNS = [
@@ -81,9 +84,19 @@
         returner: str(row.kickoff_returner_player_name) || str(row.punt_returner_player_name),
         fumbler: str(row.fumbled_1_player_name),
         recoverer: str(row.fumble_recovery_1_player_name),
+        recoverer2: str(row.fumble_recovery_2_player_name),
         penalty: str(row.penalty_player_name),
       },
+      playerIds: {
+        rusher: str(row.rusher_player_id),
+        receiver: str(row.receiver_player_id),
+        sacker: str(row.sack_player_id) || str(row.half_sack_1_player_id),
+        interceptor: str(row.interception_player_id),
+        recoverer: str(row.fumble_recovery_1_player_id),
+        recoverer2: str(row.fumble_recovery_2_player_id),
+      },
       fumbleRecoveryTeam: str(row.fumble_recovery_1_team),
+      fumbleRecovery2Team: str(row.fumble_recovery_2_team),
       kickDistance: num(row.kick_distance),
       returnYards: num(row.return_yards),
       penaltyTeam: str(row.penalty_team),
@@ -241,6 +254,18 @@
     return r;
   }
 
+  function overlaySummary(p) {
+    const box = boxScore(p);
+    const f = p.flags;
+    let yards = box.yards;
+    if (p.playType !== 'no_play' && !SPECIAL.includes(p.playType) && !f.two_point_attempt &&
+        !f.sack && !f.interception && p.playType !== 'qb_kneel' && !f.qb_kneel && p.playType !== 'qb_spike') {
+      const action = f.complete_pass ? 'reception' : p.playType === 'run' || f.rush || p.names?.rusher ? 'rush' : '';
+      if (action) yards = `${p.yards == null ? '' : `${p.yards} yard `}${action}`;
+    }
+    return [box.who, yards, box.result].filter(Boolean).join('  ');
+  }
+
   /** Short drive result label, e.g. "Touchdown", "Punt". */
   function driveLabel(p) {
     return p.driveResult || '';
@@ -263,6 +288,28 @@
     return `${p.qtr === 5 ? 'OT' : 'Q' + p.qtr} ${p.time}`;
   }
 
+  function primaryPlayer(p) {
+    const names = p.names || {};
+    const ids = p.playerIds || {};
+    const flags = p.flags || {};
+    if (p.playType === 'no_play') return null;
+    let role;
+    if (flags.interception) role = 'interceptor';
+    else if (flags.fumble_lost) {
+      if (p.fumbleRecoveryTeam && p.fumbleRecoveryTeam !== p.posteam) role = 'recoverer';
+      else if (p.fumbleRecovery2Team && p.fumbleRecovery2Team !== p.posteam) role = 'recoverer2';
+      else if (!p.fumbleRecoveryTeam) role = 'recoverer';
+    }
+    // Do not attribute a turnover to an offensive player when its defender is unknown.
+    if (flags.interception || flags.fumble_lost) {
+      return role && (ids[role] || names[role]) ? { id: ids[role] || '', name: names[role] || '', role } : null;
+    }
+    if (flags.sack) role = 'sacker';
+    else if (names.rusher || ids.rusher) role = 'rusher';
+    else if (flags.complete_pass) role = 'receiver';
+    return role && (ids[role] || names[role]) ? { id: ids[role] || '', name: names[role] || '', role } : null;
+  }
+
   /** Normalized, filtered list of real plays for a game, in order. */
   function gamePlays(rows) {
     return rows.map((r) => (r.flags ? r : normalizePlay(r))).filter(isRealPlay);
@@ -270,6 +317,6 @@
 
   return {
     PBP_COLUMNS, DEFAULT_KEY_PLAYS, normalizePlay, isRealPlay, category, filmWeight, keyReasons, negativeReasons,
-    boxScore, driveLabel, downDistance, clockLabel, gamePlays,
+    boxScore, overlaySummary, driveLabel, downDistance, clockLabel, primaryPlayer, gamePlays,
   };
 });

@@ -22,6 +22,7 @@
     </div>
     <span class="spacer"></span>
     <span id="status" class="muted"></span>
+    <button id="btn-share" disabled title="Export selected plays as a video clip">Share</button>
     <button id="btn-refresh" title="Re-download schedule and play-by-play">⟳</button>
     <button id="btn-settings" title="Settings">⚙</button>
     <button id="btn-help" data-shortcut="help" title="Keyboard shortcuts">?</button>
@@ -60,6 +61,12 @@
           <span><i class="sw key"></i>Key play</span>
           <span><i class="sw neg"></i>Negative play</span>
         </div>
+      </div>
+      <div id="selection-bar" class="row">
+        <span id="selection-count" class="muted" hidden>0 selected</span>
+        <span class="spacer"></span>
+        <button id="btn-clear-selection" hidden disabled>Clear selection</button>
+        <button id="btn-multi-select" aria-pressed="false" title="Toggle multi-select, or Shift-click a play to select a range">Multi-select</button>
       </div>
       <ol id="play-list"></ol>
       <div id="list-footer" class="muted"></div>
@@ -118,6 +125,32 @@
     </section>
   </main>
 
+  <div id="share" class="overlay" hidden>
+    <div class="panel" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <h2 id="share-title">Export clips</h2>
+      <p id="share-summary"></p>
+      <label for="share-angle">Camera angle</label>
+      <select id="share-angle">
+        <option value="sideline">Sideline</option>
+        <option value="endzone">End zone</option>
+        <option value="both">Both angles · portrait 9:16</option>
+      </select>
+      <p><label><input id="share-clean" type="checkbox" /> Clean export (no overlays)</label></p>
+      <p id="share-overlay-description" class="muted">Both angles are stacked with play details below. Single-angle clips<br>show play results in the lower third for the first 3 seconds of each play.<br>Overlays include the primary player's headshot when available.</p>
+      <p id="share-clean-description" class="muted" hidden>Clean exports omit all added text and graphics. Both-angle clean<br>exports center the stacked footage in the portrait frame.</p>
+      <p class="muted">MP4 video at normal speed, with audio from the selected angle<br>(sideline audio when exporting both).</p>
+      <p id="share-status" role="status" aria-live="polite"></p>
+      <progress id="share-progress" max="1" value="0" hidden></progress>
+      <div class="actions">
+        <button id="share-reveal" hidden>Show in folder</button>
+        <span class="spacer"></span>
+        <button id="share-close">Close</button>
+        <button id="share-cancel" hidden>Cancel export</button>
+        <button id="share-export" class="primary">Export…</button>
+      </div>
+    </div>
+  </div>
+
   <div id="help" class="overlay" hidden>
     <div class="panel">
       <h2>Keyboard shortcuts</h2>
@@ -168,6 +201,7 @@
   <script src="../shared/plays.js"></script>
   <script src="../shared/align.js"></script>
   <script src="../shared/teams.js"></script>
+  <script src="../shared/export.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 {
   "name": "a22-film-tool",
   "productName": "A22 Film Tool",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Watch and analyze NFL All-22 film: synced sideline + end zone angles, play-by-play navigation, frame stepping.",
   "main": "src/main/main.js",
   "private": true,
