@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; media-src file: 'self'; img-src 'self' file: data:" />
+  <title>A22 Film Tool</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">A22</div>
+    <select id="sel-season" title="Season"></select>
+    <select id="sel-team" title="Team"></select>
+    <select id="sel-week" title="Game"></select>
+    <button id="btn-film" title="Choose the A22 film file for this game">Choose film…</button>
+    <span id="film-name" class="muted"></span>
+    <button id="btn-analyze" hidden>Analyze film</button>
+    <div id="progress" hidden>
+      <div class="bar"><div class="fill"></div></div>
+      <span class="label"></span>
+      <button id="btn-cancel" title="Cancel analysis">✕</button>
+    </div>
+    <span class="spacer"></span>
+    <span id="status" class="muted"></span>
+    <button id="btn-refresh" title="Re-download schedule and play-by-play">⟳</button>
+    <button id="btn-settings" title="Settings">⚙</button>
+    <button id="btn-help" title="Keyboard shortcuts (?)">?</button>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div class="filters">
+        <input id="search" type="search" placeholder="Search plays  ( / )" />
+        <div id="type-chips" class="chips">
+          <button data-type="all" class="on">All</button>
+          <button data-type="run">Run</button>
+          <button data-type="pass">Pass</button>
+          <button data-type="key">Key</button>
+          <button data-type="special">ST</button>
+        </div>
+        <div class="row">
+          <select id="sel-offense"><option value="">Both offenses</option></select>
+          <select id="sel-qtr">
+            <option value="">All quarters</option>
+            <option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option><option value="5">OT</option>
+          </select>
+        </div>
+        <div class="legend">
+          <span><i class="sw run"></i>Run</span>
+          <span><i class="sw pass"></i>Pass</span>
+          <span><i class="sw special"></i>Special teams</span>
+          <span><i class="sw penalty"></i>No play</span>
+          <span><i class="sw key"></i>Key play</span>
+        </div>
+      </div>
+      <ol id="play-list"></ol>
+      <div id="list-footer" class="muted"></div>
+    </aside>
+
+    <section id="viewer">
+      <div id="videos">
+        <figure class="angle">
+          <video id="vidA" preload="auto" playsinline></video>
+          <figcaption>Sideline</figcaption>
+        </figure>
+        <figure class="angle" id="figB">
+          <video id="vidB" preload="auto" muted playsinline></video>
+          <figcaption>End zone <span id="offset-label"></span></figcaption>
+        </figure>
+        <div id="message"></div>
+      </div>
+
+      <div id="timeline">
+        <span id="time-label" class="mono">0:00.00</span>
+        <input id="scrub" type="range" min="0" max="1000" value="0" step="1" />
+        <span id="frame-label" class="mono"></span>
+      </div>
+
+      <div id="transport">
+        <button data-action="prevPlay" title="Previous play">⏮</button>
+        <button data-action="jumpBack" title="Back N frames">⏪</button>
+        <button data-action="frameBack" title="Back 1 frame">◀︎|</button>
+        <button data-action="playPause" id="btn-play" title="Play / pause" class="big">▶</button>
+        <button data-action="frameForward" title="Forward 1 frame">|▶︎</button>
+        <button data-action="jumpForward" title="Forward N frames">⏩</button>
+        <button data-action="nextPlay" title="Next play">⏭</button>
+        <button data-action="restartPlay" title="Restart play">↺</button>
+        <button data-action="cycleSpeed" id="btn-speed" title="Playback speed">1×</button>
+        <button data-action="toggleEnd" id="btn-end" title="At end of play">Stop at end</button>
+        <span class="spacer"></span>
+        <span class="muted">Sync</span>
+        <button data-action="nudgeBack" title="End zone 1 frame earlier">−1f</button>
+        <button data-action="nudgeReset" title="Reset sync offset">0</button>
+        <button data-action="nudgeForward" title="End zone 1 frame later">+1f</button>
+      </div>
+
+      <div id="play-info">
+        <div id="play-head"></div>
+        <div id="play-desc"></div>
+        <div id="fix-bar">
+          <span id="clip-label" class="muted"></span>
+          <button data-action="prevClip" title="Previous clip pair in the film (Shift+↑)">◀ clip</button>
+          <button data-action="nextClip" title="Next clip pair in the film (Shift+↓)">clip ▶</button>
+          <button data-action="linkClip" title="This clip shows the selected play (Shift+L). Following plays re-align automatically.">Link clip ↔ play</button>
+          <button data-action="markNoFilm" title="Selected play has no film (Shift+X)">No film</button>
+          <button data-action="clearFix" title="Remove correction from selected play (Shift+C)">Clear fix</button>
+          <button id="btn-reset-fixes" title="Remove all corrections for this game">Reset all fixes</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="help" class="overlay" hidden>
+    <div class="panel">
+      <h2>Keyboard shortcuts</h2>
+      <table id="help-table"></table>
+      <p class="muted">Change shortcuts and the N-frame jump size in Settings (⚙). Press <b>?</b> or Esc to close.</p>
+    </div>
+  </div>
+
+  <div id="settings" class="overlay" hidden>
+    <div class="panel wide">
+      <h2>Settings</h2>
+      <div class="grid">
+        <label>Jump size (frames) <input id="set-jump" type="number" min="1" max="600" /></label>
+        <label>At end of play
+          <select id="set-end"><option value="stop">Stop</option><option value="advance">Auto-advance to next play</option><option value="loop">Loop</option></select>
+        </label>
+        <label>Slow-motion speeds <input id="set-speeds" type="text" placeholder="1, 0.5, 0.25" /></label>
+        <label>Default team <select id="set-team"></select></label>
+        <label class="span2">Film folder (used to auto-find A22 files)
+          <span class="row"><input id="set-root" type="text" readonly /><button id="set-root-btn">Choose…</button><button id="set-root-clear">Clear</button></span>
+        </label>
+        <label><input id="set-auto" type="checkbox" /> Analyze film automatically when opened</label>
+        <label><input id="set-skipnofilm" type="checkbox" /> Next/previous play skips plays without film</label>
+        <label>Cut sensitivity (scene score threshold) <input id="set-cut" type="number" min="0.03" max="0.5" step="0.01" /></label>
+      </div>
+      <h3>Key plays</h3>
+      <div class="grid">
+        <label><input id="kp-turnovers" type="checkbox" /> Turnovers (INT, fumble lost, on downs)</label>
+        <label><input id="kp-scores" type="checkbox" /> Scores (TD, FG, safety, 2-pt)</label>
+        <label>Big run ≥ yards (0 = off) <input id="kp-run" type="number" min="0" max="99" /></label>
+        <label>Big pass ≥ yards (0 = off) <input id="kp-pass" type="number" min="0" max="99" /></label>
+        <label><input id="kp-sacks" type="checkbox" /> Sacks</label>
+        <label><input id="kp-fourth" type="checkbox" /> 4th-down conversions</label>
+      </div>
+      <h3>Shortcuts <span class="muted small">click a key to replace it, × to remove, + to add</span></h3>
+      <table id="shortcut-table"></table>
+      <div class="actions">
+        <button id="set-reset">Restore defaults</button>
+        <span class="spacer"></span>
+        <button id="set-cancel">Cancel</button>
+        <button id="set-save" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/settings.js"></script>
+  <script src="../shared/plays.js"></script>
+  <script src="../shared/align.js"></script>
+  <script src="../shared/teams.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
