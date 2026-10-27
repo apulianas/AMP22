@@ -8,7 +8,7 @@
   /** nflverse play-by-play columns the app keeps. */
   const PBP_COLUMNS = [
     'play_id', 'game_id', 'season', 'week', 'season_type', 'home_team', 'away_team', 'posteam', 'defteam',
-    'qtr', 'time', 'down', 'ydstogo', 'yrdln', 'desc', 'play_type', 'yards_gained', 'drive',
+    'qtr', 'time', 'down', 'ydstogo', 'yrdln', 'desc', 'play_type', 'yards_gained', 'air_yards', 'drive',
     'touchdown', 'pass_touchdown', 'rush_touchdown', 'return_touchdown', 'td_team', 'interception', 'fumble_lost',
     'sack', 'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'timeout', 'two_point_attempt',
     'fourth_down_converted', 'fourth_down_failed', 'field_goal_result', 'extra_point_result', 'two_point_conv_result',
@@ -65,6 +65,7 @@
       desc: str(row.desc),
       playType: str(row.play_type),
       yards: num(row.yards_gained),
+      airYards: num(row.air_yards),
       drive: num(row.drive),
       tdTeam: str(row.td_team),
       fieldGoalResult: str(row.field_goal_result),

@@ -53,13 +53,24 @@
             <option value="penalty">Penalties</option>
           </select>
         </div>
+        <details class="advanced-filters">
+          <summary>More filters <span id="air-filter-active" class="muted" hidden>· Air yards active</span></summary>
+          <div class="row air-yard-bounds">
+            <label>Air yards &ge;
+              <input id="air-yards-min" type="number" step="any" placeholder="No minimum" title="Minimum air yards, inclusive; negative values allowed" />
+            </label>
+            <label>Air yards &le;
+              <input id="air-yards-max" type="number" step="any" placeholder="No maximum" title="Maximum air yards, inclusive; negative values allowed" />
+            </label>
+          </div>
+        </details>
         <div class="legend">
           <span><i class="sw run"></i>Run</span>
           <span><i class="sw pass"></i>Pass</span>
-          <span><i class="sw special"></i>Special teams</span>
+          <span title="Special teams"><i class="sw special"></i>ST</span>
           <span><i class="sw penalty"></i>No play</span>
-          <span><i class="sw key"></i>Key play</span>
-          <span><i class="sw neg"></i>Negative play</span>
+          <span title="Key play"><i class="sw key"></i>Key</span>
+          <span title="Negative play"><i class="sw neg"></i>Negative</span>
         </div>
       </div>
       <div id="selection-bar" class="row">

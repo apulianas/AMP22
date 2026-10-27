@@ -13,6 +13,8 @@ A desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays
   - Plays are grouped by drive. Each drive has a header showing the team, number of plays, yards, time of possession, and result.
   - Each play shows a box-score line first, for example `T.Huntley → Z.Flowers +48 TD`, with the full play description below it in smaller text.
   - The list can be searched and filtered by play type (run, pass, special teams), offense, quarter, and result. Result filters: key, negative, sacks, turnovers, scores, big plays, first downs, penalties. The quarter list includes OT only when the game went to overtime.
+  - Expand **More filters** below the offense/quarter/result controls to enter an inclusive minimum (`Air yards ≥`) and/or maximum (`Air yards ≤`). Leave either field blank for no limit; zero and negative bounds are supported. These filters combine with the other controls, and plays stay in game order with drive headers. Collapsing the section keeps its filters applied and shows an active indicator; clear both fields to remove the air-yards filter. Plays without air yards (such as sacks and runs) are excluded only while a bound is set, not treated as zero.
+  - Air yards measure pass depth from the line of scrimmage, excluding yards after catch; throws behind the line have negative values. Available values appear beside the play result, including on incomplete and intercepted passes. Historical coverage varies. Previously downloaded play-by-play is reprocessed automatically to include air yards.
 - **Frame-accurate controls.** Step 1 frame or N frames at a time (N defaults to 10 and is configurable). You can also move to the next or previous play, restart the play, and change to slow-motion speeds. At the end of a play the app can stop, auto-advance, or loop.
 - **Clip export.** Click a play and then **Share** to export its sideline angle, end zone angle, or both. Shift-click another play to select the visible plays in between, or turn on **Multi-select** to choose individual plays. Checkboxes are hidden during normal single-play browsing. Selected plays are joined into one MP4 in game order, even when selected out of order. Both angles are stacked in a 1080×1920 (9:16) portrait video with the play's clock, down/distance, box-score result, badges, and description below, without camera-angle labels over the footage. Single-angle exports are 1920×1080 with a results lower third for the first three seconds of each play. Exports use normal speed and saved sync offsets, with audio from the selected angle (sideline for both). The original film is never modified.
 
@@ -133,6 +135,12 @@ npm run dist:win   # Windows NSIS installer (run on Windows)
 ```
 
 `ffmpeg-static` and `ffprobe-static` download binaries only for the platform you install on. Build the Windows installer on Windows, or with the included GitHub Actions workflow (`.github/workflows/build.yml`).
+
+### Automatic builds and releases
+
+Every merge (or push) to `master` builds the macOS DMG and Windows installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/a22-film-tool/releases) once both builds pass. The release version automatically increments the highest stable Git tag or `package.json` baseline by one patch (initially `0.2.1`). Both installers use that version; no version-bump commit is needed. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
+
+Pull requests build and test both platforms and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
 
 Development hooks for automation:
 - `A22_USER_DATA=/dir` uses a different userData folder.
