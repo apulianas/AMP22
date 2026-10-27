@@ -61,3 +61,37 @@ test('down & distance and clock labels', () => {
   assert.equal(P.clockLabel(play({ qtr: '5', time: '8:12' })), 'OT 8:12');
   assert.equal(P.clockLabel(play({ qtr: '2', time: ':36' })), 'Q2 :36');
 });
+
+test('negative plays: sacks and losses of 3+ yards', () => {
+  assert.deepEqual(P.negativeReasons(play({ play_type: 'pass', sack: '1', yards_gained: '-1' })), ['SACK']);
+  assert.deepEqual(P.negativeReasons(play({ play_type: 'run', yards_gained: '-3' })), ['LOSS']);
+  assert.deepEqual(P.negativeReasons(play({ play_type: 'run', yards_gained: '-2' })), []);
+  assert.deepEqual(P.negativeReasons(play({ play_type: 'run', yards_gained: '-5' }), { lossYards: 6 }), []);
+  assert.deepEqual(P.negativeReasons(play({ play_type: 'qb_kneel', yards_gained: '-3' })), []);
+  assert.deepEqual(P.negativeReasons(play({ play_type: 'no_play', sack: '1', yards_gained: '-8' })), []);
+});
+
+test('box score summaries', () => {
+  const b = (o) => P.boxScore(play(o));
+  assert.deepEqual(b({ play_type: 'pass', passer_player_name: 'T.Huntley', receiver_player_name: 'Z.Flowers', complete_pass: '1', yards_gained: '48', touchdown: '1' }),
+    { who: 'T.Huntley → Z.Flowers', yards: '+48', result: 'TD', tone: 'good' });
+  assert.equal(b({ play_type: 'pass', passer_player_name: 'J.Burrow', receiver_player_name: 'J.Chase', incomplete_pass: '1', yards_gained: '0' }).result, 'INC');
+  assert.equal(b({ play_type: 'pass', passer_player_name: 'J.Burrow', interception: '1', interception_player_name: 'M.Humphrey' }).result, 'INT M.Humphrey');
+  const sack = b({ play_type: 'pass', sack: '1', passer_player_name: 'T.Huntley', sack_player_name: 'B.Mafe', yards_gained: '-6' });
+  assert.equal(sack.who, 'T.Huntley sacked by B.Mafe');
+  assert.equal(sack.yards, '\u22126');
+  assert.equal(sack.tone, 'bad');
+  assert.deepEqual(b({ play_type: 'run', rusher_player_name: 'D.Henry', yards_gained: '4', first_down: '1' }),
+    { who: 'D.Henry', yards: '+4', result: '1st down', tone: 'good' });
+  assert.equal(b({ play_type: 'field_goal', kicker_player_name: 'T.Loop', kick_distance: '34', field_goal_result: 'made' }).who, 'T.Loop 34-yd FG');
+  assert.equal(b({ play_type: 'kickoff', kicker_player_name: 'T.Loop', kick_distance: '65', touchback: '1' }).result, 'Touchback');
+  assert.equal(b({ play_type: 'no_play', penalty: '1', penalty_team: 'BAL', penalty_type: 'False Start', penalty_yards: '5', penalty_player_name: 'R.Stanley' }).who,
+    'BAL False Start, 5 yds (R.Stanley)');
+});
+
+test('drive fields prefer fixed_drive', () => {
+  const p = play({ drive: '3', fixed_drive: '4', fixed_drive_result: 'Punt', drive_play_count: '6' });
+  assert.equal(p.driveNum, 4);
+  assert.equal(p.driveResult, 'Punt');
+  assert.equal(p.drivePlays, 6);
+});

@@ -7,8 +7,12 @@ A desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays
 - **Two synced angles.** The A22 file is one continuous video in which each play appears twice: the high sideline angle first, then the end zone angle. The app finds the cuts, pairs the two clips for each play, and plays both together on one clock. The layout switches between side-by-side and stacked depending on the window shape.
 - **Play-by-play navigation.** Pick the season, team, and week from the drop-downs. The default is the current season, the Ravens, and the most recently completed week. Plays come from [nflverse](https://github.com/nflverse/nflverse-data) and are color-coded:
   - **Run** is green, **pass** is blue, **special teams** is purple, and **no play** (penalty) is gray.
-  - **Key plays** get a gold edge and badges: INT, FUM, TOD (turnover on downs), TD, FG, SAF, 2PT, BIG (run ≥ 10 or pass ≥ 20 yards), 4TH (4th-down conversion), and optionally SACK. You can change these definitions in Settings.
-  - The play list can be searched and filtered by run, pass, key, special teams, offense, and quarter.
+  - **Key plays** get a gold edge and badges: INT, FUM, TOD (turnover on downs), TD, FG, SAF, 2PT, BIG (run ≥ 10 or pass ≥ 20 yards), 4TH (4th-down conversion), and optionally SACK.
+  - **Negative plays** get a red edge and a SACK or LOSS badge. These are sacks, plus runs and completions that lose 3 or more yards.
+  - You can change the key-play and negative-play definitions in Settings.
+  - Plays are grouped by drive. Each drive has a header showing the team, number of plays, yards, time of possession, and result.
+  - Each play shows a box-score line first, for example `T.Huntley → Z.Flowers +48 TD`, with the full play description below it in smaller text.
+  - The list can be searched and filtered by play type (run, pass, special teams), offense, quarter, and result. Result filters: key, negative, sacks, turnovers, scores, big plays, first downs, penalties. The quarter list includes OT only when the game went to overtime.
 - **Frame-accurate controls.** Step 1 frame or N frames at a time (N defaults to 10 and is configurable). You can also move to the next or previous play, restart the play, and change to slow-motion speeds. At the end of a play the app can stop, auto-advance, or loop.
 
 ## Getting started
@@ -33,7 +37,7 @@ npm 11 blocks install scripts unless they are approved. The `allowScripts` entry
 
 ### Keyboard shortcuts
 
-Press **?** in the app to see the shortcuts. You can remap them in Settings.
+Press **?** in the app to see the shortcuts. Hovering over a button also shows its shortcut. You can remap shortcuts in Settings.
 
 | Action | Keys |
 | --- | --- |

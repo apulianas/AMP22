@@ -62,7 +62,7 @@ class DataService {
     const jsonFile = path.join(this.dir, `pbp_${season}.json`);
     try {
       const j = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
-      if (j.mtimeMs === srcMtime) {
+      if (j.mtimeMs === srcMtime && j.columns === plays.PBP_COLUMNS.join(',')) {
         this.pbp.set(season, j);
         return { data: j, warning: r.warning };
       }
@@ -72,7 +72,7 @@ class DataService {
     const { rows } = parseCSV(text, { columns: plays.PBP_COLUMNS });
     const games = {};
     for (const row of rows) (games[row.game_id] = games[row.game_id] || []).push(row);
-    const data = { mtimeMs: srcMtime, games };
+    const data = { mtimeMs: srcMtime, columns: plays.PBP_COLUMNS.join(','), games };
     fs.writeFileSync(jsonFile, JSON.stringify(data));
     this.pbp.set(season, data);
     return { data, warning: r.warning };

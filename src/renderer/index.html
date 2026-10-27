@@ -24,25 +24,32 @@
     <span id="status" class="muted"></span>
     <button id="btn-refresh" title="Re-download schedule and play-by-play">⟳</button>
     <button id="btn-settings" title="Settings">⚙</button>
-    <button id="btn-help" title="Keyboard shortcuts (?)">?</button>
+    <button id="btn-help" data-shortcut="help" title="Keyboard shortcuts">?</button>
   </header>
 
   <main>
     <aside id="sidebar">
       <div class="filters">
-        <input id="search" type="search" placeholder="Search plays  ( / )" />
+        <input id="search" type="search" placeholder="Search plays  ( / )" data-shortcut="search" title="Search plays" />
         <div id="type-chips" class="chips">
           <button data-type="all" class="on">All</button>
           <button data-type="run">Run</button>
           <button data-type="pass">Pass</button>
-          <button data-type="key">Key</button>
           <button data-type="special">ST</button>
         </div>
         <div class="row">
           <select id="sel-offense"><option value="">Both offenses</option></select>
-          <select id="sel-qtr">
-            <option value="">All quarters</option>
-            <option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option><option value="5">OT</option>
+          <select id="sel-qtr"><option value="">All quarters</option></select>
+          <select id="sel-result" title="Filter by result">
+            <option value="">All results</option>
+            <option value="key">Key plays</option>
+            <option value="negative">Negative plays</option>
+            <option value="sack">Sacks</option>
+            <option value="turnover">Turnovers</option>
+            <option value="score">Scores</option>
+            <option value="big">Big plays</option>
+            <option value="firstdown">First downs</option>
+            <option value="penalty">Penalties</option>
           </select>
         </div>
         <div class="legend">
@@ -51,6 +58,7 @@
           <span><i class="sw special"></i>Special teams</span>
           <span><i class="sw penalty"></i>No play</span>
           <span><i class="sw key"></i>Key play</span>
+          <span><i class="sw neg"></i>Negative play</span>
         </div>
       </div>
       <ol id="play-list"></ol>
@@ -78,15 +86,15 @@
 
       <div id="transport">
         <button data-action="prevPlay" title="Previous play">⏮</button>
-        <button data-action="jumpBack" title="Back N frames">⏪</button>
+        <button data-action="jumpBack" title="Back {N} frames">⏪</button>
         <button data-action="frameBack" title="Back 1 frame">◀︎|</button>
         <button data-action="playPause" id="btn-play" title="Play / pause" class="big">▶</button>
         <button data-action="frameForward" title="Forward 1 frame">|▶︎</button>
-        <button data-action="jumpForward" title="Forward N frames">⏩</button>
+        <button data-action="jumpForward" title="Forward {N} frames">⏩</button>
         <button data-action="nextPlay" title="Next play">⏭</button>
         <button data-action="restartPlay" title="Restart play">↺</button>
         <button data-action="cycleSpeed" id="btn-speed" title="Playback speed">1×</button>
-        <button data-action="toggleEnd" id="btn-end" title="At end of play">Stop at end</button>
+        <button data-action="toggleEnd" id="btn-end" title="At end of play: stop / auto-advance / loop">Stop at end</button>
         <span class="spacer"></span>
         <span class="muted">Sync</span>
         <button data-action="nudgeBack" title="End zone 1 frame earlier">−1f</button>
@@ -99,11 +107,11 @@
         <div id="play-desc"></div>
         <div id="fix-bar">
           <span id="clip-label" class="muted"></span>
-          <button data-action="prevClip" title="Previous clip pair in the film (Shift+↑)">◀ clip</button>
-          <button data-action="nextClip" title="Next clip pair in the film (Shift+↓)">clip ▶</button>
-          <button data-action="linkClip" title="This clip shows the selected play (Shift+L). Following plays re-align automatically.">Link clip ↔ play</button>
-          <button data-action="markNoFilm" title="Selected play has no film (Shift+X)">No film</button>
-          <button data-action="clearFix" title="Remove correction from selected play (Shift+C)">Clear fix</button>
+          <button data-action="prevClip" title="Previous clip pair in the film">◀ clip</button>
+          <button data-action="nextClip" title="Next clip pair in the film">clip ▶</button>
+          <button data-action="linkClip" title="Link: this clip shows the selected play. Following plays re-align automatically.">Link clip ↔ play</button>
+          <button data-action="markNoFilm" title="Selected play has no film">No film</button>
+          <button data-action="clearFix" title="Remove correction from selected play">Clear fix</button>
           <button id="btn-reset-fixes" title="Remove all corrections for this game">Reset all fixes</button>
         </div>
       </div>
@@ -141,8 +149,9 @@
         <label><input id="kp-scores" type="checkbox" /> Scores (TD, FG, safety, 2-pt)</label>
         <label>Big run ≥ yards (0 = off) <input id="kp-run" type="number" min="0" max="99" /></label>
         <label>Big pass ≥ yards (0 = off) <input id="kp-pass" type="number" min="0" max="99" /></label>
-        <label><input id="kp-sacks" type="checkbox" /> Sacks</label>
+        <label><input id="kp-sacks" type="checkbox" /> Sacks are also key plays</label>
         <label><input id="kp-fourth" type="checkbox" /> 4th-down conversions</label>
+        <label>Negative play: loss of ≥ yards (0 = sacks only) <input id="kp-loss" type="number" min="0" max="30" /></label>
       </div>
       <h3>Shortcuts <span class="muted small">click a key to replace it, × to remove, + to add</span></h3>
       <table id="shortcut-table"></table>

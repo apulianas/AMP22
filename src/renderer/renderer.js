@@ -28,7 +28,7 @@ const S = {
   range: null, // {aStart, bStart, len}
   playing: false,
   speedIdx: 0,
-  filter: { type: 'all', text: '', offense: '', qtr: '' },
+  filter: { type: 'all', text: '', offense: '', qtr: '', result: '' },
   visible: [], // play indices in list order
   progressFile: null,
 };
@@ -75,6 +75,7 @@ function applySettings(s) {
   updateSpeedLabel();
   updateEndLabel();
   renderHelp();
+  updateTooltips();
   if (S.plays.length) {
     derivePlays();
     renderList();
@@ -171,6 +172,7 @@ async function loadGame(force) {
     ...(opp ? [{ value: opp, label: `${opp} offense` }] : []),
   ], '');
   S.filter.offense = '';
+  renderQuarters();
 
   if (S.game) {
     setStatus('Loading play-by-play…');
@@ -184,6 +186,7 @@ async function loadGame(force) {
     }
   }
   derivePlays();
+  renderQuarters();
 
   let filmPath = S.gameData.filmPath;
   if (!filmPath && S.game) {
@@ -215,7 +218,9 @@ function derivePlays() {
     p.cat = P.category(p);
     p.filmWeight = P.filmWeight(p);
     p.key = P.keyReasons(p, S.settings.keyPlays);
-    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.cat}`.toLowerCase();
+    p.neg = P.negativeReasons(p, S.settings.keyPlays);
+    p.box = P.boxScore(p);
+    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat}`.toLowerCase();
   }
 }
 
@@ -308,34 +313,60 @@ async function analyze(force) {
 
 /* ---------------- play list ---------------- */
 
+const RESULT_FILTERS = {
+  key: (p) => p.key.length > 0,
+  negative: (p) => p.neg.length > 0,
+  sack: (p) => p.flags.sack && p.playType !== 'no_play',
+  turnover: (p) => p.key.some((k) => ['INT', 'FUM', 'TOD'].includes(k)) || (p.playType !== 'no_play' && (p.flags.interception || p.flags.fumble_lost)),
+  score: (p) => p.key.some((k) => ['TD', 'FG', 'SAF', '2PT'].includes(k)) || (p.playType !== 'no_play' && (p.flags.touchdown || p.fieldGoalResult === 'made')),
+  big: (p) => p.key.includes('BIG'),
+  firstdown: (p) => p.flags.first_down && p.playType !== 'no_play',
+  penalty: (p) => p.flags.penalty,
+};
+
 function passesFilter(p) {
   const f = S.filter;
-  if (f.type === 'key' && !p.key.length) return false;
   if (['run', 'pass', 'special'].includes(f.type) && p.cat !== f.type) return false;
   if (f.offense && p.posteam !== f.offense) return false;
   if (f.qtr && String(p.qtr) !== f.qtr) return false;
+  if (f.result && RESULT_FILTERS[f.result] && !RESULT_FILTERS[f.result](p)) return false;
   if (f.text) {
     for (const w of f.text.toLowerCase().split(/\s+/).filter(Boolean)) if (!p.searchText.includes(w)) return false;
   }
   return true;
 }
 
+function renderQuarters() {
+  const qs = [...new Set(S.plays.map((p) => p.qtr).filter((q) => q != null))].sort((a, b) => a - b);
+  const opts = [{ value: '', label: 'All quarters' }].concat(qs.map((q) => ({ value: String(q), label: q >= 5 ? (q === 5 ? 'OT' : `OT${q - 4}`) : `Q${q}` })));
+  if (!opts.some((o) => o.value === S.filter.qtr)) S.filter.qtr = '';
+  fillSelect($('sel-qtr'), opts, S.filter.qtr);
+}
+
 function renderList() {
   S.visible = [];
   const html = [];
   const anchors = S.gameData.anchors || {};
+  let drive = null;
+  let shade = false;
   S.plays.forEach((p, i) => {
     if (!passesFilter(p)) return;
     S.visible.push(i);
+    const dkey = `${p.driveNum}`;
+    if (dkey !== drive) {
+      drive = dkey;
+      shade = !shade;
+      html.push(driveHeader(p, i));
+    }
     const noFilm = S.pairs.length && S.mapping[i] == null;
-    const cls = [p.cat, p.key.length ? 'key' : '', noFilm ? 'nofilm' : '', i === S.curPlay ? 'sel' : ''].join(' ');
-    const badges = p.key.map((k) => `<span class="badge ${k}">${k}</span>`);
+    const cls = [p.cat, p.key.length ? 'key' : '', p.neg.length ? 'neg' : '', noFilm ? 'nofilm' : '', i === S.curPlay ? 'sel' : '', shade ? 'shade' : ''].join(' ');
+    const badges = p.key.concat(p.neg).map((k) => `<span class="badge ${k}">${k}</span>`);
     if (String(p.playId) in anchors) badges.push('<span class="badge fix" title="Manually corrected">✎</span>');
     if (noFilm) badges.push('<span class="badge nofilm">no film</span>');
     html.push(
       `<li data-i="${i}" class="${cls}"><div class="r1"><span class="clock">${esc(P.clockLabel(p))}</span>` +
-        `<span class="dd">${esc(P.downDistance(p))}</span><span class="team">${esc(p.posteam)}${p.yrdln ? ' · ' + esc(p.yrdln) : ''}</span>` +
-        `<span class="badges">${badges.join('')}</span></div><div class="desc">${esc(p.desc)}</div></li>`
+        `<span class="dd">${esc(P.downDistance(p))}</span><span class="team">${esc(p.yrdln)}</span>` +
+        `<span class="badges">${badges.join('')}</span></div>${boxHtml(p)}<div class="desc">${esc(p.desc)}</div></li>`
     );
   });
   $('play-list').innerHTML = html.join('') || `<li class="muted" style="cursor:default">${S.plays.length ? 'No plays match the filters.' : S.game ? 'No play-by-play available for this game yet.' : ''}</li>`;
@@ -344,6 +375,26 @@ function renderList() {
     ? `${S.visible.length} of ${S.plays.length} plays shown · ${S.pairs.length ? `${filmed} linked to ${S.pairs.length} film clips` : 'film not analyzed'}`
     : '';
   scrollToSelected();
+}
+
+function boxHtml(p) {
+  const b = p.box;
+  return `<div class="box"><span class="who">${esc(b.who)}</span>` +
+    (b.yards ? `<span class="yds ${b.tone}">${esc(b.yards)}</span>` : '') +
+    (b.result ? `<span class="res ${b.tone}">${esc(b.result)}</span>` : '') +
+    (b.penalty ? `<span class="pen" title="${esc(b.penalty)}">PEN</span>` : '') + '</div>';
+}
+
+function driveHeader(p) {
+  const bits = [];
+  if (p.drivePlays != null) bits.push(`${p.drivePlays} play${p.drivePlays === 1 ? '' : 's'}`);
+  if (p.driveYards != null) bits.push(`${p.driveYards} yds`);
+  if (p.driveTop) bits.push(p.driveTop);
+  const res = P.driveLabel(p);
+  const tone = /touchdown|field goal/i.test(res) ? 'good' : /turnover|interception|fumble|safety|downs/i.test(res) ? 'bad' : '';
+  const team = p.posteam ? `<span class="dteam">${esc(p.posteam)}</span>` : '';
+  return `<li class="drive-head">${team}<span>Drive ${esc(p.driveNum ?? '')}</span>` +
+    `<span class="muted">${esc(bits.join(' · '))}</span>${res ? `<span class="dres ${tone}">${esc(res)}</span>` : ''}</li>`;
 }
 
 function scrollToSelected() {
@@ -365,8 +416,8 @@ function renderInfo() {
   if (p) {
     const swatch = `<i class="sw ${p.cat === 'other' ? 'penalty' : p.cat}"></i>`;
     head.innerHTML = `${swatch}<span>${esc(P.clockLabel(p))}</span><span>${esc(P.downDistance(p))}${p.yrdln ? ' at ' + esc(p.yrdln) : ''}</span>` +
-      `<span class="muted">${esc(p.posteam)} ball · ${esc(p.playType || '')}${p.yards != null ? ` · ${p.yards} yds` : ''}</span>` +
-      p.key.map((k) => `<span class="badge ${k}">${k}</span>`).join('');
+      `<span class="muted">${esc(p.posteam)} ball</span>${boxHtml(p)}` +
+      p.key.concat(p.neg).map((k) => `<span class="badge ${k}">${k}</span>`).join('');
     $('play-desc').textContent = p.desc;
   } else {
     head.textContent = S.curPair >= 0 ? `Film clip ${S.curPair + 1}` : '';
@@ -707,6 +758,17 @@ function toggleOverlay(id, show) {
   if (want && id === 'settings') renderSettings();
 }
 
+/** Adds the current keyboard shortcut(s) to the tooltip of every control bound to an action. */
+function updateTooltips() {
+  document.querySelectorAll('[data-action], [data-shortcut]').forEach((el) => {
+    if (el.dataset.tip == null) el.dataset.tip = el.getAttribute('title') || '';
+    const id = el.dataset.shortcut || el.dataset.action;
+    const keys = (S.settings.shortcuts[id] || []).map(keyLabel);
+    const base = el.dataset.tip.replace('{N}', String(S.settings.jumpFrames));
+    el.title = keys.length ? `${base}  (${keys.join(' or ')})` : base;
+  });
+}
+
 function renderHelp() {
   $('help-table').innerHTML = ACTIONS.map((a) => {
     const keys = S.settings.shortcuts[a.id] || [];
@@ -735,6 +797,7 @@ function renderSettings() {
   $('kp-pass').value = kp.passYards;
   $('kp-sacks').checked = kp.sacks;
   $('kp-fourth').checked = kp.fourthDownConversions;
+  $('kp-loss').value = kp.lossYards;
   renderShortcutTable();
 }
 
@@ -768,6 +831,7 @@ function readSettingsForm() {
     passYards: Number($('kp-pass').value) || 0,
     sacks: $('kp-sacks').checked,
     fourthDownConversions: $('kp-fourth').checked,
+    lossYards: Math.max(0, Number($('kp-loss').value) || 0),
   };
   return d;
 }
@@ -876,6 +940,7 @@ function wire() {
   });
   $('sel-offense').addEventListener('change', (e) => { S.filter.offense = e.target.value; e.target.blur(); renderList(); });
   $('sel-qtr').addEventListener('change', (e) => { S.filter.qtr = e.target.value; e.target.blur(); renderList(); });
+  $('sel-result').addEventListener('change', (e) => { S.filter.result = e.target.value; e.target.blur(); renderList(); });
 
   const scrub = $('scrub');
   scrub.addEventListener('input', () => {

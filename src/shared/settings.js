@@ -44,6 +44,7 @@
       passYards: 20,
       sacks: false,
       fourthDownConversions: true,
+      lossYards: 3,
     },
     shortcuts: Object.fromEntries(ACTIONS.map((a) => [a.id, a.keys.slice()])),
   };

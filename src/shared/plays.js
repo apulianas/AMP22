@@ -13,12 +13,18 @@
     'sack', 'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'timeout', 'two_point_attempt',
     'fourth_down_converted', 'fourth_down_failed', 'field_goal_result', 'extra_point_result', 'two_point_conv_result',
     'total_home_score', 'total_away_score', 'epa',
+    'passer_player_name', 'receiver_player_name', 'rusher_player_name', 'sack_player_name', 'half_sack_1_player_name',
+    'interception_player_name', 'kicker_player_name', 'punter_player_name', 'kickoff_returner_player_name',
+    'punt_returner_player_name', 'fumbled_1_player_name', 'fumble_recovery_1_player_name', 'fumble_recovery_1_team',
+    'td_player_name', 'complete_pass', 'incomplete_pass', 'touchback', 'punt_blocked', 'first_down', 'qb_kneel',
+    'kick_distance', 'return_yards', 'penalty_team', 'penalty_player_name', 'penalty_yards', 'penalty_type',
+    'fixed_drive', 'fixed_drive_result', 'drive_play_count', 'drive_time_of_possession', 'ydsnet',
   ];
 
   const FLAG_COLUMNS = [
     'touchdown', 'pass_touchdown', 'rush_touchdown', 'return_touchdown', 'interception', 'fumble_lost', 'sack',
     'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'timeout', 'two_point_attempt', 'fourth_down_converted',
-    'fourth_down_failed',
+    'fourth_down_failed', 'complete_pass', 'incomplete_pass', 'touchback', 'punt_blocked', 'first_down', 'qb_kneel',
   ];
 
   const DEFAULT_KEY_PLAYS = {
@@ -28,6 +34,7 @@
     passYards: 20, // completions of at least this many yards (0 = off)
     sacks: false,
     fourthDownConversions: true,
+    lossYards: 3, // negative plays: losses of at least this many yards (0 = off); sacks always count
   };
 
   function num(v) {
@@ -63,6 +70,30 @@
       homeScore: num(row.total_home_score),
       awayScore: num(row.total_away_score),
       epa: num(row.epa),
+      names: {
+        passer: str(row.passer_player_name),
+        receiver: str(row.receiver_player_name),
+        rusher: str(row.rusher_player_name),
+        sacker: str(row.sack_player_name) || str(row.half_sack_1_player_name),
+        interceptor: str(row.interception_player_name),
+        kicker: str(row.kicker_player_name),
+        punter: str(row.punter_player_name),
+        returner: str(row.kickoff_returner_player_name) || str(row.punt_returner_player_name),
+        fumbler: str(row.fumbled_1_player_name),
+        recoverer: str(row.fumble_recovery_1_player_name),
+        penalty: str(row.penalty_player_name),
+      },
+      fumbleRecoveryTeam: str(row.fumble_recovery_1_team),
+      kickDistance: num(row.kick_distance),
+      returnYards: num(row.return_yards),
+      penaltyTeam: str(row.penalty_team),
+      penaltyType: str(row.penalty_type),
+      penaltyYards: num(row.penalty_yards),
+      driveNum: num(row.fixed_drive) != null ? num(row.fixed_drive) : num(row.drive),
+      driveResult: str(row.fixed_drive_result),
+      drivePlays: num(row.drive_play_count),
+      driveTop: str(row.drive_time_of_possession),
+      driveYards: num(row.ydsnet),
       flags,
     };
   }
@@ -128,6 +159,93 @@
     return r;
   }
 
+  /**
+   * Reasons a play is a negative play for the offense (empty array if not): SACK, or LOSS for
+   * runs/completions that lose at least cfg.lossYards.
+   */
+  function negativeReasons(p, cfg) {
+    const c = Object.assign({}, DEFAULT_KEY_PLAYS, cfg || {});
+    if (p.playType === 'no_play' || p.flags.qb_kneel || p.playType === 'qb_kneel') return [];
+    if (p.flags.sack) return ['SACK'];
+    const cat = category(p);
+    if ((cat === 'run' || cat === 'pass') && c.lossYards > 0 && p.yards != null && p.yards <= -c.lossYards) return ['LOSS'];
+    return [];
+  }
+
+  function signed(y) {
+    if (y == null) return '';
+    return y > 0 ? `+${y}` : y < 0 ? `\u2212${-y}` : '0';
+  }
+
+  /**
+   * Compact box-score summary of a play: { who, yards, result, tone }.
+   *  who    – player(s) and action, e.g. "T.Huntley → Z.Flowers"
+   *  yards  – signed yards ("+48", "−7") or '' when not meaningful
+   *  result – short outcome tag, e.g. "TD", "INC", "INT", "1st down", "Touchback"
+   *  tone   – 'good' | 'bad' | '' for colouring the yards
+   */
+  function boxScore(p) {
+    const n = p.names || {};
+    const f = p.flags;
+    const pt = p.playType;
+    const tone = (y) => (y == null ? '' : y > 0 ? 'good' : y < 0 ? 'bad' : '');
+    const out = (who, yards, result, t) => ({ who, yards: yards == null ? '' : signed(yards), result: result || '', tone: t == null ? tone(yards) : t });
+    const tdOr = (fallback) => (f.touchdown ? 'TD' : fallback);
+    const pen = () => {
+      const team = p.penaltyTeam ? `${p.penaltyTeam} ` : '';
+      const type = p.penaltyType || 'Penalty';
+      return `${team}${type}${p.penaltyYards ? `, ${p.penaltyYards} yds` : ''}`;
+    };
+    if (pt === 'no_play') {
+      if (f.penalty) return out(pen() + (n.penalty ? ` (${n.penalty})` : ''), null, 'No play', '');
+      return out('No play', null, '', '');
+    }
+    const fum = f.fumble_lost ? `FUM${n.recoverer ? ' rec. ' + n.recoverer : ''}` : '';
+    let r;
+    if (pt === 'kickoff' || pt === 'punt') {
+      const kicker = (pt === 'kickoff' ? n.kicker : n.punter) || p.posteam;
+      const what = pt === 'kickoff' ? 'kickoff' : 'punt';
+      const dist = p.kickDistance != null ? ` ${p.kickDistance} yds` : '';
+      if (f.punt_blocked) r = out(`${kicker} ${what}`, null, 'Blocked', 'bad');
+      else if (/fair catch/i.test(p.desc)) r = out(`${kicker} ${what}${dist}${n.returner ? ' · ' + n.returner : ''}`, null, 'Fair catch', '');
+      else if (f.touchback) r = out(`${kicker} ${what}${dist}`, null, 'Touchback', '');
+      else if (n.returner) r = out(`${kicker} ${what}${dist} · ${n.returner} ret`, p.returnYards, tdOr(fum), '');
+      else r = out(`${kicker} ${what}${dist}`, null, /out of bounds/i.test(p.desc) ? 'Out of bounds' : /downed/i.test(p.desc) ? 'Downed' : '', '');
+    } else if (pt === 'field_goal') {
+      const res = { made: 'Good', missed: 'No good', blocked: 'Blocked' }[p.fieldGoalResult] || p.fieldGoalResult;
+      r = out(`${n.kicker || p.posteam} ${p.kickDistance != null ? p.kickDistance + '-yd ' : ''}FG`, null, res, p.fieldGoalResult === 'made' ? 'good' : 'bad');
+    } else if (pt === 'extra_point') {
+      const res = { good: 'Good', failed: 'No good', blocked: 'Blocked', aborted: 'Aborted' }[p.extraPointResult] || p.extraPointResult;
+      r = out(`${n.kicker || p.posteam} XP`, null, res, p.extraPointResult === 'good' ? 'good' : 'bad');
+    } else if (f.two_point_attempt) {
+      const who = n.passer ? `${n.passer}${n.receiver ? ' → ' + n.receiver : ''}` : n.rusher || p.posteam;
+      r = out(`${who} 2-pt`, null, p.twoPointResult === 'success' ? 'Good' : 'No good', p.twoPointResult === 'success' ? 'good' : 'bad');
+    } else if (f.sack) {
+      r = out(`${n.passer || p.posteam} sacked${n.sacker ? ' by ' + n.sacker : ''}`, p.yards, fum, 'bad');
+    } else if (pt === 'qb_spike') {
+      r = out(`${n.passer || p.posteam} spike`, null, '', '');
+    } else if (pt === 'qb_kneel' || f.qb_kneel) {
+      r = out(`${n.rusher || n.passer || p.posteam} kneel`, p.yards, '', '');
+    } else if (pt === 'pass' || f.pass) {
+      const who = `${n.passer || p.posteam}${n.receiver ? ' → ' + n.receiver : ''}`;
+      if (f.interception) r = out(who, null, `INT${n.interceptor ? ' ' + n.interceptor : ''}`, 'bad');
+      else if (f.complete_pass) r = out(who, p.yards, tdOr(fum || (f.first_down ? '1st down' : '')));
+      else if (n.rusher) r = out(`${n.rusher} scramble`, p.yards, tdOr(fum || (f.first_down ? '1st down' : '')));
+      else r = out(who, null, 'INC', '');
+    } else if (pt === 'run' || f.rush) {
+      r = out(`${n.rusher || p.posteam}${f.qb_scramble ? ' scramble' : ''}`, p.yards, tdOr(fum || (f.first_down ? '1st down' : '')));
+    } else {
+      r = out(p.playType || 'Play', p.yards, '');
+    }
+    if (f.penalty && !r.result.includes('No play')) r.penalty = pen();
+    return r;
+  }
+
+  /** Short drive result label, e.g. "Touchdown", "Punt". */
+  function driveLabel(p) {
+    return p.driveResult || '';
+  }
+
   function ordinal(n) {
     return ['', '1st', '2nd', '3rd', '4th'][n] || `${n}th`;
   }
@@ -150,5 +268,8 @@
     return rows.map((r) => (r.flags ? r : normalizePlay(r))).filter(isRealPlay);
   }
 
-  return { PBP_COLUMNS, DEFAULT_KEY_PLAYS, normalizePlay, isRealPlay, category, filmWeight, keyReasons, downDistance, clockLabel, gamePlays };
+  return {
+    PBP_COLUMNS, DEFAULT_KEY_PLAYS, normalizePlay, isRealPlay, category, filmWeight, keyReasons, negativeReasons,
+    boxScore, driveLabel, downDistance, clockLabel, gamePlays,
+  };
 });
