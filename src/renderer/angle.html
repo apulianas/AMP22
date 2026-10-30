@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' file:; media-src file: 'self'" />
+  <title>A22 angle</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="angle-window">
+  <div id="angle-stage"></div>
+  <div id="angle-error" role="alert"></div>
+  <div id="angle-controls">
+    <strong id="angle-name"></strong>
+    <button data-action="prevPlay" title="Previous play">Previous</button>
+    <button data-action="frameBack" title="Back one frame">-1 frame</button>
+    <button data-action="playPause">Play / pause</button>
+    <button data-action="frameForward" title="Forward one frame">+1 frame</button>
+    <button data-action="nextPlay" title="Next play">Next</button>
+    <span class="spacer"></span>
+    <button id="angle-fullscreen">Fullscreen</button>
+    <button id="angle-return">Return angle</button>
+  </div>
+  <script src="angle.js"></script>
+</body>
+</html>

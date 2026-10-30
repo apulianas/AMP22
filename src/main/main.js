@@ -26,6 +26,7 @@ let lastExportPath = null;
 let headshotPreparation = null;
 
 function createWindow() {
+  const angleUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'angle.html')).href;
   win = new BrowserWindow({
     width: 1680,
     height: 980,
@@ -38,12 +39,38 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url === angleUrl) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1100,
+          height: 700,
+          minWidth: 480,
+          minHeight: 300,
+          backgroundColor: '#000000',
+          autoHideMenuBar: true,
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+          },
+        },
+      };
+    }
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
+  });
+  win.webContents.on('did-create-window', (child) => {
+    child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    child.webContents.on('will-navigate', (event, url) => {
+      if (url !== angleUrl) event.preventDefault();
+    });
   });
 }
 

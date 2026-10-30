@@ -261,13 +261,16 @@ function realign() {
 /* ---------------- film ---------------- */
 
 function closeFilm() {
+  pause();
+  dockAngle();
   S.film = null;
   S.pairs = [];
   S.range = null;
-  $('vidA').removeAttribute('src');
-  $('vidB').removeAttribute('src');
-  $('vidA').load();
-  $('vidB').load();
+  vidA().removeAttribute('src');
+  vidB().removeAttribute('src');
+  vidA().load();
+  vidB().load();
+  updateAngleButtons();
   $('film-name').textContent = '';
   $('btn-analyze').hidden = true;
 }
@@ -279,7 +282,7 @@ async function openFilm(file) {
     S.fps = f.info.fps || 59.94;
     $('film-name').textContent = file.split(/[\\/]/).pop();
     $('film-name').title = file;
-    const a = $('vidA'), b = $('vidB');
+    const a = vidA(), b = vidB();
     if (a.src !== f.url) { a.src = f.url; b.src = f.url; }
     setAnalysis(f.analysis);
     if (!f.analysis) {
@@ -294,10 +297,12 @@ async function openFilm(file) {
 }
 
 function setAnalysis(analysis) {
+  if (!analysis) dockAngle();
   S.pairs = analysis ? analysis.pairs : [];
   $('videos').classList.toggle('single', !S.pairs.length);
   $('btn-analyze').hidden = !!analysis;
   if (analysis) showMessage('');
+  updateAngleButtons();
 }
 
 async function analyze(force) {
@@ -570,8 +575,94 @@ function renderInfo() {
 
 /* ---------------- playback ---------------- */
 
-const vidA = () => $('vidA');
-const vidB = () => $('vidB');
+const angleVideos = {};
+const vidA = () => angleVideos.a || $('vidA');
+const vidB = () => angleVideos.b || $('vidB');
+let detachedAngle = null;
+let closingWindow = false;
+let playbackFrame = null;
+
+function updateAngleButtons() {
+  $('pop-a').disabled = $('pop-b').disabled = !S.film || !S.pairs.length || !!detachedAngle;
+}
+
+function popAngle(key) {
+  if (detachedAngle || !S.film || !S.pairs.length) return;
+  const popup = window.open('angle.html', 'a22-angle', 'width=1100,height=700');
+  if (!popup) {
+    showMessage('Could not open the angle window.');
+    return;
+  }
+  const video = key === 'a' ? vidA() : vidB();
+  const figure = $(key === 'a' ? 'figA' : 'figB');
+  angleVideos[key] = video;
+  const closedTimer = window.setInterval(() => {
+    if (popup.closed) dockAngle(false);
+  }, 250);
+  detachedAngle = { popup, video, figure, key, closedTimer };
+  updateAngleButtons();
+}
+
+function attachAngleWindow(popup) {
+  if (!detachedAngle || detachedAngle.popup !== popup) return;
+  const { video, figure, key } = detachedAngle;
+  const name = key === 'a' ? 'Sideline' : 'End zone';
+  const doc = popup.document;
+  doc.title = `${name} - A22 Film Tool`;
+  doc.getElementById('angle-name').textContent = name;
+  const rel = currentRel();
+  const playing = S.playing;
+  pause();
+  // Keep the original player and its event handlers on the shared playback clock.
+  doc.getElementById('angle-stage').appendChild(video);
+  figure.classList.add('detached');
+  $('detached-label').textContent = `${name} is in a separate window. Drag it to another display.`;
+  $('detached-angle').hidden = false;
+  seekRel(rel);
+  resetDrift();
+  if (playing) play();
+  popup.addEventListener('keydown', handleKeydown, true);
+  doc.querySelectorAll('[data-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      button.blur();
+      runAction(button.dataset.action);
+    });
+  });
+  doc.getElementById('angle-return').addEventListener('click', () => dockAngle());
+  doc.getElementById('angle-fullscreen').addEventListener('click', () => {
+    const request = doc.fullscreenElement ? doc.exitFullscreen() : doc.documentElement.requestFullscreen();
+    request.catch((e) => { doc.getElementById('angle-error').textContent = `Could not change fullscreen: ${e.message}`; });
+  });
+  doc.addEventListener('fullscreenchange', () => {
+    doc.getElementById('angle-fullscreen').textContent = doc.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+  });
+  popup.addEventListener('beforeunload', () => dockAngle(false));
+}
+
+function dockAngle(close = true) {
+  if (!detachedAngle) return;
+  const { popup, video, figure, closedTimer } = detachedAngle;
+  detachedAngle = null;
+  window.clearInterval(closedTimer);
+  const rel = currentRel();
+  const playing = S.playing;
+  pause();
+  figure.prepend(video);
+  figure.classList.remove('detached');
+  $('detached-angle').hidden = true;
+  resetDrift();
+  if (!closingWindow) {
+    seekRel(rel);
+    if (playing) play();
+  }
+  updateAngleButtons();
+  if (close && !popup.closed) popup.close();
+}
+
+window.addEventListener('beforeunload', () => {
+  closingWindow = true;
+  dockAngle();
+});
 
 function setVideoTime(v, t) {
   v._target = t;
@@ -927,12 +1018,14 @@ function play() {
     if (pb && pb.catch) pb.catch(() => {});
   }
   $('btn-play').textContent = '❚❚';
-  requestAnimationFrame(tick);
+  if (playbackFrame == null) playbackFrame = requestAnimationFrame(tick);
 }
 
 function pause() {
   const a = vidA(), b = vidB();
   S.playing = false;
+  if (playbackFrame != null) cancelAnimationFrame(playbackFrame);
+  playbackFrame = null;
   a.pause();
   b.pause();
   $('btn-play').textContent = '▶';
@@ -968,6 +1061,7 @@ function resetDrift() {
 }
 
 function tick() {
+  playbackFrame = null;
   if (!S.playing) return;
   const a = vidA(), b = vidB();
   if (S.range) {
@@ -991,7 +1085,7 @@ function tick() {
   } else {
     updateTimeUI(a.currentTime);
   }
-  requestAnimationFrame(tick);
+  playbackFrame = requestAnimationFrame(tick);
 }
 
 function onEnd() {
@@ -1234,7 +1328,7 @@ function isTextTarget(t) {
   return t.tagName === 'INPUT' && !['checkbox', 'range', 'button'].includes(t.type);
 }
 
-window.addEventListener('keydown', (e) => {
+function handleKeydown(e) {
   if (capture) {
     e.preventDefault();
     e.stopPropagation();
@@ -1269,11 +1363,15 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
   if (e.target && e.target.blur && e.target.tagName === 'BUTTON') e.target.blur();
   runAction(id);
-}, true);
+}
+window.addEventListener('keydown', handleKeydown, true);
 
 /* ---------------- wiring ---------------- */
 
 function wire() {
+  $('pop-a').addEventListener('click', () => popAngle('a'));
+  $('pop-b').addEventListener('click', () => popAngle('b'));
+  $('return-angle').addEventListener('click', () => dockAngle());
   $('sel-season').addEventListener('change', () => onSelectorChange('season'));
   $('sel-team').addEventListener('change', () => onSelectorChange('team'));
   $('sel-week').addEventListener('change', () => onSelectorChange('week'));

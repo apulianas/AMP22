@@ -103,15 +103,21 @@
 
     <section id="viewer">
       <div id="videos">
-        <figure class="angle">
+        <figure class="angle" id="figA">
           <video id="vidA" preload="auto" playsinline></video>
           <figcaption>Sideline</figcaption>
+          <button id="pop-a" class="pop-angle" disabled title="Open sideline in a separate window">Pop out</button>
         </figure>
         <figure class="angle" id="figB">
           <video id="vidB" preload="auto" muted playsinline></video>
           <figcaption>End zone <span id="offset-label"></span></figcaption>
+          <button id="pop-b" class="pop-angle" disabled title="Open end zone in a separate window">Pop out</button>
         </figure>
         <div id="message"></div>
+      </div>
+      <div id="detached-angle" hidden>
+        <span id="detached-label"></span>
+        <button id="return-angle">Return angle</button>
       </div>
 
       <div id="timeline">
