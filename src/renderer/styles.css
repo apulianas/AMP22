@@ -41,8 +41,13 @@ main { display: flex; height: calc(100% - 46px); }
 .filters .row select { flex: 1; min-width: 0; }
 .advanced-filters summary { cursor: pointer; }
 .advanced-filters[open] summary { margin-bottom: 8px; }
-.air-yard-bounds label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
-.air-yard-bounds input { width: 100%; min-width: 0; }
+.range-bounds { margin-bottom: 6px; }
+.range-bounds label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.range-bounds input { width: 100%; min-width: 0; }
+.adv-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.adv-choices label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; min-width: 0; }
+.adv-choices select { width: 100%; min-width: 0; }
+#adv-note { margin: 6px 0 0; }
 #search { width: 100%; }
 .chips { display: flex; gap: 4px; }
 .chips button { flex: 1; padding: 3px 0; }
@@ -88,6 +93,7 @@ main { display: flex; height: calc(100% - 46px); }
 #play-list .r1 .clock { color: var(--muted); width: 66px; flex: none; }
 #play-list .r1 .dd { font-weight: 600; }
 #play-list .r1 .team { color: var(--muted); }
+#play-list .r1 .pers { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; white-space: nowrap; }
 #play-list .r1 .badges { margin-left: auto; display: flex; gap: 3px; }
 #play-list .box { margin: 1px 0; }
 #play-list .desc { color: var(--muted); font-size: 11px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -128,6 +134,15 @@ main { display: flex; height: calc(100% - 46px); }
 #play-info { padding: 8px 12px 10px; background: var(--panel); border-top: 1px solid var(--border); min-height: 110px; }
 #play-head { font-weight: 600; margin-bottom: 3px; display: flex; gap: 10px; align-items: baseline; }
 #play-head .box { font-size: 15px; }
+#play-adv { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+#play-adv:empty { display: none; }
+#play-adv .tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--border); color: var(--text); }
+#on-field { margin-top: 4px; font-size: 12px; }
+#on-field summary { cursor: pointer; color: var(--muted); }
+#on-field-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-height: 180px; overflow: auto; margin-top: 4px; }
+#on-field-lists h4 { margin: 0 0 2px; font-size: 11px; color: var(--muted); font-weight: 600; }
+#on-field-lists ul { list-style: none; margin: 0; padding: 0; }
+#on-field-lists .pos { display: inline-block; width: 3em; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
 #play-desc { color: #c9d1d9; margin-bottom: 8px; min-height: 2.7em; }
 #fix-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #fix-bar button { font-size: 12px; padding: 2px 8px; }
