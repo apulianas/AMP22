@@ -122,6 +122,15 @@ main { display: flex; height: calc(100% - 46px); }
 .angle { flex: 1; margin: 0; position: relative; min-width: 0; display: flex; }
 .angle video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .angle figcaption { position: absolute; top: 6px; left: 8px; background: rgba(0,0,0,.6); padding: 1px 6px; border-radius: 4px; font-size: 11px; color: #ddd; pointer-events: none; }
+.pop-angle { position: absolute; top: 6px; right: 8px; background: rgba(13,17,23,.85); }
+#videos .angle.detached { display: none; }
+#detached-angle { padding: 4px 10px; background: var(--panel); }
+#detached-angle button { margin-left: 8px; }
+.angle-window { display: flex; flex-direction: column; background: #000; }
+.angle-window #angle-stage { flex: 1; min-height: 0; display: flex; }
+.angle-window video { width: 100%; height: 100%; object-fit: contain; }
+.angle-window #angle-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 10px; background: var(--panel); }
+.angle-window #angle-error { color: var(--bad); padding: 0 10px; }
 #message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; pointer-events: none; color: #ddd; font-size: 15px; padding: 40px; }
 #message:empty { display: none; }
 #message > div { background: rgba(13,17,23,.85); border: 1px solid var(--border); padding: 18px 24px; border-radius: 8px; max-width: 560px; }

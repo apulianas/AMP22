@@ -14,7 +14,7 @@ function renderer() {
   const elements = new Map();
   const context = vm.createContext({
     A22: { plays, settings, clipExport, advanced },
-    window: { addEventListener() {} },
+    window: { addEventListener() {}, open: () => null },
     document: {
       getElementById(id) {
         if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', querySelector: () => null });
@@ -28,7 +28,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo, popAngle, updateAngleButtons };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -43,6 +43,25 @@ function renderer() {
   api.derivePlays();
   return { ...api, elements, visible: () => Array.from(api.S.visible) };
 }
+
+test('angle pop-outs require analyzed film and report a refused window without hiding the player', () => {
+  const r = renderer();
+  r.updateAngleButtons();
+  assert.equal(r.elements.get('pop-a').disabled, true);
+  assert.equal(r.elements.get('pop-b').disabled, true);
+  r.popAngle('a');
+  r.S.film = { url: 'file:///film.mp4' };
+  r.updateAngleButtons();
+  assert.equal(r.elements.get('pop-a').disabled, true);
+  r.popAngle('b');
+  r.S.pairs = [{}];
+  r.updateAngleButtons();
+  assert.equal(r.elements.get('pop-a').disabled, false);
+  assert.equal(r.elements.get('pop-b').disabled, false);
+  r.popAngle('a');
+  assert.match(r.elements.get('message').innerHTML, /Could not open the angle window/);
+  assert.equal(r.elements.get('pop-a').disabled, false);
+});
 
 test('renderer displays air yards without changing play indices, film mapping, or drive grouping', () => {
   const r = renderer();
