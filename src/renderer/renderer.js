@@ -1233,6 +1233,61 @@ function runAction(id) {
 
 /* ---------------- overlays ---------------- */
 
+let updateResult = null;
+let checkingUpdates = false;
+
+function renderUpdate(result) {
+  updateResult = result;
+  const available = result.status === 'available';
+  const message = available
+    ? `AMP22 ${result.release.version} is available. You have ${result.currentVersion}.`
+    : result.status === 'current' ? `You're up to date. AMP22 ${result.currentVersion} is the latest version.`
+    : result.status === 'disabled' ? 'Development build: check for updates manually.'
+    : `Could not check for updates: ${result.message}`;
+  $('update-status').textContent = message;
+  $('btn-update').hidden = !available;
+  $('updates-title').textContent = available ? 'A new version of AMP22 is available' : 'Software update';
+  $('updates-summary').textContent = message;
+  $('updates-release').hidden = !available;
+  $('updates-notes').textContent = available ? result.release.notes : '';
+  $('updates-download').hidden = !available;
+  $('updates-retry').hidden = result.status !== 'error';
+  $('updates-close').textContent = available ? 'Later' : 'Close';
+  $('updates-error').textContent = '';
+}
+
+function showUpdate() {
+  if (!$('updates').open) $('updates').showModal();
+}
+
+async function checkUpdates(automatic = false) {
+  if (checkingUpdates) return;
+  checkingUpdates = true;
+  $('check-updates').disabled = $('updates-retry').disabled = true;
+  $('update-status').textContent = 'Checking for updates…';
+  try {
+    const result = await window.api.checkUpdates(automatic);
+    renderUpdate(result);
+    const busy = S.playing || S.exporting || capture || [...document.querySelectorAll('.overlay')].some((el) => !el.hidden);
+    if (!automatic || (result.notify && !busy)) showUpdate();
+  } catch (error) {
+    renderUpdate({ status: 'error', message: error.message });
+    if (!automatic) showUpdate();
+  } finally {
+    checkingUpdates = false;
+    $('check-updates').disabled = $('updates-retry').disabled = false;
+  }
+}
+
+async function closeUpdate() {
+  try {
+    if (updateResult && updateResult.status === 'available') await window.api.dismissUpdate();
+    $('updates').close();
+  } catch (error) {
+    $('updates-error').textContent = `Could not save your update preference: ${error.message}`;
+  }
+}
+
 function toggleOverlay(id, show) {
   if (S.exporting) return;
   const el = $(id);
@@ -1329,6 +1384,7 @@ function isTextTarget(t) {
 }
 
 function handleKeydown(e) {
+  if ($('updates').open) return;
   if (capture) {
     e.preventDefault();
     e.stopPropagation();
@@ -1369,6 +1425,25 @@ window.addEventListener('keydown', handleKeydown, true);
 /* ---------------- wiring ---------------- */
 
 function wire() {
+  $('check-updates').addEventListener('click', () => checkUpdates());
+  $('updates-retry').addEventListener('click', () => checkUpdates());
+  $('btn-update').addEventListener('click', showUpdate);
+  $('updates-close').addEventListener('click', closeUpdate);
+  $('updates').addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeUpdate();
+  });
+  $('updates-download').addEventListener('click', async () => {
+    $('updates-download').disabled = true;
+    try {
+      await window.api.downloadUpdate();
+      $('updates').close();
+    } catch (error) {
+      $('updates-error').textContent = `Could not open the download page: ${error.message}`;
+    } finally {
+      $('updates-download').disabled = false;
+    }
+  });
   $('pop-a').addEventListener('click', () => popAngle('a'));
   $('pop-b').addEventListener('click', () => popAngle('b'));
   $('return-angle').addEventListener('click', () => dockAngle());
@@ -1592,7 +1667,9 @@ function wire() {
 (async function boot() {
   wire();
   const init = await window.api.init();
+  $('app-version').textContent = `AMP22 ${init.version}`;
   $('share-reveal').textContent = init.platform === 'darwin' ? 'Show in Finder' : init.platform === 'win32' ? 'Show in File Explorer' : 'Show in folder';
   applySettings(init.settings);
+  checkUpdates(true);
   if (await loadSchedule(false)) await loadGame(false);
 })();

@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   init: () => ipcRenderer.invoke('app:init'),
+  checkUpdates: (automatic = false) => ipcRenderer.invoke('updates:check', automatic),
+  dismissUpdate: () => ipcRenderer.invoke('updates:dismiss'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
   saveSettings: (s) => ipcRenderer.invoke('settings:save', s),
   getSchedule: (opts) => ipcRenderer.invoke('schedule:get', opts),
   getPlays: (opts) => ipcRenderer.invoke('pbp:get', opts),

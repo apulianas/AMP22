@@ -28,7 +28,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo, popAngle, updateAngleButtons };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -41,8 +41,52 @@ function renderer() {
   ].map((row, i) => plays.normalizePlay({ play_id: String(i + 1), desc: 'A pass or run', yrdln: 'BAL 25', ...row }));
   api.S.mapping = [4, 3, 2, 1, 0];
   api.derivePlays();
-  return { ...api, elements, visible: () => Array.from(api.S.visible) };
+  return { ...api, elements, context, visible: () => Array.from(api.S.visible) };
 }
+
+test('update notes render as text and automatic checks do not interrupt playback or another dialog', async () => {
+  const r = renderer();
+  const result = {
+    status: 'available', currentVersion: '0.2.3', notify: true,
+    release: { version: '0.2.4', notes: '<img src=x onerror=alert(1)> release notes' },
+  };
+  r.context.window.api = { checkUpdates: async () => result, dismissUpdate: async () => {} };
+  r.context.document.querySelectorAll = () => [];
+  r.renderUpdate(result);
+  const modal = r.elements.get('updates') || r.context.document.getElementById('updates');
+  modal.showModal = () => { modal.open = true; };
+  modal.close = () => { modal.open = false; };
+  assert.equal(r.elements.get('updates-notes').textContent, result.release.notes);
+  assert.equal(r.elements.get('updates-notes').innerHTML, '');
+  r.S.playing = true;
+  await r.checkUpdates(true);
+  assert.ok(!modal.open);
+  assert.equal(r.elements.get('btn-update').hidden, false);
+  r.S.playing = false;
+  r.context.document.querySelectorAll = () => [{ hidden: false }];
+  await r.checkUpdates(true);
+  assert.ok(!modal.open);
+  await r.checkUpdates(false);
+  assert.equal(modal.open, true, 'manual checks may open over Settings');
+  r.handleKeydown({ key: ' ', target: {} });
+  assert.equal(r.S.playing, false, 'film shortcuts are blocked while the update dialog is open');
+  await r.closeUpdate();
+  assert.equal(modal.open, false);
+});
+
+test('update errors remain visible, offer retry, and leave controls enabled', async () => {
+  const r = renderer();
+  r.context.window.api = { checkUpdates: async () => { throw new Error('Offline'); } };
+  const modal = r.context.document.getElementById('updates');
+  modal.showModal = () => { modal.open = true; };
+  await r.checkUpdates();
+  assert.equal(modal.open, true);
+  assert.match(r.elements.get('updates-summary').textContent, /Offline/);
+  assert.equal(r.elements.get('updates-retry').hidden, false);
+  assert.equal(r.elements.get('updates-download').hidden, true);
+  assert.equal(r.elements.get('check-updates').disabled, false);
+  assert.equal(r.elements.get('updates-retry').disabled, false);
+});
 
 test('angle pop-outs require analyzed film and report a refused window without hiding the player', () => {
   const r = renderer();

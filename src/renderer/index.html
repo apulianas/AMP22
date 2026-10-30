@@ -25,6 +25,7 @@
     </div>
     <span class="spacer"></span>
     <span id="status" class="muted"></span>
+    <button id="btn-update" class="primary" hidden>Update available</button>
     <button id="btn-share" disabled title="Export selected plays as a video clip">Share</button>
     <button id="btn-refresh" title="Re-download schedule and play-by-play">⟳</button>
     <button id="btn-settings" title="Settings">⚙</button>
@@ -205,6 +206,11 @@
   <div id="settings" class="overlay" hidden>
     <div class="panel wide">
       <h2>Settings</h2>
+      <div class="row">
+        <span id="app-version" class="muted"></span>
+        <button id="check-updates">Check for updates…</button>
+      </div>
+      <p id="update-status" class="muted" role="status" aria-live="polite"></p>
       <div class="grid">
         <label>Jump size (frames) <input id="set-jump" type="number" min="1" max="600" /></label>
         <label>At end of play
@@ -239,6 +245,25 @@
       </div>
     </div>
   </div>
+
+  <dialog id="updates" class="panel" aria-labelledby="updates-title">
+    <h2 id="updates-title">Software update</h2>
+    <p id="updates-summary" role="status" aria-live="polite"></p>
+    <section id="updates-release" hidden>
+      <h3>What's new</h3>
+      <pre id="updates-notes" tabindex="0"></pre>
+      <p class="muted">Open the release page to download the installer for your Mac or Windows PC.<br>
+        Updates are installed manually; AMP22 will not download, install, or restart automatically.<br>
+        Your settings, film links, and cached analysis are kept.</p>
+    </section>
+    <p id="updates-error" class="error" role="alert"></p>
+    <div class="actions">
+      <button id="updates-retry" hidden>Try again</button>
+      <span class="spacer"></span>
+      <button id="updates-close" autofocus>Close</button>
+      <button id="updates-download" class="primary" hidden>Open download page</button>
+    </div>
+  </dialog>
 
   <script src="../shared/settings.js"></script>
   <script src="../shared/plays.js"></script>
