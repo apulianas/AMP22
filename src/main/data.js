@@ -6,10 +6,13 @@ const zlib = require('zlib');
 const { parseCSV } = require('../shared/csv');
 const schedule = require('../shared/schedule');
 const plays = require('../shared/plays');
+const advanced = require('../shared/advanced');
 
 const GAMES_URL = 'https://github.com/nflverse/nfldata/raw/master/data/games.csv';
 const PBP_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_${y}.csv.gz`;
 const PLAYERS_URL = 'https://github.com/nflverse/nflverse-data/releases/download/players/players.csv';
+const PARTICIPATION_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/pbp_participation/pbp_participation_${y}.csv`;
+const CHARTING_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/ftn_charting/ftn_charting_${y}.csv`;
 const HOUR = 3600e3;
 
 /** Downloads and caches nflverse schedule + play-by-play for offline use. */
@@ -20,6 +23,8 @@ class DataService {
     this.games = null;
     this.pbp = new Map(); // season -> {mtimeMs, games: {gameId: rows[]}}
     this.playerLoad = null;
+    this.tables = new Map(); // `${kind}_${season}` -> {mtimeMs, columns, games: {gameId: {playId: row}}}
+    this.tableFailures = new Map(); // `${kind}_${season}` -> time of last failed download
     fs.mkdirSync(cacheDir, { recursive: true });
   }
 
@@ -51,8 +56,15 @@ class DataService {
     if (!this.playerLoad) {
       this.playerLoad = this.cached(PLAYERS_URL, 'players.csv', 7 * 24 * HOUR, false, { signal, timeoutMs: 15000 })
         .then((r) => {
-          const { rows } = parseCSV(fs.readFileSync(r.path, 'utf8'), { columns: ['gsis_id', 'headshot'] });
-          return { players: new Map(rows.map((row) => [row.gsis_id, row.headshot])), warning: r.warning };
+          const { rows } = parseCSV(fs.readFileSync(r.path, 'utf8'), { columns: ['gsis_id', 'headshot', 'nfl_id', 'display_name', 'position'] });
+          // Participation lists GSIS IDs in some seasons and NGS nfl_ids in others.
+          const byId = new Map();
+          for (const row of rows) {
+            const info = { id: row.gsis_id, name: row.display_name, position: row.position };
+            if (row.gsis_id) byId.set(row.gsis_id, info);
+            if (row.nfl_id) byId.set(row.nfl_id, info);
+          }
+          return { players: new Map(rows.map((row) => [row.gsis_id, row.headshot])), byId, warning: r.warning };
         })
         .catch((e) => { this.playerLoad = null; throw e; });
     }
@@ -118,13 +130,83 @@ class DataService {
     return { data, warning: r.warning };
   }
 
+  /**
+   * One season of an advanced-data table indexed by game and play. Returns {data: null} when the
+   * file is unavailable (e.g. participation for a season still in progress); `warning` is set
+   * only for unexpected failures.
+   */
+  async loadSeasonTable(kind, url, season, columns, playIdColumn, { force = false, current = true } = {}) {
+    const key = `${kind}_${season}`;
+    const failedAt = this.tableFailures.get(key);
+    if (!force && failedAt && Date.now() - failedAt < 3 * HOUR) return { data: null };
+    let r;
+    try {
+      r = await this.cached(url, `${key}.csv`, current ? 6 * HOUR : 30 * 24 * HOUR, force, { timeoutMs: 120000 });
+    } catch (e) {
+      this.tableFailures.set(key, Date.now());
+      return { data: null, warning: /HTTP 404/.test(e.message) ? undefined : `Advanced ${kind.replace('_', ' ')} data unavailable (${e.message})` };
+    }
+    const srcMtime = fs.statSync(r.path).mtimeMs;
+    const mem = this.tables.get(key);
+    if (mem && mem.mtimeMs === srcMtime) return { data: mem, warning: r.warning };
+
+    const jsonFile = path.join(this.dir, `${key}.json`);
+    try {
+      const j = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+      if (j.mtimeMs === srcMtime && j.columns === columns.join(',')) {
+        this.tables.set(key, j);
+        return { data: j, warning: r.warning };
+      }
+    } catch { /* rebuild */ }
+
+    const { rows } = parseCSV(fs.readFileSync(r.path, 'utf8'), { columns });
+    const games = {};
+    for (const row of rows) {
+      const g = (games[row.nflverse_game_id] = games[row.nflverse_game_id] || {});
+      g[row[playIdColumn]] = row;
+    }
+    const data = { mtimeMs: srcMtime, columns: columns.join(','), games };
+    fs.writeFileSync(jsonFile, JSON.stringify(data));
+    this.tables.set(key, data);
+    return { data, warning: r.warning };
+  }
+
+  /** Adds personnel, FTN charting, and players on the field to a game's plays where available. */
+  async attachAdvanced(season, gameId, list, opts = {}) {
+    const warnings = [];
+    const load = async (first, ...args) => {
+      if (season < first) return null;
+      const res = await this.loadSeasonTable(...args, opts);
+      if (res.warning) warnings.push(res.warning);
+      return res.data ? res.data.games[gameId] || null : null;
+    };
+    const [part, ftn] = await Promise.all([
+      load(advanced.PARTICIPATION_FIRST_SEASON, 'participation', PARTICIPATION_URL(season), season, advanced.PARTICIPATION_COLUMNS, 'play_id'),
+      load(advanced.CHARTING_FIRST_SEASON, 'ftn_charting', CHARTING_URL(season), season, advanced.CHARTING_COLUMNS, 'nflverse_play_id'),
+    ]);
+    let directory = null;
+    if (part && Object.values(part).some((row) => row.offense_players && !row.offense_names)) {
+      try {
+        const players = await this.loadPlayers();
+        directory = players.byId;
+        if (players.warning) warnings.push(players.warning);
+      } catch (e) {
+        warnings.push(`Player names unavailable (${e.message})`);
+      }
+    }
+    for (const p of list) advanced.attach(p, part && part[p.playId], ftn && ftn[p.playId], directory);
+    return warnings;
+  }
+
   /** Normalized real plays for one game. */
   async loadGamePlays(season, gameId, opts = {}) {
     const { data, warning } = await this.loadSeasonPbp(season, opts);
     const rows = data.games[gameId];
     if (!rows) return { plays: [], warning: warning || `No play-by-play yet for ${gameId}` };
-    return { plays: plays.gamePlays(rows), warning };
+    const list = plays.gamePlays(rows);
+    const warnings = [warning, ...await this.attachAdvanced(season, gameId, list, opts)].filter(Boolean);
+    return { plays: list, warning: [...new Set(warnings)].join(' · ') || undefined };
   }
 }
 
-module.exports = { DataService, GAMES_URL, PBP_URL, PLAYERS_URL };
+module.exports = { DataService, GAMES_URL, PBP_URL, PLAYERS_URL, PARTICIPATION_URL, CHARTING_URL };

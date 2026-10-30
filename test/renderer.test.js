@@ -8,11 +8,12 @@ const vm = require('vm');
 const plays = require('../src/shared/plays');
 const settings = require('../src/shared/settings');
 const clipExport = require('../src/shared/export');
+const advanced = require('../src/shared/advanced');
 
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
-    A22: { plays, settings, clipExport },
+    A22: { plays, settings, clipExport, advanced },
     window: { addEventListener() {} },
     document: {
       getElementById(id) {
@@ -27,7 +28,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -141,4 +142,55 @@ test('Shift-click ranges and exports retain the filtered game order', () => {
   const selection = clipExport.selectionRange(r.S.visible, 0, 4);
   assert.deepEqual(Array.from(selection), [0, 2, 4]);
   assert.deepEqual(clipExport.selectedIndices(new Set(selection)), [0, 2, 4]);
+});
+
+test('yardage and distance bounds apply to scrimmage plays and combine with advanced select filters', () => {
+  const r = renderer();
+  const rows = [
+    { play_type: 'run', rush: '1', yards_gained: '12', down: '1', ydstogo: '10' },
+    { play_type: 'pass', pass: '1', yards_gained: '0', down: '3', ydstogo: '7' },
+    { play_type: 'pass', pass: '1', yards_gained: '25', down: '3', ydstogo: '2' },
+    { play_type: 'kickoff', yards_gained: '0' },
+    { play_type: 'no_play', pass: '1', yards_gained: '0', down: '2', ydstogo: '15', penalty: '1' },
+  ];
+  r.S.plays = rows.map((row, i) => plays.normalizePlay({ play_id: String(i + 1), desc: 'play', yrdln: 'BAL 25', posteam: 'BAL', fixed_drive: '1', ...row }));
+  advanced.attach(r.S.plays[0], { offense_personnel: '2 RB, 1 TE, 2 WR', defense_personnel: '4 DL, 3 LB, 4 DB' }, { qb_location: 'U', n_defense_box: '8', is_motion: 'TRUE' });
+  advanced.attach(r.S.plays[1], { offense_personnel: '1 RB, 1 TE, 3 WR', defense_personnel: '4 DL, 1 LB, 6 DB', defense_coverage_type: 'COVER_3' }, { qb_location: 'S', n_defense_box: '6', is_motion: 'FALSE', n_pass_rushers: '5', n_blitzers: '1' });
+  advanced.attach(r.S.plays[2], { offense_personnel: '1 RB, 1 TE, 3 WR', defense_personnel: '4 DL, 2 LB, 5 DB' }, { qb_location: 'S', n_defense_box: '6', is_motion: 'TRUE', n_pass_rushers: '4', n_blitzers: '0' });
+  r.S.mapping = r.S.plays.map(() => null);
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  const filters = r.elements.get('adv-choices').innerHTML;
+  for (const label of ['Down', 'Off. personnel', 'Def. package', 'Box count', 'Blitzers', 'Motion', 'Coverage']) assert.ok(filters.includes(`>${label}<`), label);
+  assert.ok(!filters.includes('>RPO<'), 'filters without data are hidden');
+  assert.ok(filters.indexOf('>4-3<') < filters.indexOf('>Nickel<') && filters.indexOf('>Nickel<') < filters.indexOf('>Dime<'));
+  assert.equal(r.elements.get('adv-note').hidden, true);
+
+  const visible = (patch) => {
+    Object.assign(r.S.filter, { yardsMin: null, yardsMax: null, distMin: null, distMax: null, choices: {} }, patch);
+    r.renderList();
+    return r.visible();
+  };
+  assert.deepEqual(visible({}), [0, 1, 2, 3, 4]);
+  assert.deepEqual(visible({ yardsMin: 0 }), [0, 1, 2], 'kickoffs and no-plays have no yards gained');
+  assert.deepEqual(visible({ yardsMin: 10, yardsMax: 20 }), [0]);
+  assert.deepEqual(visible({ distMax: 7 }), [1, 2]);
+  assert.deepEqual(visible({ choices: { down: '3' } }), [1, 2]);
+  assert.deepEqual(visible({ choices: { offPersonnel: '11' } }), [1, 2]);
+  assert.deepEqual(visible({ choices: { defPackage: '4-3' } }), [0]);
+  assert.deepEqual(visible({ choices: { box: '8+' } }), [0]);
+  assert.deepEqual(visible({ choices: { box: '<=5' } }), []);
+  assert.deepEqual(visible({ choices: { blitzers: '1+' } }), [1]);
+  assert.deepEqual(visible({ choices: { motion: 'false' } }), [1]);
+  assert.deepEqual(visible({ choices: { motion: 'true', offPersonnel: '11' } }), [2]);
+  assert.deepEqual(visible({ yardsMin: 1, choices: { qbLocation: 'Shotgun' } }), [2]);
+  assert.deepEqual(visible({ choices: { coverage: 'Cover 3' } }), [1]);
+  r.S.filter.text = 'nickel';
+  assert.deepEqual(visible({}), [2], 'search covers personnel tags');
+  r.S.filter.text = '';
+
+  assert.ok(r.elements.get('play-list').innerHTML.includes('11 v Nickel'));
+  r.S.filter.choices = { rpo: 'true', coverage: 'Cover 3' };
+  r.renderAdvancedFilters();
+  assert.deepEqual({ ...r.S.filter.choices }, { coverage: 'Cover 3' }, 'selections unavailable in the loaded game are cleared');
 });

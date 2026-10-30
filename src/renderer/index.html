@@ -54,8 +54,16 @@
           </select>
         </div>
         <details class="advanced-filters">
-          <summary>More filters <span id="air-filter-active" class="muted" hidden>· Air yards active</span></summary>
-          <div class="row air-yard-bounds">
+          <summary>More filters <span id="adv-filter-active" class="muted" hidden></span></summary>
+          <div class="row range-bounds">
+            <label>Yards gained &ge;
+              <input id="yards-min" type="number" step="1" placeholder="No minimum" title="Minimum yards gained on runs and passes, inclusive; negative values allowed" />
+            </label>
+            <label>Yards gained &le;
+              <input id="yards-max" type="number" step="1" placeholder="No maximum" title="Maximum yards gained on runs and passes, inclusive; negative values allowed" />
+            </label>
+          </div>
+          <div class="row range-bounds air-yard-bounds">
             <label>Air yards &ge;
               <input id="air-yards-min" type="number" step="any" placeholder="No minimum" title="Minimum air yards, inclusive; negative values allowed" />
             </label>
@@ -63,6 +71,16 @@
               <input id="air-yards-max" type="number" step="any" placeholder="No maximum" title="Maximum air yards, inclusive; negative values allowed" />
             </label>
           </div>
+          <div class="row range-bounds">
+            <label>Yards to go &ge;
+              <input id="dist-min" type="number" min="0" step="1" placeholder="No minimum" title="Minimum distance to a first down, inclusive" />
+            </label>
+            <label>Yards to go &le;
+              <input id="dist-max" type="number" min="0" step="1" placeholder="No maximum" title="Maximum distance to a first down, inclusive" />
+            </label>
+          </div>
+          <div id="adv-choices" class="adv-choices"></div>
+          <p id="adv-note" class="muted small" hidden>No personnel or charting data for this game yet. Charting (motion, play action, box, blitzers…) covers 2022 onward and updates during the season; personnel, coverage, and players on the field cover 2016 onward and arrive after each season ends.</p>
         </details>
         <div class="legend">
           <span><i class="sw run"></i>Run</span>
@@ -123,6 +141,11 @@
       <div id="play-info">
         <div id="play-head"></div>
         <div id="play-desc"></div>
+        <div id="play-adv"></div>
+        <details id="on-field" hidden>
+          <summary>Players on the field</summary>
+          <div id="on-field-lists"></div>
+        </details>
         <div id="fix-bar">
           <span id="clip-label" class="muted"></span>
           <button data-action="prevClip" title="Previous clip pair in the film">◀ clip</button>
@@ -210,6 +233,7 @@
 
   <script src="../shared/settings.js"></script>
   <script src="../shared/plays.js"></script>
+  <script src="../shared/advanced.js"></script>
   <script src="../shared/align.js"></script>
   <script src="../shared/teams.js"></script>
   <script src="../shared/export.js"></script>

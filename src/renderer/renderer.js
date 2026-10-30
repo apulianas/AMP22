@@ -3,6 +3,7 @@
 
 const { ACTIONS, mergeSettings, comboFromEvent, keyLabel, buildKeymap, DEFAULT_SETTINGS } = A22.settings;
 const P = A22.plays;
+const ADV = A22.advanced;
 const $ = (id) => document.getElementById(id);
 
 // Cut times are frame timestamps rounded to ~0.01 s, and the frame grid's phase changes from
@@ -27,7 +28,11 @@ const S = {
   range: null, // {aStart, bStart, len}
   playing: false,
   speedIdx: 0,
-  filter: { type: 'all', text: '', offense: '', qtr: '', result: '', airMin: null, airMax: null },
+  filter: {
+    type: 'all', text: '', offense: '', qtr: '', result: '',
+    airMin: null, airMax: null, yardsMin: null, yardsMax: null, distMin: null, distMax: null,
+    choices: {}, // ADV_CHOICES key -> option value
+  },
   visible: [], // play indices in list order
   progressFile: null,
   selected: new Set(),
@@ -196,6 +201,7 @@ async function loadGame(force) {
   }
   derivePlays();
   renderQuarters();
+  renderAdvancedFilters();
 
   let filmPath = S.gameData.filmPath;
   if (!filmPath && S.game) {
@@ -229,7 +235,7 @@ function derivePlays() {
     p.key = P.keyReasons(p, S.settings.keyPlays);
     p.neg = P.negativeReasons(p, S.settings.keyPlays);
     p.box = P.boxScore(p);
-    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat}`.toLowerCase();
+    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat} ${ADV.tags(p).join(' ')}`.toLowerCase();
   }
 }
 
@@ -333,16 +339,106 @@ const RESULT_FILTERS = {
   penalty: (p) => p.flags.penalty,
 };
 
+/** Inclusive numeric bounds (S.filter[`${key}Min`/`${key}Max`]); plays without a value are excluded while a bound is set. */
+const RANGE_FILTERS = {
+  yards: (p) => (p.playType !== 'no_play' && (p.cat === 'run' || p.cat === 'pass') ? p.yards : null),
+  air: (p) => p.airYards,
+  dist: (p) => p.ydstogo,
+};
+
+const YES_NO = [['true', 'Yes'], ['false', 'No']];
+/**
+ * Advanced select filters. Each is shown only when the loaded game has data for it. Option
+ * values match exactly, or as "N+" (at least N) / "<=N" (at most N). `options: 'values'` lists
+ * the values present in the game.
+ */
+const ADV_CHOICES = [
+  { key: 'down', label: 'Down', get: (p) => p.down, options: [['1', '1st'], ['2', '2nd'], ['3', '3rd'], ['4', '4th']] },
+  { key: 'offPersonnel', label: 'Off. personnel', get: (p) => p.personnel?.offense, options: 'values', title: 'RB count then TE count (11 = 1 RB, 1 TE, 3 WR)' },
+  { key: 'defPackage', label: 'Def. package', get: (p) => p.personnel?.defense, options: 'values', order: ADV.DEFENSE_ORDER, title: '4 DBs: front (DL-LB); 5 DBs: Nickel; 6: Dime; 7+: Quarter; 3 or fewer: Goal line' },
+  { key: 'qbLocation', label: 'QB alignment', get: (p) => p.charting?.qbLocation, options: 'values' },
+  { key: 'formation', label: 'Formation', get: (p) => p.charting?.formation, options: 'values' },
+  { key: 'backfield', label: 'Backfield', get: (p) => p.charting?.backfield, options: [['0', '0 (empty)'], ['1', '1'], ['2', '2'], ['3+', '3+']], title: 'Offensive players in the backfield, excluding the QB' },
+  { key: 'box', label: 'Box count', get: (p) => p.charting?.box, options: [['<=5', '5 or fewer'], ['6', '6'], ['7', '7'], ['8+', '8+']], title: 'Defenders in the box at the snap' },
+  { key: 'rushers', label: 'Pass rushers', get: (p) => p.charting?.rushers, options: [['<=3', '3 or fewer'], ['4', '4'], ['5+', '5+'], ['6+', '6+']] },
+  { key: 'blitzers', label: 'Blitzers', get: (p) => p.charting?.blitzers, options: [['0', 'No blitz'], ['1+', 'Blitz (1+)'], ['2+', '2+']] },
+  { key: 'motion', label: 'Motion', get: (p) => p.charting?.motion, options: YES_NO },
+  { key: 'playAction', label: 'Play action', get: (p) => p.charting?.playAction, options: YES_NO },
+  { key: 'rpo', label: 'RPO', get: (p) => p.charting?.rpo, options: YES_NO },
+  { key: 'screen', label: 'Screen', get: (p) => p.charting?.screen, options: YES_NO },
+  { key: 'noHuddle', label: 'No-huddle', get: (p) => p.charting?.noHuddle, options: YES_NO },
+  { key: 'coverage', label: 'Coverage', get: (p) => p.charting?.coverage, options: 'values' },
+  { key: 'manZone', label: 'Man/zone', get: (p) => p.charting?.manZone, options: 'values' },
+];
+
+function hasValue(v) {
+  return v != null && v !== '';
+}
+
+function choiceMatches(option, v) {
+  if (!hasValue(v)) return false;
+  if (option.endsWith('+')) return Number(v) >= Number(option.slice(0, -1));
+  if (option.startsWith('<=')) return Number(v) <= Number(option.slice(2));
+  return String(v) === option;
+}
+
+function choiceOptions(spec) {
+  if (spec.options !== 'values') return spec.options;
+  const values = [...new Set(S.plays.map(spec.get).filter(hasValue).map(String))];
+  const rank = (v) => (spec.order && spec.order.includes(v) ? spec.order.indexOf(v) : Infinity);
+  values.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+  return values.map((v) => [v, v]);
+}
+
+function activeAdvancedCount() {
+  const f = S.filter;
+  const ranges = Object.keys(RANGE_FILTERS).filter((k) => f[`${k}Min`] != null || f[`${k}Max`] != null).length;
+  return ranges + Object.values(f.choices).filter(Boolean).length;
+}
+
+function updateAdvancedIndicator() {
+  const n = activeAdvancedCount();
+  const el = $('adv-filter-active');
+  el.hidden = !n;
+  el.textContent = `· ${n} active`;
+}
+
+/** Builds the select filters available for the loaded game, dropping selections it can't satisfy. */
+function renderAdvancedFilters() {
+  const html = [];
+  const choices = {};
+  for (const spec of ADV_CHOICES) {
+    if (!S.plays.some((p) => hasValue(spec.get(p)))) continue;
+    const opts = choiceOptions(spec);
+    const cur = S.filter.choices[spec.key];
+    if (cur && opts.some(([v]) => v === cur)) choices[spec.key] = cur;
+    html.push(`<label${spec.title ? ` title="${esc(spec.title)}"` : ''}>${esc(spec.label)}<select data-choice="${spec.key}">` +
+      `<option value="">Any</option>${opts.map(([v, l]) => `<option value="${esc(v)}"${choices[spec.key] === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`);
+  }
+  S.filter.choices = choices;
+  $('adv-choices').innerHTML = html.join('');
+  $('adv-note').hidden = !S.plays.length || S.plays.some((p) => p.personnel || p.charting);
+  updateAdvancedIndicator();
+}
+
 function passesFilter(p) {
   const f = S.filter;
   if (['run', 'pass', 'special'].includes(f.type) && p.cat !== f.type) return false;
   if (f.offense && p.posteam !== f.offense) return false;
   if (f.qtr && String(p.qtr) !== f.qtr) return false;
   if (f.result && RESULT_FILTERS[f.result] && !RESULT_FILTERS[f.result](p)) return false;
-  if (f.airMin != null || f.airMax != null) {
-    if (p.airYards == null) return false;
-    if (f.airMin != null && p.airYards < f.airMin) return false;
-    if (f.airMax != null && p.airYards > f.airMax) return false;
+  for (const [key, get] of Object.entries(RANGE_FILTERS)) {
+    const min = f[`${key}Min`];
+    const max = f[`${key}Max`];
+    if (min == null && max == null) continue;
+    const v = get(p);
+    if (v == null) return false;
+    if (min != null && v < min) return false;
+    if (max != null && v > max) return false;
+  }
+  for (const spec of ADV_CHOICES) {
+    const option = f.choices[spec.key];
+    if (option && !choiceMatches(option, spec.get(p))) return false;
   }
   if (f.text) {
     for (const w of f.text.toLowerCase().split(/\s+/).filter(Boolean)) if (!p.searchText.includes(w)) return false;
@@ -379,7 +475,7 @@ function renderList() {
     if (noFilm) badges.push('<span class="badge nofilm">no film</span>');
     html.push(
       `<li data-i="${i}" class="${cls}"><div class="r1"><input class="play-check" type="checkbox" hidden aria-label="Select ${esc(P.clockLabel(p))} for export"${S.selected.has(i) ? ' checked' : ''} /><span class="clock">${esc(P.clockLabel(p))}</span>` +
-        `<span class="dd">${esc(P.downDistance(p))}</span><span class="team">${esc(p.yrdln)}</span>` +
+        `<span class="dd">${esc(P.downDistance(p))}</span><span class="team">${esc(p.yrdln)}</span>${personnelHtml(p)}` +
         `<span class="badges">${badges.join('')}</span></div>${boxHtml(p)}<div class="desc">${esc(p.desc)}</div></li>`
     );
   });
@@ -399,6 +495,29 @@ function boxHtml(p) {
     (b.result ? `<span class="res ${b.tone}">${esc(b.result)}</span>` : '') +
     (p.airYards != null ? `<span class="res" title="Pass depth from the line of scrimmage, excluding yards after catch">Air: ${esc(p.airYards)} yd</span>` : '') +
     (b.penalty ? `<span class="pen" title="${esc(b.penalty)}">PEN</span>` : '') + '</div>';
+}
+
+function personnelHtml(p) {
+  const pers = p.personnel;
+  if (!pers || (!pers.offense && !pers.defense)) return '';
+  const text = [pers.offense, pers.defense].filter(Boolean).join(' v ');
+  return `<span class="pers" title="Offensive personnel v defensive package">${esc(text)}</span>`;
+}
+
+function playerLine(pl) {
+  const num = pl.number ? `#${pl.number} ` : '';
+  return `<li><span class="pos">${esc(pl.position || '?')}</span>${esc(num)}${esc(pl.name || `Unknown player${pl.id ? ` (${pl.id})` : ''}`)}</li>`;
+}
+
+function renderAdvancedInfo(p) {
+  const tags = p ? ADV.tags(p) : [];
+  $('play-adv').innerHTML = tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('');
+  const onField = p && p.onField;
+  const box = $('on-field');
+  box.hidden = !onField;
+  if (!onField) return;
+  const side = (title, list) => `<div><h4>${esc(title)}</h4><ul>${list.map(playerLine).join('')}</ul></div>`;
+  $('on-field-lists').innerHTML = side(`${p.posteam} offense`, onField.offense) + side(`${p.defteam} defense`, onField.defense);
 }
 
 function driveHeader(p) {
@@ -435,7 +554,9 @@ function renderInfo() {
       `<span class="muted">${esc(p.posteam)} ball</span>${boxHtml(p)}` +
       p.key.concat(p.neg).map((k) => `<span class="badge ${k}">${k}</span>`).join('');
     $('play-desc').textContent = p.desc;
+    renderAdvancedInfo(p);
   } else {
+    renderAdvancedInfo(null);
     head.textContent = S.curPair >= 0 ? `Film clip ${S.curPair + 1}` : '';
     $('play-desc').textContent = '';
   }
@@ -1279,14 +1400,26 @@ function wire() {
   $('sel-offense').addEventListener('change', (e) => { S.filter.offense = e.target.value; e.target.blur(); renderList(); });
   $('sel-qtr').addEventListener('change', (e) => { S.filter.qtr = e.target.value; e.target.blur(); renderList(); });
   $('sel-result').addEventListener('change', (e) => { S.filter.result = e.target.value; e.target.blur(); renderList(); });
-  for (const [id, field] of [['air-yards-min', 'airMin'], ['air-yards-max', 'airMax']]) {
+  for (const [id, field] of [
+    ['air-yards-min', 'airMin'], ['air-yards-max', 'airMax'],
+    ['yards-min', 'yardsMin'], ['yards-max', 'yardsMax'],
+    ['dist-min', 'distMin'], ['dist-max', 'distMax'],
+  ]) {
     $(id).addEventListener('input', (e) => {
       if (!e.target.reportValidity()) return;
       S.filter[field] = e.target.value === '' ? null : e.target.valueAsNumber;
-      $('air-filter-active').hidden = S.filter.airMin == null && S.filter.airMax == null;
+      updateAdvancedIndicator();
       renderList();
     });
   }
+  $('adv-choices').addEventListener('change', (e) => {
+    const key = e.target.dataset.choice;
+    if (!key) return;
+    S.filter.choices[key] = e.target.value;
+    e.target.blur();
+    updateAdvancedIndicator();
+    renderList();
+  });
 
   const scrub = $('scrub');
   scrub.addEventListener('input', () => {
