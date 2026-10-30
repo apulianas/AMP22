@@ -10,6 +10,32 @@
 
 AMP22 is a desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays the sideline and end zone angles of each play side by side, kept in sync. You can jump to any play from the nflverse (nflfastR) play-by-play and step through the film frame by frame.
 
+## Screenshots
+
+### Synced sideline and end zone
+
+Browse color-coded plays and drive summaries while watching both angles together. Frame stepping, playback speed, and sync-offset controls sit below the film, with the selected play's result and charting tags.
+
+![AMP22 showing synced sideline and end zone film, play-by-play navigation, and frame controls](docs/screenshots/synced-viewer.png)
+
+### Filters and charting
+
+Combine offense, play type, result, and air-yards filters with the available quarterback alignment, motion, play-action, box-count, and pass-rush charting. This view narrows the game to a Ravens key pass with at least 10 air yards.
+
+![AMP22 with advanced filters expanded and a matching key pass selected](docs/screenshots/filters-and-charting.png)
+
+### Multi-play clip export
+
+Export selected plays in game order as sideline, end zone, or stacked portrait video. Keep the play overlays and available headshots, or choose a clean export.
+
+<img src="docs/screenshots/clip-export.png" width="640" alt="AMP22 export dialog with three plays selected and both-angle portrait output chosen" />
+
+### Settings and shortcuts
+
+Customize frame-jump size, end-of-play behavior, slow-motion speeds, key-play definitions, and keyboard shortcuts.
+
+<img src="docs/screenshots/settings.png" width="800" alt="AMP22 settings for playback, key-play definitions, and remappable keyboard shortcuts" />
+
 ## Features
 
 - **Two synced angles.** The A22 file is one continuous video in which each play appears twice: the high sideline angle first, then the end zone angle. The app finds the cuts, pairs the two clips for each play, and plays both together on one clock. The layout switches between side-by-side and stacked depending on the window shape.
@@ -142,6 +168,8 @@ npm run analyze -- "/path/to/TeamA22.mp4" --out analysis-out/team --frames 6
 - Player headshots: [nflverse player directory](https://github.com/nflverse/nflverse-data/releases/download/players/players.csv), using its NFL-hosted headshot URLs.
 
 ## Development
+
+Follow [the repository contribution instructions](AGENTS.md). User-visible PRs should update the relevant README features and usage, and refresh affected screenshots in `docs/screenshots/`; the PR template includes a checklist for this.
 
 ```sh
 npm test           # unit tests (node:test)
