@@ -24,6 +24,7 @@ const running = new Map(); // film path -> {controller, promise}
 let exporting = null;
 let lastExportPath = null;
 let headshotPreparation = null;
+const appIcon = path.join(__dirname, '..', 'renderer', 'assets', 'icon.png');
 
 function createWindow() {
   const angleUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'angle.html')).href;
@@ -33,7 +34,8 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 640,
     backgroundColor: '#0d1117',
-    title: 'A22 Film Tool',
+    title: 'AMP22',
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -54,6 +56,7 @@ function createWindow() {
           minHeight: 300,
           backgroundColor: '#000000',
           autoHideMenuBar: true,
+          icon: appIcon,
           webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
@@ -230,7 +233,7 @@ function registerIpc() {
     try {
       const result = await dialog.showSaveDialog(win, {
         title: 'Export selected plays',
-        defaultPath: path.join(app.getPath('videos'), safeFilename(request.suggestedName || `a22-${request.clips.length}-plays-${request.mode}`)),
+        defaultPath: path.join(app.getPath('videos'), safeFilename(request.suggestedName || `AMP22-${request.clips.length}-plays-${request.mode}`)),
         filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
       });
       if (result.canceled || controller.signal.aborted) return { cancelled: true };
@@ -259,10 +262,14 @@ function registerIpc() {
   });
 }
 
-// Developer hooks: isolated profile + scripted automation (used for smoke tests / screenshots).
-if (process.env.A22_USER_DATA) app.setPath('userData', path.resolve(process.env.A22_USER_DATA));
+app.setName('AMP22');
+// Keep the original profile so the rebrand retains settings, film links, and caches.
+app.setPath('userData', process.env.A22_USER_DATA
+  ? path.resolve(process.env.A22_USER_DATA)
+  : path.join(app.getPath('appData'), 'A22 Film Tool'));
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock.setIcon(appIcon);
   const ud = app.getPath('userData');
   data = new DataService(path.join(ud, 'cache'), (url, options) => net.fetch(url, options));
   settingsStore = new JsonStore(path.join(ud, 'settings.json'), {});

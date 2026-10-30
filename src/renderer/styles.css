@@ -28,7 +28,9 @@ button:disabled { opacity: .4; cursor: default; }
 .row { display: flex; gap: 6px; align-items: center; }
 
 #topbar { height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
-#topbar .brand { font-weight: 800; letter-spacing: 1px; color: var(--key); margin-right: 6px; }
+#topbar .brand { display: flex; align-items: center; gap: 3px; flex: none; height: 36px; padding: 0 8px; margin-right: 6px; background: #000; border-radius: 8px; }
+#topbar .brand img { display: block; width: 52px; height: 34px; }
+#topbar .brand span { color: #a970ff; font-size: 25px; font-weight: 800; font-style: italic; letter-spacing: -1px; }
 #film-name { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #progress { display: flex; align-items: center; gap: 6px; }
 #progress .bar { width: 180px; height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; }

@@ -34,12 +34,12 @@
   }
 
   function safeFilename(name) {
-    const stem = String(name || 'A22-clip').replace(/\.mp4$/i, '')
+    const stem = String(name || 'AMP22-clip').replace(/\.mp4$/i, '')
       .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
       .replace(/→/g, '-to-').replace(/−/g, '-')
       .replace(/[^a-zA-Z0-9._+-]+/g, '-').replace(/-+/g, '-')
-      .replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 180).replace(/[.\-]+$/g, '') || 'A22-clip';
-    return `${/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(stem) ? 'A22-' : ''}${stem}.mp4`;
+      .replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 180).replace(/[.\-]+$/g, '') || 'AMP22-clip';
+    return `${/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(stem) ? 'AMP22-' : ''}${stem}.mp4`;
   }
 
   function exportFilename(plays) {

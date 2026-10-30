@@ -608,7 +608,7 @@ function attachAngleWindow(popup) {
   const { video, figure, key } = detachedAngle;
   const name = key === 'a' ? 'Sideline' : 'End zone';
   const doc = popup.document;
-  doc.title = `${name} - A22 Film Tool`;
+  doc.title = `${name} - AMP22`;
   doc.getElementById('angle-name').textContent = name;
   const rel = currentRel();
   const playing = S.playing;
@@ -934,7 +934,7 @@ function openShare() {
       if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
       return { ...A22.clipExport.clipRange(S.pairs[pairIdx], S.fps, offsetFrames(pairIdx)), play: S.plays[i] };
     });
-    const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'A22 Film Tool';
+    const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'AMP22';
     S.exportDraft = { file: S.film.path, clips, matchup };
   } catch (e) {
     $('share-status').textContent = e.message;

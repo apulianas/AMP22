@@ -1,6 +1,14 @@
-# A22 Film Tool
+# AMP22
 
-A desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays the sideline and end zone angles of each play side by side, kept in sync. You can jump to any play from the nflverse (nflfastR) play-by-play and step through the film frame by frame.
+<p align="center">
+  <img src="src/renderer/assets/icon.png" width="220" height="220" alt="AMP22: orange AMP signature and purple 22 over a charcoal football field" />
+</p>
+<p align="center">
+  <strong>Synced All-22 film study for macOS and Windows.</strong><br />
+  <a href="https://github.com/apulianas/AMP22/releases/latest">Download the latest release</a>
+</p>
+
+AMP22 is a desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays the sideline and end zone angles of each play side by side, kept in sync. You can jump to any play from the nflverse (nflfastR) play-by-play and step through the film frame by frame.
 
 ## Features
 
@@ -104,7 +112,7 @@ Settings include:
 - Key-play definitions
 - Keyboard shortcuts
 
-Data is stored in Electron's `userData` folder:
+Data is stored in Electron's `userData` folder. AMP22 retains the original `A22 Film Tool` profile directory so existing settings, film links, fixes, and cached analysis remain available after upgrading. The application identifier is also unchanged for installer continuity.
 
 | File or folder | Contents |
 | --- | --- |
@@ -147,10 +155,24 @@ npm run dist:win   # Windows NSIS installer (run on Windows)
 
 ### Automatic builds and releases
 
-Every merge (or push) to `master` builds the macOS DMG and Windows installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/a22-film-tool/releases) once both builds pass. The release version automatically increments the highest stable Git tag or `package.json` baseline by one patch (initially `0.2.1`). Both installers use that version; no version-bump commit is needed. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
+Every merge (or push) to `master` builds the macOS DMG and Windows installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/AMP22/releases) once both builds pass. The release version automatically increments the highest stable Git tag or `package.json` baseline by one patch (initially `0.2.1`). Both installers use that version; no version-bump commit is needed. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
 
 Pull requests build and test both platforms and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
 
 Development hooks for automation:
 - `A22_USER_DATA=/dir` uses a different userData folder.
 - `A22_DEV_SCRIPT=/file.js` loads a module and calls it with `{ app, win, analysisDir }` after the window opens.
+
+### Branding and app icons
+
+The AMP signature is the supplied vector artwork in `src/renderer/assets/amp.svg`, recolored orange (`#ff8a24`). Two large purple (`#a970ff`) **2** numerals flank its descending M-to-P stroke on a lifted charcoal-to-black gradient app icon background. Translucent football field markings angle upward by 12 degrees across the entire icon, continuing behind AMP: stronger full-width lines every five yards, with one-yard hashes extending toward the edges and bleeding beyond the icon mask. Markings are subtler above and stronger below, without disappearing behind the signature. macOS and Windows use this same full-field composition. All-22 film terminology and the existing `A22_*` development hooks keep their original names.
+
+Open `build/AMP22.icon` in Apple's **Icon Composer** to edit the separate orange AMP and purple 22 layers, their Liquid Glass materials, lighting, and the non-glass field texture behind the lettering. macOS packages compile this native document with Xcode 26+; the DMG volume uses `build/icon.icns`, and Windows uses the multi-resolution `build/icon.ico`. The development app uses `src/renderer/assets/icon.png`. Generated assets are committed so Windows builds do not need Apple tools.
+
+After changing the signature, numeral artwork, or Composer materials, regenerate the exports on macOS with Xcode 26+ installed:
+
+```sh
+npm run build:icons
+```
+
+Set `ICON_COMPOSER_TOOL` to the full path of `ictool` inside Icon Composer if Xcode is installed somewhere other than `/Applications/Xcode.app`. The script rebuilds the AMP layer from the supplied signature, then renders the macOS 26 default appearance and generates PNG, ICNS, and ICO exports. Keep layout changes to the AMP layer in `scripts/build-icons.js`; edit the 22 layer and materials in the Composer document. Release builds require the full Xcode developer directory selected and its license accepted.
