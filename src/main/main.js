@@ -10,6 +10,7 @@ const clipExport = require('./export');
 const { safeFilename } = require('../shared/export');
 const { DataService } = require('./data');
 const { JsonStore } = require('./store');
+const { UpdateService } = require('./updates');
 const settingsMod = require('../shared/settings');
 const schedule = require('../shared/schedule');
 const films = require('../shared/films');
@@ -20,6 +21,7 @@ let data;
 let settingsStore;
 let gamesStore;
 let analysisDir;
+let updates;
 const running = new Map(); // film path -> {controller, promise}
 let exporting = null;
 let lastExportPath = null;
@@ -112,6 +114,9 @@ function listVideos(root, maxDepth = 4) {
 
 function registerIpc() {
   ipcMain.handle('app:init', () => ({ settings: getSettings(), platform: process.platform, version: app.getVersion(), teams: teams.TEAMS }));
+  ipcMain.handle('updates:check', (_e, automatic) => updates.check({ automatic: automatic === true }));
+  ipcMain.handle('updates:dismiss', () => updates.dismiss());
+  ipcMain.handle('updates:download', () => updates.openDownload());
 
   ipcMain.handle('settings:save', (_e, s) => {
     settingsStore.set(settingsMod.mergeSettings(s));
@@ -275,6 +280,13 @@ app.whenReady().then(() => {
   settingsStore = new JsonStore(path.join(ud, 'settings.json'), {});
   gamesStore = new JsonStore(path.join(ud, 'games.json'), {});
   analysisDir = path.join(ud, 'analysis');
+  updates = new UpdateService({
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    fetch: (url, options) => net.fetch(url, options),
+    store: new JsonStore(path.join(ud, 'updates.json'), {}),
+    openExternal: (url) => shell.openExternal(url),
+  });
   registerIpc();
   createWindow();
   if (process.env.A22_DEV_SCRIPT) {

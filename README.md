@@ -32,9 +32,15 @@ Export selected plays in game order as sideline, end zone, or stacked portrait v
 
 ### Settings and shortcuts
 
-Customize frame-jump size, end-of-play behavior, slow-motion speeds, key-play definitions, and keyboard shortcuts.
+Customize frame-jump size, end-of-play behavior, slow-motion speeds, key-play definitions, and keyboard shortcuts. Check the installed version and look for updates from Settings.
 
 <img src="docs/screenshots/settings.png" width="800" alt="AMP22 settings for playback, key-play definitions, and remappable keyboard shortcuts" />
+
+### Update notifications
+
+See the latest published release notes before opening the download page. This is the running app checking a real GitHub release; installation remains manual.
+
+<img src="docs/screenshots/update-notification.png" width="800" alt="AMP22 update prompt showing the installed and available versions, published release notes, Later, and Open download page" />
 
 ## Features
 
@@ -59,6 +65,7 @@ Customize frame-jump size, end-of-play behavior, slow-motion speeds, key-play de
     - Each season's files (about 10–50 MB) are downloaded once and cached for offline use.
 - **Frame-accurate controls.** Step 1 frame or N frames at a time (N defaults to 10 and is configurable). You can also move to the next or previous play, restart the play, and change to slow-motion speeds. At the end of a play the app can stop, auto-advance, or loop.
 - **Clip export.** Click a play and then **Share** to export its sideline angle, end zone angle, or both. Shift-click another play to select the visible plays in between, or turn on **Multi-select** to choose individual plays. Checkboxes are hidden during normal single-play browsing. Selected plays are joined into one MP4 in game order, even when selected out of order. Both angles are stacked in a 1080×1920 (9:16) portrait video with the play's clock, down/distance, box-score result, badges, and description below, without camera-angle labels over the footage. Single-angle exports are 1920×1080 with a results lower third for the first three seconds of each play. Exports use normal speed and saved sync offsets, with audio from the selected angle (sideline for both). The original film is never modified.
+- **Update notifications.** Installed macOS and Windows builds check GitHub for a newer stable release at startup. The prompt shows your version, the latest version, and its published changelog. **Open download page** opens that release in your browser; choose the macOS DMG or Windows installer and install it manually. **Later** suppresses startup prompts for that version, but the **Update available** button stays accessible and newer versions can notify again. If playback, export, or another dialog is active, the button appears without interrupting your work. **Settings → Check for updates…** always lets you check again, including in development builds. Network failures are shown in Settings and can be retried.
 
 ## Getting started
 
@@ -144,8 +151,15 @@ Data is stored in Electron's `userData` folder. AMP22 retains the original `A22 
 | --- | --- |
 | `settings.json` | Settings |
 | `games.json` | Film path, fixes, and offsets for each game |
+| `updates.json` | Latest release version dismissed with Later or opened for download |
 | `analysis/` | Cached film analysis |
 | `cache/` | Downloaded schedule and play-by-play |
+
+### Updating AMP22
+
+Open **Settings → Check for updates…** to see whether a newer stable version is available. Packaged apps also check once at startup (an internet connection is required). Release notes come from the public GitHub release and are displayed as plain text, not executable HTML. Automatic checks do not download installers or send your film, game data, or settings.
+
+The download button opens the release page, not an unattended installer. After downloading, quit AMP22 before replacing the app on macOS or running the installer on Windows. Existing installations without this update checker need one manual upgrade to gain notifications. In-place automatic download/install is not enabled on either platform; the current macOS releases are unsigned, and reliable macOS auto-updates require Developer ID signing.
 
 ## How analysis works
 
@@ -184,6 +198,8 @@ npm run dist:win   # Windows NSIS installer (run on Windows)
 ### Automatic builds and releases
 
 Every merge (or push) to `master` builds the macOS DMG and Windows installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/AMP22/releases) once both builds pass. The release version automatically increments the highest stable Git tag or `package.json` baseline by one patch (initially `0.2.1`). Both installers use that version; no version-bump commit is needed. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
+
+GitHub-generated release notes are also the in-app changelog. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
 
 Pull requests build and test both platforms and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
 
