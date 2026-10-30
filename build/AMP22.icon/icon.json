@@ -1,0 +1,52 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "srgb:0.16,0.16,0.16,1",
+      "srgb:0.015,0.015,0.015,1"
+    ]
+  },
+  "groups": [
+    {
+      "name": "Purple 22",
+      "layers": [
+        {
+          "name": "22",
+          "image-name": "22.svg",
+          "glass": true
+        }
+      ],
+      "lighting": "individual",
+      "specular": true,
+      "shadow": { "kind": "layer-color", "opacity": 0.3 },
+      "translucency": { "enabled": true, "value": 0.15 }
+    },
+    {
+      "name": "Orange AMP",
+      "layers": [
+        {
+          "name": "AMP signature",
+          "image-name": "amp.svg",
+          "glass": true
+        }
+      ],
+      "lighting": "individual",
+      "specular": true,
+      "shadow": { "kind": "layer-color", "opacity": 0.3 },
+      "translucency": { "enabled": true, "value": 0.15 }
+    },
+    {
+      "name": "Field texture",
+      "layers": [
+        {
+          "name": "Fading field hash marks",
+          "image-name": "field-hashes.svg",
+          "glass": false
+        }
+      ],
+      "specular": false,
+      "shadow": { "kind": "none", "opacity": 0 },
+      "translucency": { "enabled": false, "value": 0 }
+    }
+  ],
+  "supported-platforms": { "squares": "shared" }
+}

@@ -62,8 +62,8 @@ test('suggested names contain only clock, main player and yards, or a clock rang
   assert.equal(exportFilename([{ ...first, flags: {}, yards: -6 }]), 'Q2-08m34s-L.Jackson-minus6yds.mp4');
   assert.equal(exportFilename([{ ...first, names: { kicker: 'T.Loop' }, yards: null }]), 'Q2-08m34s-T.Loop.mp4');
   assert.equal(safeFilename('../clip\\bad:name?*.mp4'), 'clip-bad-name.mp4');
-  assert.equal(safeFilename('CON.mp4'), 'A22-CON.mp4');
-  assert.equal(safeFilename('...'), 'A22-clip.mp4');
+  assert.equal(safeFilename('CON.mp4'), 'AMP22-CON.mp4');
+  assert.equal(safeFilename('...'), 'AMP22-clip.mp4');
   assert.ok(exportFilename([{ ...first, names: { rusher: 'A'.repeat(500) } }]).length <= 184);
   assert.ok(safeFilename('x'.repeat(500)).length <= 184);
 });

@@ -3,12 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; media-src file: 'self'; img-src 'self' file: data:" />
-  <title>A22 Film Tool</title>
+  <title>AMP22</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header id="topbar">
-    <div class="brand">A22</div>
+    <div class="brand" role="img" aria-label="AMP22">
+      <img src="assets/amp.svg" alt="" />
+      <span aria-hidden="true">22</span>
+    </div>
     <select id="sel-season" title="Season"></select>
     <select id="sel-team" title="Team"></select>
     <select id="sel-week" title="Game"></select>

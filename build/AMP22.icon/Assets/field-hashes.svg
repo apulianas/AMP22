@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <g transform="rotate(-12 512 780)" fill="none" stroke="#fff" stroke-width="5">
+    <g id="five-yard-lines" stroke-width="7">
+      <path opacity=".12" d="M-200 -20h1424"/>
+      <path opacity=".13" d="M-200 180h1424"/>
+      <path opacity=".14" d="M-200 380h1424"/>
+      <path opacity=".15" d="M-200 580h1424"/>
+      <path opacity=".18" d="M-200 780h1424"/>
+      <path opacity=".29" d="M-200 980h1424"/>
+    </g>
+    <g id="one-yard-hashes">
+      <path opacity=".07" d="M24 20h32M330 20h32M662 20h32M968 20h32"/>
+      <path opacity=".07" d="M24 60h32M330 60h32M662 60h32M968 60h32"/>
+      <path opacity=".07" d="M24 100h32M330 100h32M662 100h32M968 100h32"/>
+      <path opacity=".07" d="M24 140h32M330 140h32M662 140h32M968 140h32"/>
+      <path opacity=".075" d="M24 220h32M330 220h32M662 220h32M968 220h32"/>
+      <path opacity=".075" d="M24 260h32M330 260h32M662 260h32M968 260h32"/>
+      <path opacity=".075" d="M24 300h32M330 300h32M662 300h32M968 300h32"/>
+      <path opacity=".075" d="M24 340h32M330 340h32M662 340h32M968 340h32"/>
+      <path opacity=".08" d="M24 420h32M330 420h32M662 420h32M968 420h32"/>
+      <path opacity=".08" d="M24 460h32M330 460h32M662 460h32M968 460h32"/>
+      <path opacity=".08" d="M24 500h32M330 500h32M662 500h32M968 500h32"/>
+      <path opacity=".08" d="M24 540h32M330 540h32M662 540h32M968 540h32"/>
+      <path opacity=".09" d="M24 620h32M330 620h32M662 620h32M968 620h32"/>
+      <path opacity=".1" d="M24 660h32M330 660h32M662 660h32M968 660h32"/>
+      <path opacity=".11" d="M24 700h32M330 700h32M662 700h32M968 700h32"/>
+      <path opacity=".12" d="M24 740h32M330 740h32M662 740h32M968 740h32"/>
+      <path opacity=".13" d="M24 820h32M330 820h32M662 820h32M968 820h32"/>
+      <path opacity=".16" d="M24 860h32M330 860h32M662 860h32M968 860h32"/>
+      <path opacity=".19" d="M24 900h32M330 900h32M662 900h32M968 900h32"/>
+      <path opacity=".21" d="M24 940h32M330 940h32M662 940h32M968 940h32"/>
+      <path opacity=".23" d="M24 1020h32M330 1020h32M662 1020h32M968 1020h32"/>
+      <path opacity=".25" d="M24 1060h32M330 1060h32M662 1060h32M968 1060h32"/>
+    </g>
+  </g>
+</svg>

@@ -58,7 +58,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
       - uses: actions/upload-artifact@v4
         with:
-          name: a22-film-tool-${{ matrix.os }}
+          name: amp22-${{ matrix.os }}
           if-no-files-found: error
           path: |
             dist/*.dmg
@@ -73,7 +73,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: a22-film-tool-*
+          pattern: amp22-*
           merge-multiple: true
           path: release
       - name: Publish installers
@@ -89,7 +89,7 @@ jobs:
           else
             gh release create "$tag" release/* \
               --target "$GITHUB_SHA" \
-              --title "A22 Film Tool $tag" \
+              --title "AMP22 $tag" \
               --generate-notes \
               --latest
           fi

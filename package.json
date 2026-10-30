@@ -1,6 +1,6 @@
 {
-  "name": "a22-film-tool",
-  "productName": "A22 Film Tool",
+  "name": "amp22",
+  "productName": "AMP22",
   "version": "0.2.0",
   "description": "Watch and analyze NFL All-22 film: synced sideline + end zone angles, play-by-play navigation, frame stepping.",
   "main": "src/main/main.js",
@@ -11,6 +11,7 @@
     "start": "electron .",
     "test": "node --test",
     "analyze": "node scripts/analyze.js",
+    "build:icons": "node scripts/build-icons.js",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win"
@@ -29,7 +30,7 @@
   },
   "build": {
     "appId": "com.apulianas.a22filmtool",
-    "productName": "A22 Film Tool",
+    "productName": "AMP22",
     "directories": {
       "output": "dist"
     },
@@ -42,12 +43,14 @@
       "node_modules/ffprobe-static/**"
     ],
     "mac": {
+      "icon": "build/AMP22.icon",
       "category": "public.app-category.sports",
       "target": [
         "dmg"
       ]
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -56,6 +59,9 @@
           ]
         }
       ]
+    },
+    "dmg": {
+      "icon": "build/icon.icns"
     },
     "nsis": {
       "oneClick": false,
