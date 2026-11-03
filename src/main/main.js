@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const media = require('./media');
 const clipExport = require('./export');
+const playReports = require('./reports');
+const reportOptions = require('../shared/reports');
 const { safeFilename } = require('../shared/export');
 const { DataService } = require('./data');
 const { JsonStore } = require('./store');
@@ -233,6 +235,7 @@ function registerIpc() {
   ipcMain.handle('clips:export', async (e, request) => {
     if (exporting) throw new Error('A clip export is already in progress.');
     clipExport.validateRequest(request);
+    if (request.report) reportOptions.validateReport(request.report, request.clips.length);
     const controller = new AbortController();
     exporting = controller;
     try {
@@ -243,11 +246,39 @@ function registerIpc() {
       });
       if (result.canceled || controller.signal.aborted) return { cancelled: true };
       const destination = /\.mp4$/i.test(result.filePath) ? result.filePath : result.filePath + '.mp4';
+      const reportFile = request.report && request.report.format !== 'none'
+        ? playReports.reportPath(destination, request.report.format) : null;
+      if (reportFile && fs.existsSync(reportFile)) {
+        const answer = await dialog.showMessageBox(win, {
+          type: 'warning',
+          message: `Replace ${path.basename(reportFile)}?`,
+          detail: 'A play breakdown already exists alongside this video.',
+          buttons: ['Cancel', 'Replace'],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        if (answer.response !== 1 || controller.signal.aborted) return { cancelled: true };
+      }
+      if (reportFile) {
+        const target = fs.existsSync(reportFile) ? await fs.promises.realpath(reportFile) : path.resolve(reportFile);
+        for (const file of new Set(request.clips.map((clip) => clip.file || request.file))) {
+          if (await fs.promises.realpath(file) === target) throw new Error('The play breakdown cannot replace an original film.');
+        }
+      }
+      const report = reportFile ? await playReports.prepareReport(request.report, request.clips.length, { signal: controller.signal }) : null;
       const exported = await clipExport.exportClips(request, destination, {
         signal: controller.signal,
         onProgress: (progress) => { if (!e.sender.isDestroyed()) e.sender.send('clips:progress', progress); },
       });
       lastExportPath = exported.path;
+      if (reportFile) {
+        try {
+          await playReports.saveReport(reportFile, report);
+          exported.reportPath = reportFile;
+        } catch (error) {
+          exported.reportError = `Video saved, but the play breakdown could not be saved: ${error.message}`;
+        }
+      }
       return exported;
     } catch (error) {
       if (controller.signal.aborted) return { cancelled: true };

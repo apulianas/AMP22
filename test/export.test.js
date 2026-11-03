@@ -82,6 +82,10 @@ test('export requests reject missing selection, invalid ranges, and invalid card
   assert.equal(validateRequest(request({ clean: true, clips: [{ aStart: 1, bStart: 6, len: 2 }] })).clean, true);
   assert.throws(() => validateRequest(request({ clean: 'true' })), /clean export option/);
   assert.throws(() => validateRequest(request({ clean: false, clips: [{ aStart: 1, bStart: 6, len: 2 }] })), /image/);
+  assert.equal(validateRequest(request({ clips: [{ ...clip, file: '/defense.mp4' }] })).clips[0].file, '/defense.mp4');
+  for (const file of [null, 7, '', ' ']) {
+    assert.throws(() => validateRequest(request({ clips: [{ ...clip, file }] })), /film source/);
+  }
 });
 
 test('clean exports skip the image input and overlay filter in every layout', () => {
@@ -184,6 +188,27 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
     ] }, endzone);
     assert.ok(isBlue(await frame(endzone, 0.2, 800, 200)));
     assert.equal((await probe(endzone)).hasAudio, true);
+
+    const defenseFile = path.join(temp, 'defense.mp4');
+    await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-ss', '9', '-i', silentFile,
+      '-t', '9', '-c', 'copy', defenseFile]);
+    const mixedOutput = path.join(temp, 'split.mp4');
+    const mixed = { file, mode: 'both', clean: true, clips: [
+      { file, aStart: 0, bStart: 4.5, len: 0.6 },
+      { file: defenseFile, aStart: 0, bStart: 4.5, len: 0.6 },
+      { file, aStart: 0, bStart: 4.5, len: 0.6 },
+    ] };
+    await exportClips(mixed, mixedOutput);
+    assert.ok(isRed(await frame(mixedOutput, 0.2, 500, 500)));
+    assert.ok(isBlue(await frame(mixedOutput, 0.2, 500, 1100)));
+    assert.ok(isGreen(await frame(mixedOutput, 0.9, 500, 500)));
+    assert.ok(isYellow(await frame(mixedOutput, 0.9, 500, 1100)));
+    assert.ok(isRed(await frame(mixedOutput, 1.5, 500, 500)));
+    assert.equal((await probe(mixedOutput)).hasAudio, true);
+    await assert.rejects(exportClips(mixed, defenseFile), /original film/);
+    await assert.rejects(exportClips({ ...mixed, clips: [
+      { ...mixed.clips[1], bStart: 8.8 },
+    ] }, mixedOutput), /past the end/);
 
     for (const mode of ['sideline', 'endzone', 'both']) {
       const cleanOutput = path.join(temp, `clean-${mode}.mp4`);

@@ -9,11 +9,12 @@ const plays = require('../src/shared/plays');
 const settings = require('../src/shared/settings');
 const clipExport = require('../src/shared/export');
 const advanced = require('../src/shared/advanced');
+const reports = require('../src/shared/reports');
 
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
-    A22: { plays, settings, clipExport, advanced },
+    A22: { plays, settings, clipExport, advanced, reports },
     window: { addEventListener() {}, open: () => null },
     document: {
       getElementById(id) {

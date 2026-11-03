@@ -15,14 +15,6 @@
     <select id="sel-season" title="Season"></select>
     <select id="sel-team" title="Team"></select>
     <select id="sel-week" title="Game"></select>
-    <button id="btn-film" title="Choose the A22 film file for this game">Choose film…</button>
-    <span id="film-name" class="muted"></span>
-    <button id="btn-analyze" hidden>Analyze film</button>
-    <div id="progress" hidden>
-      <div class="bar"><div class="fill"></div></div>
-      <span class="label"></span>
-      <button id="btn-cancel" title="Cancel analysis">✕</button>
-    </div>
     <span class="spacer"></span>
     <span id="status" class="muted"></span>
     <button id="btn-update" class="primary" hidden>Update available</button>
@@ -31,6 +23,23 @@
     <button id="btn-settings" title="Settings">⚙</button>
     <button id="btn-help" data-shortcut="help" title="Keyboard shortcuts">?</button>
   </header>
+
+  <div id="filmbar">
+    <select id="film-format" aria-label="Film format">
+      <option value="single">Single file</option>
+      <option value="split">Split offense / defense / ST</option>
+    </select>
+    <button id="btn-film" title="Choose the A22 film file for this game">Choose film…</button>
+    <button id="btn-defense-film" hidden>Choose defense…</button>
+    <button id="btn-special-film" hidden>Choose special teams…</button>
+    <span id="film-name" class="muted"></span>
+    <button id="btn-analyze" hidden>Analyze film</button>
+    <div id="progress" hidden>
+      <div class="bar"><div class="fill"></div></div>
+      <span class="label"></span>
+      <button id="btn-cancel" title="Cancel analysis">✕</button>
+    </div>
+  </div>
 
   <main>
     <aside id="sidebar">
@@ -182,6 +191,19 @@
       <p><label><input id="share-clean" type="checkbox" /> Clean export (no overlays)</label></p>
       <p id="share-overlay-description" class="muted">Both angles are stacked with play details below. Single-angle clips<br>show play results in the lower third for the first 3 seconds of each play.<br>Overlays include the primary player's headshot when available.</p>
       <p id="share-clean-description" class="muted" hidden>Clean exports omit all added text and graphics. Both-angle clean<br>exports center the stacked footage in the portrait frame.</p>
+      <fieldset>
+        <legend>Play breakdown</legend>
+        <label for="share-report-format">Save alongside the video</label>
+        <select id="share-report-format">
+          <option value="csv">CSV spreadsheet</option>
+          <option value="txt">Plain text</option>
+          <option value="pdf">PDF · team colors</option>
+          <option value="none">No breakdown</option>
+        </select>
+        <p><label><input id="share-report-advanced" type="checkbox" /> Include advanced statistics</label></p>
+        <p id="share-report-fields" class="muted small"></p>
+        <p class="muted small">One entry per exported play, in video order. Change defaults<br>and choose advanced fields in Settings → Play breakdown defaults.</p>
+      </fieldset>
       <p class="muted">MP4 video at normal speed, with audio from the selected angle<br>(sideline audio when exporting both).</p>
       <p id="share-status" role="status" aria-live="polite"></p>
       <progress id="share-progress" max="1" value="0" hidden></progress>
@@ -225,6 +247,18 @@
         <label><input id="set-skipnofilm" type="checkbox" /> Next/previous play skips plays without film</label>
         <label>Cut sensitivity (scene score threshold) <input id="set-cut" type="number" min="0.03" max="0.5" step="0.01" /></label>
       </div>
+      <h3>Play breakdown defaults</h3>
+      <div class="grid">
+        <label>Default format
+          <select id="set-report-format">
+            <option value="csv">CSV spreadsheet</option><option value="txt">Plain text</option>
+            <option value="pdf">PDF · team colors</option><option value="none">No breakdown</option>
+          </select>
+        </label>
+        <label><input id="set-report-advanced" type="checkbox" /> Include advanced statistics by default</label>
+      </div>
+      <p class="muted small">Choose the advanced fields to include when enabled. Unavailable values stay blank in CSV and are marked in text/PDF.</p>
+      <div id="set-report-fields" class="grid"></div>
       <h3>Key plays</h3>
       <div class="grid">
         <label><input id="kp-turnovers" type="checkbox" /> Turnovers (INT, fumble lost, on downs)</label>
@@ -265,11 +299,12 @@
     </div>
   </dialog>
 
-  <script src="../shared/settings.js"></script>
   <script src="../shared/plays.js"></script>
   <script src="../shared/advanced.js"></script>
-  <script src="../shared/align.js"></script>
   <script src="../shared/teams.js"></script>
+  <script src="../shared/reports.js"></script>
+  <script src="../shared/settings.js"></script>
+  <script src="../shared/align.js"></script>
   <script src="../shared/export.js"></script>
   <script src="renderer.js"></script>
 </body>

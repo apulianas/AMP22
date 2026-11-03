@@ -103,5 +103,33 @@
     return result;
   }
 
-  return { alignSegment, alignPlays, COSTS };
+  function filmRole(play, team) {
+    if (!team) return null;
+    if (play.cat === 'special') return 'special';
+    if (!['run', 'pass', 'penalty'].includes(play.cat)) return null;
+    if (play.posteam === team) return 'offense';
+    if (play.defteam === team) return 'defense';
+    return null;
+  }
+
+  function alignSplitPlays(plays, pairs, team, anchors = new Map()) {
+    const result = plays.map(() => null);
+    for (const role of ['offense', 'defense', 'special']) {
+      const playIndices = plays.flatMap((p, i) => filmRole(p, team) === role ? [i] : []);
+      const pairIndices = pairs.flatMap((p, i) => p.role === role ? [i] : []);
+      const localPairs = new Map(pairIndices.map((i, j) => [i, j]));
+      const localAnchors = new Map();
+      playIndices.forEach((i, j) => {
+        if (!anchors.has(i)) return;
+        const value = anchors.get(i);
+        if (value === null) localAnchors.set(j, null);
+        else if (localPairs.has(value)) localAnchors.set(j, localPairs.get(value));
+      });
+      alignPlays(playIndices.map((i) => plays[i]), pairIndices.length, localAnchors)
+        .forEach((value, j) => { result[playIndices[j]] = value === null ? null : pairIndices[value]; });
+    }
+    return result;
+  }
+
+  return { alignSegment, alignPlays, alignSplitPlays, filmRole, COSTS };
 });

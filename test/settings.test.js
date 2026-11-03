@@ -37,3 +37,18 @@ test('mergeSettings validates and fills defaults', () => {
   assert.deepEqual(m.shortcuts.prevPlay, ['ArrowUp', 'P']);
   assert.equal(s.mergeSettings({ jumpFrames: 0 }).jumpFrames, 10);
 });
+
+test('play breakdown defaults are CSV without advanced statistics and preserve chosen fields', () => {
+  const defaults = s.mergeSettings({});
+  assert.equal(defaults.playReport.format, 'csv');
+  assert.equal(defaults.playReport.includeAdvanced, false);
+  assert.ok(defaults.playReport.fields.includes('coverage'));
+  const custom = s.mergeSettings({ playReport: { format: 'pdf', includeAdvanced: true, fields: ['coverage', 'motion', 'motion', 'unknown'] } });
+  assert.equal(custom.playReport.format, 'pdf');
+  assert.equal(custom.playReport.includeAdvanced, true);
+  assert.deepEqual(custom.playReport.fields, ['motion', 'coverage']);
+  custom.playReport.fields.push('rpo');
+  assert.ok(!s.mergeSettings({}).playReport.fields.includes('unknown'));
+  assert.deepEqual(s.mergeSettings({ playReport: { fields: [] } }).playReport.fields, []);
+  assert.equal(s.mergeSettings({ playReport: { format: 'invalid' } }).playReport.format, 'csv');
+});

@@ -1,8 +1,8 @@
 (function (root, factory) {
-  const mod = factory();
+  const mod = factory(typeof module === 'object' && module.exports ? require('./reports') : root.A22.reports);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).settings = mod;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (reports) {
   'use strict';
 
   const ACTIONS = [
@@ -37,6 +37,7 @@
     autoAnalyze: true,
     cutThreshold: 0.1,
     skipNoFilm: true,
+    playReport: reports.mergeOptions(),
     keyPlays: {
       turnovers: true,
       scores: true,
@@ -53,6 +54,7 @@
     const s = saved || {};
     const out = Object.assign({}, DEFAULT_SETTINGS, s);
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
+    out.playReport = reports.mergeOptions(s.playReport);
     out.shortcuts = {};
     for (const a of ACTIONS) {
       const v = s.shortcuts && s.shortcuts[a.id];
