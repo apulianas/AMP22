@@ -5,9 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { clipRange, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions } = require('../src/shared/export');
+const { clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions } = require('../src/shared/export');
 const { validateRequest, segmentArgs, exportClips } = require('../src/main/export');
-const { run, probe } = require('../src/main/media');
+const { run, probe, previewFrame } = require('../src/main/media');
 const { ffmpegPath } = require('../src/main/ffpaths');
 
 function cardHeader(mode) {
@@ -22,6 +22,40 @@ function cardHeader(mode) {
 
 const clip = { aStart: 1, bStart: 6, len: 2, card: cardHeader('both') };
 const request = (patch = {}) => ({ file: '/film.mp4', mode: 'both', clips: [{ ...clip }], ...patch });
+
+test('decimal trim advances both synced angles equally and cannot remove a whole clip', () => {
+  const range = { aStart: 10.008, bStart: 20.108, len: 4 };
+  assert.deepEqual(trimRange(range, 1.25), { aStart: 11.258, bStart: 21.358, len: 2.75 });
+  assert.deepEqual(trimRange(range, 0), range);
+  assert.equal(range.len, 4);
+  for (const seconds of [-1, 4, 5, NaN, Infinity, '', null]) {
+    assert.throws(() => trimRange(range, seconds), /Trim/);
+  }
+});
+
+test('grouped angle exports use game order within each block, including split sources', () => {
+  const clips = [{ file: 'offense', play: 1 }, { file: 'defense', play: 2 }];
+  for (const [mode, first, second] of [['sideline-first', 'sideline', 'endzone'], ['endzone-first', 'endzone', 'sideline']]) {
+    const sequence = exportSequence(clips, mode);
+    assert.deepEqual(sequence.map((s) => s.mode), [first, first, second, second]);
+    assert.deepEqual(sequence.map((s) => s.clip.play), [1, 2, 1, 2]);
+    assert.deepEqual(sequence.map((s) => s.clip.file), ['offense', 'defense', 'offense', 'defense']);
+    assert.deepEqual(dimensions(mode), { width: 1920, height: 1080 });
+    assert.equal(validateRequest(request({ mode, clips: [{ ...clip, card: cardHeader(mode) }] })).mode, mode);
+  }
+});
+
+test('overlay duration applies to all layouts and rejects invalid IPC values', () => {
+  for (const mode of ['sideline', 'endzone', 'both']) {
+    for (const seconds of [0, 0.75, 12]) {
+      const args = segmentArgs('/film.mp4', clip, mode, true, 30, false, seconds);
+      assert.ok(args[args.indexOf('-filter_complex') + 1].includes(`enable='lt(t,${seconds})'`));
+    }
+  }
+  for (const overlaySeconds of [-1, NaN, Infinity, '3', null]) {
+    assert.throws(() => validateRequest(request({ overlaySeconds })), /overlay duration/);
+  }
+});
 
 test('export range matches playback padding, cut trim, and saved frame offsets', () => {
   const pair = { sideline: { start: 10, end: 15 }, endzone: { start: 20, end: 24 } };
@@ -149,6 +183,34 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
     const isBlue = ([r, g, b]) => b > 180 && r < 70 && g < 70;
     const isGreen = ([r, g, b]) => g > 80 && r < 70 && b < 70;
     const isYellow = ([r, g, b]) => r > 180 && g > 180 && b < 70;
+    const preview = await previewFrame(file, 4.5);
+    assert.ok(preview.startsWith('data:image/jpeg;base64,'));
+    const previewPath = path.join(temp, 'preview.jpg');
+    await fs.writeFile(previewPath, Buffer.from(preview.split(',')[1], 'base64'));
+    assert.ok(isBlue(await frame(previewPath, 0, 100, 100)));
+    await assert.rejects(previewFrame(file, 999), /No preview/);
+    for (const mode of ['sideline-first', 'endzone-first']) {
+      const output = path.join(temp, `${mode}.mp4`);
+      await exportClips({ file, mode, clean: true, clips: [
+        trimRange({ aStart: 0, bStart: 4.5, len: 1 }, 0.25),
+        trimRange({ aStart: 9, bStart: 13.5, len: 1 }, 0.5),
+      ] }, output);
+      const expected = mode === 'sideline-first' ? [isRed, isGreen, isBlue, isYellow] : [isBlue, isYellow, isRed, isGreen];
+      for (const [i, t] of [0.2, 0.9, 1.5, 2.2].entries()) {
+        assert.ok(expected[i](await frame(output, t, 800, 200)), `${mode} segment ${i}`);
+      }
+      assert.ok(Math.abs((await probe(output)).duration - 2.5) < 0.25);
+    }
+    for (const mode of ['sideline', 'both']) {
+      const output = path.join(temp, `timed-${mode}.mp4`);
+      await exportClips({ file, mode, overlaySeconds: 0.5, clips: [
+        { aStart: 0, bStart: 4.5, len: 1, card: cards[mode] },
+      ] }, output);
+      const [x, y] = mode === 'both' ? [500, 1600] : [800, 900];
+      assert.ok((await frame(output, 0.2, x, y)).every((v) => v > 220));
+      const after = await frame(output, 0.8, x, y);
+      assert.ok(mode === 'both' ? after.every((v) => v < 40) : isRed(after));
+    }
     const progress = [];
     const landscape = path.join(temp, 'sideline.mp4');
     await exportClips({ file, mode: 'sideline', clips: [

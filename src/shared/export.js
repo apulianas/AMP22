@@ -7,7 +7,21 @@
 
   const START_PAD = 0.008;
   const END_TRIM_FRAMES = 3; // Detected cuts can be late; avoid flashing the next shot.
-  const MODES = ['sideline', 'endzone', 'both'];
+  const MODES = ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first'];
+
+  function trimRange(range, seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0 || seconds >= range.len) {
+      throw new Error('Trim must be zero or more seconds and leave some film in each clip.');
+    }
+    return { ...range, aStart: range.aStart + seconds, bStart: range.bStart + seconds, len: range.len - seconds };
+  }
+
+  function exportSequence(clips, mode) {
+    if (!MODES.includes(mode)) throw new Error('Choose a valid export angle');
+    const angles = mode === 'sideline-first' ? ['sideline', 'endzone']
+      : mode === 'endzone-first' ? ['endzone', 'sideline'] : [mode];
+    return angles.flatMap((angle) => clips.map((clip) => ({ clip, mode: angle })));
+  }
 
   function clipRange(pair, fps, offset = 0) {
     if (!pair || !Number.isFinite(fps) || fps <= 0 || !Number.isFinite(offset)) {
@@ -63,5 +77,5 @@
     return mode === 'both' ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
   }
 
-  return { START_PAD, END_TRIM_FRAMES, MODES, clipRange, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions };
+  return { START_PAD, END_TRIM_FRAMES, MODES, clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions };
 });

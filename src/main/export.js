@@ -4,7 +4,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { run, probe } = require('./media');
 const { ffmpegPath } = require('./ffpaths');
-const { MODES, dimensions } = require('../shared/export');
+const { MODES, dimensions, exportSequence } = require('../shared/export');
 
 function validateRequest(request) {
   if (!request || typeof request.file !== 'string' || !MODES.includes(request.mode) ||
@@ -13,6 +13,9 @@ function validateRequest(request) {
   }
   if (request.clean !== undefined && typeof request.clean !== 'boolean') {
     throw new Error('Invalid clean export option.');
+  }
+  if (request.overlaySeconds !== undefined && (!Number.isFinite(request.overlaySeconds) || request.overlaySeconds < 0)) {
+    throw new Error('Invalid overlay duration.');
   }
   const { width, height } = dimensions(request.mode);
   for (const clip of request.clips) {
@@ -38,7 +41,7 @@ function validateRequest(request) {
   return request;
 }
 
-function segmentArgs(file, clip, mode, hasAudio, fps, clean = false) {
+function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeconds = mode === 'both' ? null : 3) {
   const args = ['-hide_banner', '-v', 'error', '-xerror', '-nostats', '-progress', 'pipe:1', '-y'];
   const duration = clip.len.toFixed(6);
   const input = (start) => args.push('-ss', start.toFixed(6), '-t', duration, '-i', file);
@@ -58,7 +61,7 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false) {
     : [`[0:v]${scale(1920, 1080)}[base]`];
   filters.push(clean
     ? '[base]format=yuv420p[v]'
-    : `[base][${cardIndex}:v]overlay=0:0:eof_action=repeat${mode === 'both' ? '' : ":enable='lt(t,3)'"},format=yuv420p[v]`);
+    : `[base][${cardIndex}:v]overlay=0:0:eof_action=repeat${overlaySeconds === null ? '' : `:enable='lt(t,${overlaySeconds})'`},format=yuv420p[v]`);
   filters.push(`[${audioIndex}:a]aresample=48000,asetpts=PTS-STARTPTS,apad[audio]`);
   args.push('-filter_complex', filters.join(';'), '-map', '[v]', '-map', '[audio]',
     '-t', duration, '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p',
@@ -68,6 +71,7 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false) {
 
 async function exportClips(request, destination, { signal, onProgress = () => {} } = {}) {
   const { file, mode, clips, clean = false } = validateRequest(request);
+  const segments = exportSequence(clips, mode);
   let target;
   try { target = await fs.realpath(destination); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   const sources = new Map();
@@ -80,23 +84,23 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
   }
   for (const clip of clips) {
     const info = sources.get(clip.file || file);
-    const starts = mode === 'both' ? [clip.aStart, clip.bStart] : [mode === 'endzone' ? clip.bStart : clip.aStart];
+    const starts = ['both', 'sideline-first', 'endzone-first'].includes(mode) ? [clip.aStart, clip.bStart] : [mode === 'endzone' ? clip.bStart : clip.aStart];
     if (starts.some((start) => start + clip.len > info.duration + 0.001)) {
       throw new Error('An export clip extends past the end of the film.');
     }
   }
   const temp = await fs.mkdtemp(path.join(path.dirname(destination), '.a22-export-'));
-  const total = clips.reduce((sum, clip) => sum + clip.len, 0);
+  const total = segments.reduce((sum, { clip }) => sum + clip.len, 0);
   const fps = Math.min(60, Math.max(1, sources.values().next().value.fps));
   let done = 0;
   try {
-    for (let i = 0; i < clips.length; i++) {
+    for (let i = 0; i < segments.length; i++) {
       signal?.throwIfAborted();
-      const clip = clips[i];
+      const { clip, mode: angle } = segments[i];
       const sourceFile = clip.file || file;
       const card = path.join(temp, 'card.png');
       if (!clean) await fs.writeFile(card, Buffer.from(clip.card.split(',')[1], 'base64'));
-      const args = segmentArgs(sourceFile, clip, mode, sources.get(sourceFile).hasAudio, fps, clean);
+      const args = segmentArgs(sourceFile, clip, angle, sources.get(sourceFile).hasAudio, fps, clean, request.overlaySeconds);
       if (!clean) args[args.indexOf('card.png')] = card;
       args.push(path.join(temp, `clip-${i}.mp4`));
       let pending = '';
@@ -108,7 +112,7 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
           pending = lines.pop();
           for (const line of lines) {
             const m = /^out_time_us=(\d+)/.exec(line);
-            if (m) onProgress({ fraction: Math.min(0.98, (done + Math.min(clip.len, Number(m[1]) / 1e6)) / total * 0.98), message: `Exporting play ${i + 1} of ${clips.length}` });
+            if (m) onProgress({ fraction: Math.min(0.98, (done + Math.min(clip.len, Number(m[1]) / 1e6)) / total * 0.98), message: `Exporting clip ${i + 1} of ${segments.length}` });
           }
         },
       });
@@ -117,7 +121,7 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
     signal?.throwIfAborted();
     onProgress({ fraction: 0.98, message: 'Joining clips' });
     const list = path.join(temp, 'clips.txt');
-    await fs.writeFile(list, clips.map((_clip, i) => `file 'clip-${i}.mp4'`).join('\n'));
+    await fs.writeFile(list, segments.map((_segment, i) => `file 'clip-${i}.mp4'`).join('\n'));
     const output = path.join(temp, 'export.mp4');
     await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-y', '-f', 'concat', '-safe', '1', '-i', list,
       '-c', 'copy', '-movflags', '+faststart', output], { signal });

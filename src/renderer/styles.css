@@ -168,6 +168,12 @@ main { display: flex; height: calc(100% - 88px); }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-height: 90vh; overflow-y: auto; min-width: 460px; }
 .panel.wide { width: 820px; }
 #share .panel { width: 560px; max-width: 90vw; }
+#share-preview-play { width: 100%; margin-top: 6px; }
+.trim-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; }
+.trim-previews figure { margin: 0; min-width: 0; }
+.trim-previews figure[hidden] { display: none; }
+.trim-previews figcaption { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.trim-previews img { width: 100%; background: black; }
 .panel h2 { margin-top: 0; }
 .panel h3 { margin: 18px 0 8px; }
 .panel fieldset { border: 1px solid var(--border); border-radius: 6px; margin: 16px 0; padding: 10px 12px; }

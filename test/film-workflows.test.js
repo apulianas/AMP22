@@ -77,6 +77,8 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js(`$('set-report-format').value`), 'csv');
   assert.equal(await js(`$('set-report-advanced').checked`), false);
   await js(`
+    $('set-export-trim').value = '0.25';
+    $('set-overlay-seconds').value = '1.75';
     $('set-report-format').value = 'pdf';
     $('set-report-advanced').checked = true;
     document.querySelectorAll('#set-report-fields input').forEach(input => {input.checked = ['set-report-airYards', 'set-report-coverage', 'set-report-motion'].includes(input.id)});
@@ -85,7 +87,31 @@ async function exerciseWorkflows({ app, win }) {
   await until(`S.settings.playReport.format === 'pdf' && $('settings').hidden`);
   const saved = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
   assert.deepEqual(saved.playReport, { format: 'pdf', includeAdvanced: true, fields: ['airYards', 'motion', 'coverage'] });
+  assert.equal(saved.exportTrim, 0.25);
+  assert.equal(saved.overlaySeconds, 1.75);
   await js(`S.selected = new Set([2, 0, 1]); updateSelection(); $('btn-share').click(); $('share-clean').checked = true;`);
+  assert.equal(await js(`$('share-trim').value`), '0.25');
+  assert.equal(await js(`$('share-overlay-seconds').value`), '1.75');
+  await until(`!$('share-preview-a').hidden`);
+  assert.match(await js(`$('share-preview-a').src`), /^data:image\/jpeg;base64,/);
+  assert.equal(await js(`$('share-preview-figure-a').hidden`), false);
+  assert.equal(await js(`$('share-preview-figure-b').hidden`), true);
+  assert.equal(await js(`getComputedStyle($('share-preview-figure-b')).display`), 'none');
+  assert.ok(await js(`Math.abs($('share-preview-figure-a').getBoundingClientRect().width - $('share-preview-figure-a').parentElement.getBoundingClientRect().width) < 1`));
+  for (const [mode, a, b] of [
+    ['endzone', false, true], ['both', true, true],
+    ['sideline-first', true, true], ['endzone-first', true, true], ['sideline', true, false],
+  ]) {
+    await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'))`);
+    assert.equal(await js(`$('share-preview-figure-a').hidden`), !a, mode);
+    assert.equal(await js(`$('share-preview-figure-b').hidden`), !b, mode);
+    await until(`${a ? "!$('share-preview-a').hidden" : "$('share-preview-a').hidden"} && ${b ? "!$('share-preview-b').hidden" : "$('share-preview-b').hidden"}`);
+    if (b) assert.match(await js(`$('share-preview-b').src`), /^data:image\/jpeg;base64,/);
+  }
+  await js(`$('share-trim').value = '0.5'; $('share-trim').dispatchEvent(new Event('input'))`);
+  await until(`!$('share-preview-a').hidden`);
+  assert.equal(await js(`S.exportDraft.clips[0].trim`), 0.5);
+  assert.ok(Math.abs(await js(`trimmedExportClips()[0].aStart - S.exportDraft.clips[0].aStart`) - 0.5) < 1e-9);
   assert.equal(await js(`$('share-report-format').value`), 'pdf');
   assert.equal(await js(`$('share-report-advanced').checked`), true);
 
@@ -128,6 +154,13 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(prompts, 1);
   assert.match(await js(`$('share-status').textContent`), /cancelled/i);
   assert.deepEqual(fs.readFileSync(destination), before);
+  for (const mode of ['sideline-first', 'endzone-first']) {
+    destination = path.join(root, `${mode}.mp4`);
+    await js(`$('share-angle').value = '${mode}'; exportSelection();`);
+    assert.equal(await js(`$('share-status').classList.contains('error')`), false, await js(`$('share-status').textContent`));
+    const { rows } = parseCSV(fs.readFileSync(path.join(root, `${mode}-plays.csv`), 'utf8'));
+    assert.deepEqual(rows.map((p) => p['Game play ID']), ['1', '2', '3', '1', '2', '3']);
+  }
   destination = path.join(root, 'partial.mp4');
   fs.mkdirSync(path.join(root, 'partial-plays.csv'));
   replace = 1;
