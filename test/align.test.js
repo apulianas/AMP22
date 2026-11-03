@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { alignPlays, alignSegment } = require('../src/shared/align');
+const { alignPlays, alignSegment, alignSplitPlays, filmRole } = require('../src/shared/align');
 
 const P = (w = 1) => ({ filmWeight: w });
 
@@ -42,4 +42,46 @@ test('non-monotonic and out-of-range anchors are ignored', () => {
 
 test('alignSegment with no pairs maps nothing', () => {
   assert.deepEqual(alignSegment([1, 1], 0), [null, null]);
+});
+
+const snap = (posteam, cat = 'run', weight = 1) => ({
+  posteam, defteam: posteam === 'BAL' ? 'BUF' : 'BAL', cat, filmWeight: weight,
+});
+const splitPairs = (offense, defense) => [
+  ...Array.from({ length: offense }, () => ({ role: 'offense' })),
+  ...Array.from({ length: defense }, () => ({ role: 'defense' })),
+];
+
+test('split files align independently in game order from the selected team perspective', () => {
+  const plays = [snap('BAL'), snap('BAL', 'special'), snap('BUF'), snap('BAL'), snap('BUF')];
+  assert.deepEqual(alignSplitPlays(plays, splitPairs(2, 2), 'BAL'), [0, null, 2, 1, 3]);
+  assert.deepEqual(alignSplitPlays(plays, splitPairs(2, 2), 'BUF'), [2, null, 0, 3, 1]);
+  assert.equal(filmRole(snap('BAL'), 'BAL'), 'offense');
+  assert.equal(filmRole(snap('BAL'), 'BUF'), 'defense');
+  assert.equal(filmRole(snap('BAL'), 'KC'), null);
+  assert.equal(filmRole(snap('BAL', 'other'), 'BAL'), null);
+  assert.equal(filmRole(snap('BAL', 'special'), 'BAL'), 'special');
+});
+
+test('split corrections and missing clips do not shift the other unit', () => {
+  const plays = [snap('BAL'), snap('BUF'), snap('BAL', 'penalty', 0.5), snap('BUF'), snap('BAL')];
+  const pairs = splitPairs(2, 2);
+  assert.deepEqual(alignSplitPlays(plays, pairs, 'BAL'), [0, 2, null, 3, 1]);
+  assert.deepEqual(alignSplitPlays(plays, pairs, 'BAL', new Map([[0, null]])), [null, 2, 0, 3, 1]);
+  assert.deepEqual(alignSplitPlays(plays, pairs, 'BAL', new Map([[0, 2], [1, 0]])), [0, 2, null, 3, 1]);
+  assert.deepEqual(alignSplitPlays(plays, splitPairs(0, 2), 'BAL'), [null, 0, null, 1, null]);
+  assert.deepEqual(alignSplitPlays(plays, splitPairs(2, 0), 'BAL'), [0, null, null, null, 1]);
+});
+
+test('split anchors are translated from combined indices into the correct file', () => {
+  const plays = [snap('BAL'), snap('BUF'), snap('BAL'), snap('BUF')];
+  assert.deepEqual(alignSplitPlays(plays, splitPairs(3, 3), 'BAL', new Map([[0, 1], [1, 4]])), [1, 4, 2, 5]);
+});
+
+test('special teams use their own stream for both teams and never shift offense or defense', () => {
+  const plays = [snap('BAL', 'special'), snap('BAL'), snap('BUF', 'special'), snap('BUF'), snap('BAL', 'special')];
+  const pairs = [...splitPairs(1, 1), { role: 'special' }, { role: 'special' }, { role: 'special' }];
+  assert.deepEqual(alignSplitPlays(plays, pairs, 'BAL'), [2, 0, 3, 1, 4]);
+  assert.deepEqual(alignSplitPlays(plays, pairs, 'BUF'), [2, 1, 3, 0, 4]);
+  assert.deepEqual(alignSplitPlays(plays, pairs, 'BAL', new Map([[0, null]])), [null, 0, 2, 1, 3]);
 });

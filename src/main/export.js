@@ -16,6 +16,9 @@ function validateRequest(request) {
   }
   const { width, height } = dimensions(request.mode);
   for (const clip of request.clips) {
+    if (clip?.file !== undefined && (typeof clip.file !== 'string' || !clip.file.trim())) {
+      throw new Error('Invalid export film source.');
+    }
     if (!clip || ![clip.aStart, clip.bStart, clip.len].every(Number.isFinite) ||
         clip.aStart < 0 || clip.bStart < 0 || clip.len <= 0) {
       throw new Error('Invalid export clip timing.');
@@ -65,14 +68,18 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false) {
 
 async function exportClips(request, destination, { signal, onProgress = () => {} } = {}) {
   const { file, mode, clips, clean = false } = validateRequest(request);
-  const source = await fs.realpath(file);
   let target;
   try { target = await fs.realpath(destination); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if (source === target || path.resolve(file) === path.resolve(destination)) {
-    throw new Error('The export cannot replace the original film.');
+  const sources = new Map();
+  for (const sourceFile of new Set(clips.map((clip) => clip.file || file))) {
+    const source = await fs.realpath(sourceFile);
+    if (source === target || path.resolve(sourceFile) === path.resolve(destination)) {
+      throw new Error('The export cannot replace the original film.');
+    }
+    sources.set(sourceFile, await probe(sourceFile));
   }
-  const info = await probe(file);
   for (const clip of clips) {
+    const info = sources.get(clip.file || file);
     const starts = mode === 'both' ? [clip.aStart, clip.bStart] : [mode === 'endzone' ? clip.bStart : clip.aStart];
     if (starts.some((start) => start + clip.len > info.duration + 0.001)) {
       throw new Error('An export clip extends past the end of the film.');
@@ -80,15 +87,16 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
   }
   const temp = await fs.mkdtemp(path.join(path.dirname(destination), '.a22-export-'));
   const total = clips.reduce((sum, clip) => sum + clip.len, 0);
-  const fps = Math.min(60, Math.max(1, info.fps));
+  const fps = Math.min(60, Math.max(1, sources.values().next().value.fps));
   let done = 0;
   try {
     for (let i = 0; i < clips.length; i++) {
       signal?.throwIfAborted();
       const clip = clips[i];
+      const sourceFile = clip.file || file;
       const card = path.join(temp, 'card.png');
       if (!clean) await fs.writeFile(card, Buffer.from(clip.card.split(',')[1], 'base64'));
-      const args = segmentArgs(file, clip, mode, info.hasAudio, fps, clean);
+      const args = segmentArgs(sourceFile, clip, mode, sources.get(sourceFile).hasAudio, fps, clean);
       if (!clean) args[args.indexOf('card.png')] = card;
       args.push(path.join(temp, `clip-${i}.mp4`));
       let pending = '';

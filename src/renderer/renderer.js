@@ -4,6 +4,7 @@
 const { ACTIONS, mergeSettings, comboFromEvent, keyLabel, buildKeymap, DEFAULT_SETTINGS } = A22.settings;
 const P = A22.plays;
 const ADV = A22.advanced;
+const REPORT = A22.reports;
 const $ = (id) => document.getElementById(id);
 
 // Cut times are frame timestamps rounded to ~0.01 s, and the frame grid's phase changes from
@@ -17,10 +18,13 @@ const S = {
   games: [],
   sel: { season: null, team: null, week: null, gameId: null },
   game: null, // schedule row
-  gameData: {}, // persisted: filmPath, anchors {playId: pairKey|null}, offsets {pairKey: frames}
+  gameData: {}, // persisted film paths and per-format/team corrections
   plays: [], // normalized plays + derived fields
   mapping: [], // play index -> pair index | null
   film: null, // {path, url, info, analysis}
+  splitFilms: {},
+  filmRevision: 0,
+  analyzing: false,
   fps: 59.94,
   pairs: [],
   curPlay: -1,
@@ -64,16 +68,35 @@ function showMessage(html) {
   $('message').innerHTML = html ? `<div>${html}</div>` : '';
 }
 function pairKey(pair) {
-  return pair.sideline.start.toFixed(2);
+  return (pair.role ? `${S.sel.team}:${pair.role}|` : '') + pair.sideline.start.toFixed(2);
 }
 function pairIndexForKey(key) {
-  const t = Number(key);
+  const parts = String(key).split('|');
+  const prefix = parts.length > 1 ? parts[0] : '';
+  const t = Number(parts[parts.length - 1]);
   let best = -1, bd = 0.5;
   S.pairs.forEach((p, i) => {
+    if ((p.role ? `${S.sel.team}:${p.role}` : '') !== prefix) return;
     const d = Math.abs(p.sideline.start - t);
     if (d < bd) { bd = d; best = i; }
   });
   return best;
+}
+
+function isSplitFilm() {
+  return S.gameData.filmFormat === 'split';
+}
+
+function corrections() {
+  return isSplitFilm() ? (S.gameData.splitCorrections || {})[S.sel.team] || {} : S.gameData;
+}
+
+async function saveCorrections(patch) {
+  if (!isSplitFilm()) return saveGame(patch);
+  await saveGame({ splitCorrections: {
+    ...S.gameData.splitCorrections,
+    [S.sel.team]: { ...corrections(), ...patch },
+  } });
 }
 
 /* ---------------- settings ---------------- */
@@ -169,7 +192,9 @@ async function loadSchedule(force) {
 
 async function loadGame(force) {
   const gameId = S.sel.gameId;
-  pause();
+  const team = S.sel.team;
+  closeFilm();
+  const revision = S.filmRevision;
   S.game = S.games.find((g) => g.gameId === gameId) || null;
   S.plays = [];
   S.mapping = [];
@@ -178,7 +203,10 @@ async function loadGame(force) {
   S.selectionAnchor = -1;
   S.multiSelect = false;
   updateSelection();
-  S.gameData = gameId ? await window.api.getGame(gameId) : {};
+  const gameData = gameId ? await window.api.getGame(gameId) : {};
+  if (revision !== S.filmRevision) return;
+  S.gameData = gameData;
+  renderFilmControls();
   const opp = S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
   fillSelect($('sel-offense'), [
     { value: '', label: 'Both offenses' },
@@ -192,10 +220,11 @@ async function loadGame(force) {
     setStatus('Loading play-by-play…');
     try {
       const r = await window.api.getPlays({ season: S.game.season, gameId, force });
-      if (S.sel.gameId !== gameId) return;
+      if (S.sel.gameId !== gameId || S.sel.team !== team || revision !== S.filmRevision) return;
       S.plays = r.plays;
       setStatus(r.warning || '', !!r.warning);
     } catch (e) {
+      if (revision !== S.filmRevision) return;
       setStatus(e.message, true);
     }
   }
@@ -203,12 +232,18 @@ async function loadGame(force) {
   renderQuarters();
   renderAdvancedFilters();
 
+  if (isSplitFilm()) {
+    await openSplitFilms();
+    return;
+  }
   let filmPath = S.gameData.filmPath;
   if (!filmPath && S.game) {
     const s = await window.api.suggestFilm({ week: S.game.week, opponent: opp, season: S.game.season, team: S.sel.team });
+    if (revision !== S.filmRevision) return;
     if (s.auto) {
       filmPath = s.auto;
       await saveGame({ filmPath });
+      if (revision !== S.filmRevision) return;
     }
   }
   if (filmPath) await openFilm(filmPath);
@@ -225,7 +260,10 @@ async function loadGame(force) {
 
 async function saveGame(patch) {
   if (!S.sel.gameId) return;
-  S.gameData = await window.api.saveGame(S.sel.gameId, patch);
+  const gameId = S.sel.gameId;
+  const team = S.sel.team;
+  const data = await window.api.saveGame(gameId, patch);
+  if (S.sel.gameId === gameId && S.sel.team === team) S.gameData = data;
 }
 
 function derivePlays() {
@@ -245,7 +283,7 @@ function realign() {
     return;
   }
   const anchors = new Map();
-  const a = S.gameData.anchors || {};
+  const a = corrections().anchors || {};
   S.plays.forEach((p, i) => {
     if (!(String(p.playId) in a)) return;
     const v = a[p.playId];
@@ -255,29 +293,99 @@ function realign() {
       if (k >= 0) anchors.set(i, k);
     }
   });
-  S.mapping = A22.align.alignPlays(S.plays, S.pairs.length, anchors);
+  S.mapping = isSplitFilm()
+    ? A22.align.alignSplitPlays(S.plays, S.pairs, S.sel.team, anchors)
+    : A22.align.alignPlays(S.plays, S.pairs.length, anchors);
 }
 
 /* ---------------- film ---------------- */
 
 function closeFilm() {
+  S.filmRevision++;
+  S.analyzing = false;
+  S.progressFile = null;
+  $('progress').hidden = true;
   pause();
   dockAngle();
   S.film = null;
+  S.splitFilms = {};
   S.pairs = [];
   S.range = null;
-  vidA().removeAttribute('src');
-  vidB().removeAttribute('src');
-  vidA().load();
-  vidB().load();
+  S.curPair = -1;
+  for (const video of [vidA(), vidB()]) {
+    video._pending = null;
+    video._target = null;
+    video.removeAttribute('src');
+    video.load();
+  }
+  resetDrift();
   updateAngleButtons();
   $('film-name').textContent = '';
   $('btn-analyze').hidden = true;
 }
 
+function renderFilmControls() {
+  const split = isSplitFilm();
+  $('film-format').value = split ? 'split' : 'single';
+  $('btn-film').textContent = split ? `Choose ${S.sel.team} offense…` : 'Choose film…';
+  $('btn-film').title = split ? `Both angles of ${S.sel.team}'s offensive plays` : 'Choose the A22 film file for this game';
+  $('btn-defense-film').hidden = !split;
+  $('btn-defense-film').textContent = `Choose ${S.sel.team} defense…`;
+  $('btn-defense-film').title = `Both angles of ${S.sel.team}'s defensive plays`;
+  $('btn-special-film').hidden = !split;
+  $('btn-special-film').title = 'Both angles of the game’s special-teams plays (kicks and returns)';
+}
+
+function rebuildSplitPairs() {
+  S.pairs = ['offense', 'defense', 'special'].flatMap((role) => {
+    const film = S.splitFilms[role];
+    return (film?.analysis?.pairs || []).map((pair) => ({ ...pair, role, film }));
+  });
+  $('videos').classList.toggle('single', !S.pairs.length);
+  $('btn-analyze').hidden = !!S.analyzing || !Object.values(S.splitFilms).some((film) => !film.analysis);
+  updateAngleButtons();
+}
+
+function selectFirstLinked() {
+  realign();
+  renderList();
+  const first = S.visible.find((i) => S.mapping[i] != null);
+  if (first != null) selectPlay(first, { autoplay: false });
+  else renderInfo();
+}
+
+async function openSplitFilms() {
+  closeFilm();
+  const revision = S.filmRevision;
+  const paths = (S.gameData.splitFilmPaths || {})[S.sel.team] || {};
+  const errors = [];
+  for (const role of ['offense', 'defense', 'special']) {
+    if (!paths[role]) continue;
+    try {
+      const film = await window.api.openFilm(paths[role]);
+      if (revision !== S.filmRevision) return;
+      S.splitFilms[role] = film;
+    } catch (e) {
+      if (revision !== S.filmRevision) return;
+      errors.push(`${role}: ${e.message}`);
+    }
+  }
+  S.film = S.splitFilms.offense || S.splitFilms.defense || S.splitFilms.special || null;
+  $('film-name').textContent = ['offense', 'defense', 'special'].map((role) =>
+    `${role === 'special' ? 'Special teams' : `${S.sel.team} ${role}`}: ${paths[role] ? paths[role].split(/[\\/]/).pop() : 'not selected'}`).join(' · ');
+  $('film-name').title = $('film-name').textContent;
+  rebuildSplitPairs();
+  selectFirstLinked();
+  if (errors.length) setStatus(`Couldn't open split film: ${errors.join('; ')}`, true);
+  if (!S.pairs.length) showMessage('Choose offense, defense, and special-teams film for the selected team. Each file should contain sideline followed by end zone for each play.<br><span class="muted">Each file aligns independently. Plays from files you have not selected remain unlinked.</span>');
+  if (S.settings.autoAnalyze && Object.values(S.splitFilms).some((film) => !film.analysis)) await analyze(false);
+}
+
 async function openFilm(file) {
+  const revision = S.filmRevision;
   try {
     const f = await window.api.openFilm(file);
+    if (revision !== S.filmRevision) return;
     S.film = f;
     S.fps = f.info.fps || 59.94;
     $('film-name').textContent = file.split(/[\\/]/).pop();
@@ -291,6 +399,7 @@ async function openFilm(file) {
       if (S.settings.autoAnalyze) analyze(false);
     }
   } catch (e) {
+    if (revision !== S.filmRevision) return;
     closeFilm();
     showMessage(`Couldn't open film: ${esc(e.message)}`);
   }
@@ -299,6 +408,7 @@ async function openFilm(file) {
 function setAnalysis(analysis) {
   if (!analysis) dockAngle();
   S.pairs = analysis ? analysis.pairs : [];
+  if (S.film) S.film.analysis = analysis;
   $('videos').classList.toggle('single', !S.pairs.length);
   $('btn-analyze').hidden = !!analysis;
   if (analysis) showMessage('');
@@ -306,28 +416,39 @@ function setAnalysis(analysis) {
 }
 
 async function analyze(force) {
-  if (!S.film) return;
-  const file = S.film.path;
-  S.progressFile = file;
+  if (!S.film || S.analyzing) return;
+  const revision = S.filmRevision;
+  const split = isSplitFilm();
+  const films = split ? Object.values(S.splitFilms).filter((film) => force || !film.analysis) : [S.film];
+  const run = {};
+  S.analyzing = run;
   $('progress').hidden = false;
   $('btn-analyze').hidden = true;
   try {
-    const a = await window.api.analyzeFilm(file, force);
-    if (!S.film || S.film.path !== file) return;
-    setAnalysis(a);
-    realign();
-    renderList();
-    const first = S.visible.find((i) => S.mapping[i] != null);
-    if (first != null) selectPlay(first, { autoplay: false });
-    else if (S.pairs.length) loadPair(0, { autoplay: false });
-    setStatus(`Found ${a.pairs.length} plays on film (${a.clips.length} clips)`);
+    for (const film of films) {
+      if (revision !== S.filmRevision) return;
+      S.progressFile = film.path;
+      const a = await window.api.analyzeFilm(film.path, force);
+      if (revision !== S.filmRevision) return;
+      film.analysis = a;
+      if (split) rebuildSplitPairs();
+      else setAnalysis(a);
+      selectFirstLinked();
+      if (S.curPair < 0 && S.pairs.length) loadPair(0, { autoplay: false });
+    }
+    setStatus(`Found ${S.pairs.length} plays on film`);
   } catch (e) {
-    if (S.film && S.film.path === file) {
+    if (revision === S.filmRevision) {
       $('btn-analyze').hidden = false;
       setStatus(/Cancelled/.test(e.message) ? 'Analysis cancelled' : `Analysis failed: ${e.message}`, !/Cancelled/.test(e.message));
     }
   } finally {
-    $('progress').hidden = true;
+    if (S.analyzing === run) {
+      S.analyzing = false;
+      S.progressFile = null;
+      $('progress').hidden = true;
+      if (isSplitFilm()) rebuildSplitPairs();
+    }
   }
 }
 
@@ -461,7 +582,7 @@ function renderQuarters() {
 function renderList() {
   S.visible = [];
   const html = [];
-  const anchors = S.gameData.anchors || {};
+  const anchors = corrections().anchors || {};
   let drive = null;
   let shade = false;
   S.plays.forEach((p, i) => {
@@ -666,7 +787,7 @@ window.addEventListener('beforeunload', () => {
 
 function setVideoTime(v, t) {
   v._target = t;
-  if (v.seeking) { v._pending = t; return; }
+  if (v.readyState === 0 || v.seeking) { v._pending = t; return; }
   v.currentTime = t;
 }
 function onSeeked(e) {
@@ -686,7 +807,7 @@ function snapRel(rel) {
 function offsetFrames(pairIdx) {
   const pair = S.pairs[pairIdx];
   if (!pair) return 0;
-  return (S.gameData.offsets || {})[pairKey(pair)] || 0;
+  return (corrections().offsets || {})[pairKey(pair)] || 0;
 }
 
 function computeRange(pairIdx) {
@@ -725,6 +846,19 @@ function loadPair(pairIdx, { autoplay = false, keepRel = false } = {}) {
   const rel = keepRel ? currentRel() : 0;
   const wasPlaying = S.playing;
   pause();
+  const film = S.pairs[pairIdx].film;
+  if (film) {
+    S.film = film;
+    S.fps = film.info.fps || 59.94;
+    if (vidA().src !== film.url) {
+      for (const video of [vidA(), vidB()]) {
+        video._pending = null;
+        video._target = null;
+        video.src = film.url;
+      }
+      resetDrift();
+    }
+  }
   S.curPair = pairIdx;
   S.range = computeRange(pairIdx);
   showMessage('');
@@ -748,8 +882,14 @@ function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
     loadPair(pi, { autoplay });
   } else {
     pause();
+    S.curPair = -1;
+    S.range = null;
     renderInfo();
-    if (S.film && S.pairs.length) showMessage('No film linked to this play.<br><span class="muted">Browse clips with Shift+↑/↓ and press Shift+L to link one.</span>');
+    if (isSplitFilm() && !A22.align.filmRole(S.plays[i], S.sel.team)) {
+      showMessage('This play cannot be classified as offense, defense, or special teams and has no linked film.');
+    } else if (isSplitFilm() && !S.splitFilms[A22.align.filmRole(S.plays[i], S.sel.team)]) {
+      showMessage('Choose the matching offense, defense, or special-teams file to watch this play.');
+    } else if (S.film && S.pairs.length) showMessage('No film linked to this play.<br><span class="muted">Browse clips with Shift+↑/↓ and press Shift+L to link one.</span>');
   }
 }
 
@@ -925,6 +1065,10 @@ function openShare() {
   $('share-progress').hidden = true;
   $('share-reveal').hidden = true;
   S.exportDraft = null;
+  const report = REPORT.mergeOptions(S.settings.playReport);
+  $('share-report-format').value = report.format;
+  $('share-report-advanced').checked = report.includeAdvanced;
+  updateReportOptions();
   const indices = A22.clipExport.selectedIndices(S.selected);
   $('share-summary').textContent = `${indices.length} play${indices.length === 1 ? '' : 's'} in game order, joined into one video.`;
   try {
@@ -932,16 +1076,27 @@ function openShare() {
     const clips = indices.map((i) => {
       const pairIdx = S.mapping[i];
       if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
-      return { ...A22.clipExport.clipRange(S.pairs[pairIdx], S.fps, offsetFrames(pairIdx)), play: S.plays[i] };
+      const pair = S.pairs[pairIdx];
+      const film = pair.film || S.film;
+      return { ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)), file: film.path, play: S.plays[i] };
     });
     const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'AMP22';
-    S.exportDraft = { file: S.film.path, clips, matchup };
+    S.exportDraft = { file: S.film.path, clips, matchup, team: S.sel.team || S.settings.defaultTeam };
   } catch (e) {
     $('share-status').textContent = e.message;
     $('share-status').classList.add('error');
   }
   $('share-export').disabled = !S.exportDraft;
   $('share-angle').focus();
+}
+
+function updateReportOptions() {
+  const options = REPORT.mergeOptions(S.settings.playReport);
+  const active = $('share-report-format').value !== 'none';
+  $('share-report-advanced').disabled = !active || S.exporting;
+  $('share-report-fields').textContent = !active ? 'No play breakdown will be saved.' : $('share-report-advanced').checked
+    ? `Included fields: ${REPORT.ADVANCED_FIELDS.filter((f) => options.fields.includes(f.key)).map((f) => f.label).join(', ') || 'none selected in Settings'}.`
+    : 'Basic play information only. Advanced statistics are not included.';
 }
 
 async function exportSelection() {
@@ -951,6 +1106,8 @@ async function exportSelection() {
   updateSelection();
   $('share-angle').disabled = true;
   $('share-clean').disabled = true;
+  $('share-report-format').disabled = true;
+  $('share-report-advanced').disabled = true;
   $('share-export').disabled = true;
   $('share-close').hidden = true;
   $('share-cancel').hidden = false;
@@ -963,7 +1120,13 @@ async function exportSelection() {
   try {
     const mode = $('share-angle').value;
     const clean = $('share-clean').checked;
-    const { file, clips, matchup } = S.exportDraft;
+    const { file, clips, matchup, team } = S.exportDraft;
+    const report = {
+      ...REPORT.mergeOptions(S.settings.playReport),
+      format: $('share-report-format').value,
+      includeAdvanced: $('share-report-advanced').checked,
+      matchup, team, plays: clips.map((clip) => clip.play),
+    };
     let images = new Map();
     let warnings = new Set();
     if (!clean) {
@@ -976,7 +1139,7 @@ async function exportSelection() {
     }
     $('share-status').textContent = 'Choose where to save the MP4…';
     const result = await window.api.exportClips({
-      file, mode, clean,
+      file, mode, clean, report,
       suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play)),
       clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id)) }),
     });
@@ -984,6 +1147,11 @@ async function exportSelection() {
     if (!result.cancelled) {
       $('share-progress').value = 1;
       $('share-reveal').hidden = false;
+      if (result.reportPath) $('share-status').textContent += ` · Play breakdown: ${result.reportPath}`;
+      if (result.reportError) {
+        $('share-status').textContent = result.reportError + ` Video: ${result.path}`;
+        $('share-status').classList.add('error');
+      }
       if (warnings.size) $('share-status').textContent += ` · Headshot notices: ${[...warnings].join('; ')}`;
     }
   } catch (e) {
@@ -993,6 +1161,8 @@ async function exportSelection() {
     S.exporting = false;
     $('share-angle').disabled = false;
     $('share-clean').disabled = false;
+    $('share-report-format').disabled = false;
+    updateReportOptions();
     $('share-export').disabled = false;
     $('share-close').hidden = false;
     $('share-cancel').hidden = true;
@@ -1001,6 +1171,7 @@ async function exportSelection() {
 }
 
 function play() {
+  if (isSplitFilm() && !S.range) return;
   const a = vidA(), b = vidB();
   if (!a.src) return;
   if (S.range && currentRel() >= S.range.len - 1 / S.fps) seekRel(0);
@@ -1130,7 +1301,7 @@ function updateOffsetLabel() {
 /* ---------------- navigation ---------------- */
 
 function navPlay(dir, autoplay) {
-  if (S.plays.length && S.pairs.length || S.plays.length && !S.film) {
+  if (S.plays.length && (S.pairs.length || !S.film || isSplitFilm())) {
     let pos = S.visible.indexOf(S.curPlay);
     if (pos < 0) {
       const next = S.visible.findIndex((i) => i > S.curPlay);
@@ -1150,7 +1321,15 @@ function navPlay(dir, autoplay) {
 }
 
 function navClip(dir, autoplay) {
-  const n = S.curPair + dir;
+  let n = S.curPair + dir;
+  if (isSplitFilm()) {
+    const role = A22.align.filmRole(S.plays[S.curPlay] || {}, S.sel.team);
+    if (!role) return false;
+    const indices = S.pairs.flatMap((pair, i) => pair.role === role ? [i] : []);
+    const pos = indices.indexOf(S.curPair);
+    n = indices[pos < 0 ? (dir > 0 ? 0 : indices.length - 1) : pos + dir];
+  }
+  if (n == null) return false;
   if (n < 0 || n >= S.pairs.length) return false;
   loadPair(n, { autoplay: autoplay || S.playing });
   return true;
@@ -1159,10 +1338,14 @@ function navClip(dir, autoplay) {
 /* ---------------- corrections ---------------- */
 
 async function setAnchor(play, value) {
-  const anchors = Object.assign({}, S.gameData.anchors || {});
+  if (isSplitFilm() && value != null && S.pairs[S.curPair]?.role !== A22.align.filmRole(play, S.sel.team)) {
+    setStatus('Link a clip from the selected play’s offense, defense, or special-teams file.', true);
+    return;
+  }
+  const anchors = Object.assign({}, corrections().anchors || {});
   if (value === undefined) delete anchors[play.playId];
   else anchors[play.playId] = value;
-  await saveGame({ anchors });
+  await saveCorrections({ anchors });
   realign();
   renderList();
   renderInfo();
@@ -1171,11 +1354,11 @@ async function setAnchor(play, value) {
 async function nudge(delta) {
   if (S.curPair < 0) return;
   const key = pairKey(S.pairs[S.curPair]);
-  const offsets = Object.assign({}, S.gameData.offsets || {});
+  const offsets = Object.assign({}, corrections().offsets || {});
   const v = delta === 0 ? 0 : (offsets[key] || 0) + delta;
   if (v) offsets[key] = v;
   else delete offsets[key];
-  await saveGame({ offsets });
+  await saveCorrections({ offsets });
   const rel = currentRel();
   S.range = computeRange(S.curPair);
   if (!S.playing) seekRel(rel);
@@ -1329,6 +1512,10 @@ function renderSettings() {
   $('set-auto').checked = draft.autoAnalyze;
   $('set-skipnofilm').checked = draft.skipNoFilm;
   $('set-cut').value = draft.cutThreshold;
+  $('set-report-format').value = draft.playReport.format;
+  $('set-report-advanced').checked = draft.playReport.includeAdvanced;
+  $('set-report-fields').innerHTML = REPORT.ADVANCED_FIELDS.map((f) =>
+    `<label><input id="set-report-${f.key}" type="checkbox"${draft.playReport.fields.includes(f.key) ? ' checked' : ''} /> ${esc(f.label)}</label>`).join('');
   const kp = draft.keyPlays;
   $('kp-turnovers').checked = kp.turnovers;
   $('kp-scores').checked = kp.scores;
@@ -1361,6 +1548,11 @@ function readSettingsForm() {
   d.filmRoot = $('set-root').value;
   d.autoAnalyze = $('set-auto').checked;
   d.skipNoFilm = $('set-skipnofilm').checked;
+  d.playReport = {
+    format: $('set-report-format').value,
+    includeAdvanced: $('set-report-advanced').checked,
+    fields: REPORT.ADVANCED_FIELDS.filter((f) => $(`set-report-${f.key}`).checked).map((f) => f.key),
+  };
   const cut = Number($('set-cut').value);
   d.cutThreshold = cut >= 0.03 && cut <= 0.5 ? cut : DEFAULT_SETTINGS.cutThreshold;
   d.keyPlays = {
@@ -1451,16 +1643,35 @@ function wire() {
   $('sel-team').addEventListener('change', () => onSelectorChange('team'));
   $('sel-week').addEventListener('change', () => onSelectorChange('week'));
 
-  $('btn-film').addEventListener('click', async () => {
-    const f = await window.api.chooseFilm({ defaultPath: S.gameData.filmPath });
-    if (!f) return;
-    await saveGame({ filmPath: f });
-    await openFilm(f);
-    realign();
-    renderList();
-    const first = S.visible.find((i) => S.mapping[i] != null);
-    if (first != null) selectPlay(first, { autoplay: false });
+  $('film-format').addEventListener('change', async () => {
+    await saveGame({ filmFormat: $('film-format').value });
+    await loadGame();
   });
+  async function chooseFilm(role) {
+    const revision = S.filmRevision;
+    const split = isSplitFilm();
+    const paths = (S.gameData.splitFilmPaths || {})[S.sel.team] || {};
+    const f = await window.api.chooseFilm({ defaultPath: split ? paths[role] : S.gameData.filmPath });
+    if (!f || revision !== S.filmRevision) return;
+    if (split) {
+      if (Object.entries(paths).some(([unit, file]) => unit !== role && file === f)) {
+        setStatus('Choose different files for offense, defense, and special teams, or use Single file mode.', true);
+        return;
+      }
+      await saveGame({ splitFilmPaths: { ...S.gameData.splitFilmPaths, [S.sel.team]: { ...paths, [role]: f } } });
+      if (revision !== S.filmRevision) return;
+      await openSplitFilms();
+      return;
+    }
+    await saveGame({ filmPath: f });
+    if (revision !== S.filmRevision) return;
+    closeFilm();
+    await openFilm(f);
+    selectFirstLinked();
+  }
+  $('btn-film').addEventListener('click', () => chooseFilm('offense'));
+  $('btn-defense-film').addEventListener('click', () => chooseFilm('defense'));
+  $('btn-special-film').addEventListener('click', () => chooseFilm('special'));
   $('btn-analyze').addEventListener('click', () => analyze(false));
   $('btn-cancel').addEventListener('click', () => S.progressFile && window.api.cancelAnalysis(S.progressFile));
   $('btn-refresh').addEventListener('click', async () => { await loadSchedule(true); await loadGame(true); });
@@ -1471,6 +1682,8 @@ function wire() {
     $('share-overlay-description').hidden = $('share-clean').checked;
     $('share-clean-description').hidden = !$('share-clean').checked;
   });
+  $('share-report-format').addEventListener('change', updateReportOptions);
+  $('share-report-advanced').addEventListener('change', updateReportOptions);
   $('share-export').addEventListener('click', exportSelection);
   $('share-close').addEventListener('click', () => toggleOverlay('share', false));
   $('share-reveal').addEventListener('click', async () => {
@@ -1518,7 +1731,7 @@ function wire() {
 
   $('btn-reset-fixes').addEventListener('click', async () => {
     if (!confirm('Remove all play↔clip corrections and sync offsets for this game?')) return;
-    await saveGame({ anchors: {}, offsets: {} });
+    await saveCorrections({ anchors: {}, offsets: {} });
     realign();
     renderList();
     if (S.curPlay >= 0) selectPlay(S.curPlay, { autoplay: false });
@@ -1530,7 +1743,8 @@ function wire() {
     const [a, b] = phases[p.phase] || [0, 1];
     const total = a + (b - a) * p.fraction;
     $('progress').querySelector('.fill').style.width = `${Math.round(total * 100)}%`;
-    $('progress').querySelector('.label').textContent = `${p.message} ${Math.round(total * 100)}%`;
+    const role = isSplitFilm() ? Object.keys(S.splitFilms).find((key) => S.splitFilms[key].path === p.file) : null;
+    $('progress').querySelector('.label').textContent = `${role ? `${role === 'special' ? 'Special teams' : role}: ` : ''}${p.message} ${Math.round(total * 100)}%`;
   });
 
   document.querySelectorAll('[data-action]').forEach((btn) =>
@@ -1603,7 +1817,17 @@ function wire() {
   });
   scrub.addEventListener('change', () => { S.scrubbing = false; scrub.blur(); });
 
-  for (const v of [vidA(), vidB()]) v.addEventListener('seeked', onSeeked);
+  for (const v of [vidA(), vidB()]) {
+    v.addEventListener('seeked', onSeeked);
+    v.addEventListener('loadedmetadata', () => {
+      if (v._pending != null) {
+        const time = v._pending;
+        v._pending = null;
+        setVideoTime(v, time);
+      }
+      if (v === vidA() && !S.range) updateTimeUI(0);
+    });
+  }
   const layout = () => {
     // Side by side or stacked, whichever shows the two 16:9 angles larger.
     const el = $('videos');
@@ -1617,7 +1841,6 @@ function wire() {
   watchFrames(vidB(), 'b');
   vidA().addEventListener('click', () => runAction('playPause'));
   vidB().addEventListener('click', () => runAction('playPause'));
-  vidA().addEventListener('loadedmetadata', () => { if (!S.range) updateTimeUI(0); });
   vidA().addEventListener('error', () => {
     if (vidA().src) showMessage('This video could not be played. A22 film should be H.264 MP4.');
   });

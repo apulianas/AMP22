@@ -18,6 +18,12 @@ Browse color-coded plays and drive summaries while watching both angles together
 
 ![AMP22 showing synced sideline and end zone film, play-by-play navigation, and frame controls](docs/screenshots/synced-viewer.png)
 
+### Split offense, defense, and special teams
+
+Choose **Split offense / defense / ST** to assign three files. Offense and defense refer to the team selected above; each file contains both camera angles and aligns independently. This is the running app with real Ravens–49ers play-by-play, before film selection—not a playback or alignment demonstration.
+
+![AMP22 split-film setup with separate Ravens offense, Ravens defense, and special-teams file pickers](docs/screenshots/split-film-setup.png)
+
 ### Filters and charting
 
 Combine offense, play type, result, and air-yards filters with the available quarterback alignment, motion, play-action, box-count, and pass-rush charting. This view narrows the game to a Ravens key pass with at least 10 air yards.
@@ -26,15 +32,17 @@ Combine offense, play type, result, and air-yards filters with the available qua
 
 ### Multi-play clip export
 
-Export selected plays in game order as sideline, end zone, or stacked portrait video. Keep the play overlays and available headshots, or choose a clean export.
+Export selected plays in game order as sideline, end zone, or stacked portrait video. Keep the play overlays and available headshots, or choose a clean export. The current Share dialog also offers a CSV, plain-text, or team-colored PDF play breakdown, with optional advanced statistics.
 
 <img src="docs/screenshots/clip-export.png" width="640" alt="AMP22 export dialog with three plays selected and both-angle portrait output chosen" />
 
+The playback and Share examples above predate the new film toolbar and breakdown controls. Refreshing those captures requires representative All-22 footage, which was unavailable; the current setup and Settings captures show the new controls without fabricating linked film or completed exports.
+
 ### Settings and shortcuts
 
-Customize frame-jump size, end-of-play behavior, slow-motion speeds, key-play definitions, and keyboard shortcuts. Check the installed version and look for updates from Settings.
+Customize playback and play-breakdown defaults, including the report format, whether advanced statistics are enabled, and exactly which fields to include. Key-play definitions and keyboard shortcuts remain available farther down the panel.
 
-<img src="docs/screenshots/settings.png" width="800" alt="AMP22 settings for playback, key-play definitions, and remappable keyboard shortcuts" />
+<img src="docs/screenshots/settings.png" width="800" alt="AMP22 settings with playback preferences, CSV as the default breakdown format, advanced statistics disabled by default, and individual advanced-field checkboxes" />
 
 ### Update notifications
 
@@ -44,7 +52,7 @@ See the latest published release notes before opening the download page. This is
 
 ## Features
 
-- **Two synced angles.** The A22 file is one continuous video in which each play appears twice: the high sideline angle first, then the end zone angle. The app finds the cuts, pairs the two clips for each play, and plays both together on one clock. The layout switches between side-by-side and stacked depending on the window shape.
+- **Two synced angles.** Each A22 file contains sideline followed by end zone for each play. The app finds the cuts, pairs the angles, and plays them together on one clock. Use **Single file** for continuous full-game film, or **Split offense / defense / ST** for separate offense, defense, and special-teams files. In split mode, offense means the selected team's offense and defense means that team defending; the special-teams file covers kicks and returns by either team. Each file aligns independently, and selecting a play switches both viewers to the appropriate source. You can load only the files you have; the other plays remain unlinked. File choices and corrections are remembered per game and team perspective, separately from single-file film. The layout switches between side-by-side and stacked depending on the window shape.
 - **Multi-monitor viewing.** After film analysis, click **Pop out** on either angle to open it in a separate window. Drag that window to another display and maximize it or click **Fullscreen**. The remaining angle fills the main viewer. Playback, seeking, frame stepping, speed changes, sync offsets, and play navigation still use the same controls and clock; keyboard shortcuts also work in the pop-out. Click **Return angle** in either window, or close the pop-out, to restore the two-angle layout. One angle can be detached at a time.
 - **Play-by-play navigation.** Pick the season, team, and week from the drop-downs. The default is the current season, the Ravens, and the most recently completed week. Plays come from [nflverse](https://github.com/nflverse/nflverse-data) and are color-coded:
   - **Run** is green, **pass** is blue, **special teams** is purple, and **no play** (penalty) is gray.
@@ -65,6 +73,7 @@ See the latest published release notes before opening the download page. This is
     - Each season's files (about 10–50 MB) are downloaded once and cached for offline use.
 - **Frame-accurate controls.** Step 1 frame or N frames at a time (N defaults to 10 and is configurable). You can also move to the next or previous play, restart the play, and change to slow-motion speeds. At the end of a play the app can stop, auto-advance, or loop.
 - **Clip export.** Click a play and then **Share** to export its sideline angle, end zone angle, or both. Shift-click another play to select the visible plays in between, or turn on **Multi-select** to choose individual plays. Checkboxes are hidden during normal single-play browsing. Selected plays are joined into one MP4 in game order, even when selected out of order. Both angles are stacked in a 1080×1920 (9:16) portrait video with the play's clock, down/distance, box-score result, badges, and description below, without camera-angle labels over the footage. Single-angle exports are 1920×1080 with a results lower third for the first three seconds of each play. Exports use normal speed and saved sync offsets, with audio from the selected angle (sideline for both). The original film is never modified.
+- **Ordered play breakdowns.** Share can save a **CSV spreadsheet**, **plain text**, or **PDF** alongside the video, with one entry per exported play in exactly the same order—including exports spanning split files. Reports identify the matchup and include each play's clip number, game play ID, quarter/clock, offense/defense, play type, down/distance, field position, yards, result, and description. PDFs use the selected team's colors, team-colored play cards, a run/pass/special-teams summary, and page numbers. **Include advanced statistics** adds the fields selected in Settings: air yards, personnel/packages, formation, QB alignment, backfield/box counts, motion, play action, RPO, screen, no-huddle, pass rushers/blitzers, coverage, and man/zone. Missing data stays blank in CSV and is marked **Not available** in text/PDF; zero and **No** remain distinct from missing values. The default is **CSV without advanced statistics**. Settings lets you customize the format, advanced-statistics default, and individual fields; Share lets you override the format and toggle advanced statistics for the current export or choose **No breakdown**.
 - **Update notifications.** Installed macOS and Windows builds check GitHub for a newer stable release at startup. The prompt shows your version, the latest version, and its published changelog. **Open download page** opens that release in your browser; choose the macOS DMG or Windows installer and install it manually. **Later** suppresses startup prompts for that version, but the **Update available** button stays accessible and newer versions can notify again. If playback, export, or another dialog is active, the button appears without interrupting your work. **Settings → Check for updates…** always lets you check again, including in development builds. Network failures are shown in Settings and can be retried.
 
 ## Getting started
@@ -81,12 +90,14 @@ npm 11 blocks install scripts unless they are approved. The `allowScripts` entry
 ### Using it
 
 1. Choose the season, team, and week. The schedule and play-by-play are downloaded and cached, so games you've opened before also work offline.
-2. Click **Choose film…** and select the game's A22 `.mp4`. The app streams the file from where it is and never copies or changes it.
-   You can also set a **film folder** in Settings (⚙), for example `~/Movies/2026 Ravens Games`. The app then finds the A22 file automatically by matching week folders such as `w7vBengals` or `w1@Colts` and preferring files with `a22` in the name.
-   The app remembers the file chosen for each game.
-3. The first time you open a film, the app analyzes it. This takes about 3–5 minutes for a full game, and you can see the progress. Results are cached by file path, size, and modified time.
+2. Leave **Single file** selected and click **Choose film…** for full-game A22. For separate units, select **Split offense / defense / ST**, then use **Choose [team] offense…**, **Choose [team] defense…**, and **Choose special teams…**. Each file must contain both angles, not one camera per file. Select the team whose offense/defense the files describe before assigning them. The app streams files from where they are and never copies or changes them.
+   In single-file mode, you can also set a **film folder** in Settings (⚙), for example `~/Movies/2026 Ravens Games`. The app then finds the A22 file automatically by matching week folders such as `w7vBengals` or `w1@Colts` and preferring files with `a22` in the name. Split files are assigned explicitly, not guessed from filenames.
+   The app remembers the format and file choices. Switching formats preserves both sets of choices and their corrections.
+3. The first time you open film, the app analyzes each selected file. This takes about 3–5 minutes for a full game's film, and you can see progress for each unit in split mode. Results are cached by file path, size, and modified time.
 4. Click a play, or use ↓/↑, to watch it.
 5. To save a clip, click **Share**, choose an angle, and click **Export…** to pick an MP4 destination. The suggested filename contains only the quarter, clock, main player, and yards (for example `Q2-08m34s-Z.Flowers-48yds.mp4`); multiple plays use only the game-clock range (`Q2-08m34s-to-Q3-04m12s.mp4`). Single-angle results use a compact lower-left card sized to its text rather than a full-width banner. Shift-click to select a range, or use **Multi-select** and checkboxes for individual plays. Selected plays remain selected when filtering; the selection count includes hidden plays. A normal row click outside explicit multi-select mode, or navigating to another play, returns to a single selection and hides the checkboxes. Turn **Multi-select** off to return to a single selection. Plays without linked film must be deselected or linked before export. Export progress and cancellation are available in the Share dialog. After export, **Show in Finder** (macOS) or **Show in File Explorer** (Windows) opens the containing folder with the exported file selected.
+
+Under **Play breakdown**, choose **CSV spreadsheet**, **Plain text**, **PDF · team colors**, or **No breakdown**, and optionally enable **Include advanced statistics**. A video named `clips.mp4` gets a companion `clips-plays.csv`, `clips-plays.txt`, or `clips-plays.pdf` in the same folder. AMP22 asks before replacing an existing breakdown. If the video saves but the breakdown cannot be written, Share reports that partial failure explicitly and still lets you reveal the saved video. **Settings → Play breakdown defaults** controls the defaults and advanced-field selection; these settings do not change clean/overlay video behavior.
 
 Enable **Clean export (no overlays)** in the Share dialog to omit all added text, graphics, and play details for either single- or multi-play exports. Both-angle exports remain 9:16, with the stacked footage centered on a black background instead of reserving a bottom panel for play information. Overlays remain enabled by default.
 
@@ -129,7 +140,7 @@ Other fixes:
 - **Shift+C** clears a fix.
 - **Reset all fixes** clears every fix for the game.
 
-Fixed plays show a ✎ badge. If the two angles are slightly out of sync on a play, use `[` / `]` to shift the end zone angle one frame at a time. Fixes and sync offsets are saved per game.
+Fixed plays show a ✎ badge. If the two angles are slightly out of sync on a play, use `[` / `]` to shift the end zone angle one frame at a time. Fixes and sync offsets are saved per game. In split mode, clip browsing stays in the selected play's unit, so corrections never move a play into a different unit's file or shift the other units. Split corrections are scoped to the selected team and do not replace single-file corrections; **Reset all fixes** resets the active format/team perspective only.
 
 ## Settings
 
@@ -142,6 +153,7 @@ Settings include:
 - Whether to analyze film automatically when it's opened
 - Whether next/previous play skips plays without film
 - Cut sensitivity
+- Play-breakdown format, advanced-statistics default, and individual advanced fields
 - Key-play definitions
 - Keyboard shortcuts
 
@@ -150,7 +162,7 @@ Data is stored in Electron's `userData` folder. AMP22 retains the original `A22 
 | File or folder | Contents |
 | --- | --- |
 | `settings.json` | Settings |
-| `games.json` | Film path, fixes, and offsets for each game |
+| `games.json` | Film format, single/split file paths, and separate fixes/offsets for each game and split-team perspective |
 | `updates.json` | Latest release version dismissed with Later or opened for download |
 | `analysis/` | Cached film analysis |
 | `cache/` | Downloaded schedule and play-by-play |
@@ -168,6 +180,8 @@ The download button opens the release page, not an unattended installer. After d
 3. A small grayscale frame from the middle of each clip is classified as **sideline** or **end zone** by comparing vertical and horizontal edge energy. In end zone views the yard lines run horizontally.
 4. Clips are paired (sideline followed by end zone) with dynamic programming. This handles extra cuts and stray short clips.
 5. Plays are aligned to the pairs with a second dynamic program. This step accounts for plays that are unlikely to be on film (such as non-play penalties) and for the user's fixes.
+
+In split mode, the same analysis runs on each file and alignment runs independently on the appropriate offensive, defensive, or special-teams plays. Turnovers stay with the unit that began the play; unclassified plays remain unlinked rather than consuming another unit's clip.
 
 The core logic is in `src/shared/` and has unit tests. You can also run the analysis from the command line:
 
@@ -189,6 +203,7 @@ Follow [the repository contribution instructions](AGENTS.md). User-visible PRs s
 npm test           # unit tests (node:test)
 A22_TEST_EXPORT=1 npm test # also encode and inspect synthetic clips (macOS / Linux)
 A22_TEST_WINDOWS=1 node --test test/angle-window.test.js # exercise native pop-outs (requires a desktop)
+A22_TEST_WORKFLOWS=1 node --test test/film-workflows.test.js # native split playback and CSV/text/PDF exports (requires a desktop)
 npm run dist:mac   # macOS .dmg   (run on macOS)
 npm run dist:win   # Windows NSIS installer (run on Windows)
 ```
