@@ -5,6 +5,19 @@ const s = require('../src/shared/settings');
 
 const ev = (key, mods = {}) => Object.assign({ key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, mods);
 
+test('export defaults retain decimal seconds, preserve zero, and reject invalid saved values', () => {
+  assert.equal(s.mergeSettings({}).exportTrim, 0);
+  assert.equal(s.mergeSettings({}).overlaySeconds, 3);
+  const saved = s.mergeSettings({ exportTrim: 1.25, overlaySeconds: 4.75 });
+  assert.equal(s.mergeSettings(JSON.parse(JSON.stringify(saved))).exportTrim, 1.25);
+  assert.equal(saved.overlaySeconds, 4.75);
+  assert.equal(s.mergeSettings({ overlaySeconds: 0 }).overlaySeconds, 0);
+  for (const value of [-1, NaN, Infinity, null, '', '2']) {
+    assert.equal(s.mergeSettings({ exportTrim: value }).exportTrim, 0);
+    assert.equal(s.mergeSettings({ overlaySeconds: value }).overlaySeconds, 3);
+  }
+});
+
 test('comboFromEvent normalizes keys', () => {
   assert.equal(s.comboFromEvent(ev(' ')), 'Space');
   assert.equal(s.comboFromEvent(ev('k')), 'K');

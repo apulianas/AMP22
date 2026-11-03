@@ -37,6 +37,8 @@
     autoAnalyze: true,
     cutThreshold: 0.1,
     skipNoFilm: true,
+    exportTrim: 0,
+    overlaySeconds: 3,
     playReport: reports.mergeOptions(),
     keyPlays: {
       turnovers: true,
@@ -55,6 +57,9 @@
     const out = Object.assign({}, DEFAULT_SETTINGS, s);
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
     out.playReport = reports.mergeOptions(s.playReport);
+    for (const key of ['exportTrim', 'overlaySeconds']) {
+      if (!Number.isFinite(out[key]) || out[key] < 0) out[key] = DEFAULT_SETTINGS[key];
+    }
     out.shortcuts = {};
     for (const a of ACTIONS) {
       const v = s.shortcuts && s.shortcuts[a.id];

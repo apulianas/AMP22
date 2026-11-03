@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('api', {
   analyzeFilm: (file, force) => ipcRenderer.invoke('film:analyze', { file, force }),
   cancelAnalysis: (file) => ipcRenderer.invoke('film:cancel', file),
   exportClips: (request) => ipcRenderer.invoke('clips:export', request),
+  previewFrame: (file, time) => ipcRenderer.invoke('clips:preview', { file, time }),
   cancelExport: () => ipcRenderer.invoke('clips:cancel'),
   revealExport: () => ipcRenderer.invoke('clips:reveal'),
   onExportProgress: (cb) => {

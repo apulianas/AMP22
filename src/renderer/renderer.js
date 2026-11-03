@@ -1065,6 +1065,16 @@ function openShare() {
   $('share-progress').hidden = true;
   $('share-reveal').hidden = true;
   S.exportDraft = null;
+  ++previewRevision;
+  clearTimeout(previewTimer);
+  $('share-preview-a').hidden = true;
+  $('share-preview-b').hidden = true;
+  $('share-preview-figure-a').hidden = true;
+  $('share-preview-figure-b').hidden = true;
+  $('share-preview-status').textContent = '';
+  $('share-preview-play').innerHTML = '';
+  $('share-overlay-seconds').value = S.settings.overlaySeconds;
+  $('share-overlay-seconds').disabled = $('share-clean').checked;
   const report = REPORT.mergeOptions(S.settings.playReport);
   $('share-report-format').value = report.format;
   $('share-report-advanced').checked = report.includeAdvanced;
@@ -1078,16 +1088,90 @@ function openShare() {
       if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
       const pair = S.pairs[pairIdx];
       const film = pair.film || S.film;
-      return { ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)), file: film.path, play: S.plays[i] };
+      return { ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)), file: film.path, play: S.plays[i], trim: S.settings.exportTrim };
     });
     const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'AMP22';
     S.exportDraft = { file: S.film.path, clips, matchup, team: S.sel.team || S.settings.defaultTeam };
+    $('share-preview-play').innerHTML = clips.map(({ play }, i) => `<option value="${i}">${i + 1}. ${esc(P.clockLabel(play))} · ${esc(P.overlaySummary(play))}</option>`).join('');
+    selectTrimPlay();
   } catch (e) {
     $('share-status').textContent = e.message;
     $('share-status').classList.add('error');
   }
-  $('share-export').disabled = !S.exportDraft;
+  updateExportOptions();
   $('share-angle').focus();
+}
+
+function trimmedExportClips() {
+  return S.exportDraft.clips.map(({ trim, ...clip }, i) => {
+    try { return A22.clipExport.trimRange(clip, trim); }
+    catch (e) { throw new Error(`Play ${i + 1} (${P.clockLabel(clip.play)}): ${e.message}`); }
+  });
+}
+
+function updateExportOptions() {
+  try {
+    if (!S.exportDraft) {
+      $('share-export').disabled = true;
+      return;
+    }
+    trimmedExportClips();
+    const seconds = $('share-overlay-seconds').valueAsNumber;
+    if (!$('share-clean').checked && (!Number.isFinite(seconds) || seconds < 0)) throw new Error('Overlay duration must be zero or more seconds.');
+    $('share-status').textContent = '';
+    $('share-status').classList.remove('error');
+    $('share-export').disabled = S.exporting;
+  } catch (e) {
+    $('share-status').textContent = e.message;
+    $('share-status').classList.add('error');
+    $('share-export').disabled = true;
+  }
+}
+
+let previewRevision = 0;
+let previewTimer = null;
+
+function selectTrimPlay() {
+  const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+  if (!clip) return;
+  $('share-trim').value = clip.trim;
+  queueTrimPreview();
+}
+
+function queueTrimPreview() {
+  const revision = ++previewRevision;
+  clearTimeout(previewTimer);
+  const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+  const sequence = clip ? A22.clipExport.exportSequence([clip], $('share-angle').value) : [];
+  const previews = [
+    { angle: 'sideline', image: 'share-preview-a', figure: 'share-preview-figure-a', start: 'aStart' },
+    { angle: 'endzone', image: 'share-preview-b', figure: 'share-preview-figure-b', start: 'bStart' },
+  ];
+  const selected = previews.filter(({ angle }) => sequence.some(({ mode }) => mode === 'both' || mode === angle));
+  for (const preview of previews) {
+    $(preview.image).hidden = true;
+    $(preview.figure).hidden = !selected.includes(preview);
+  }
+  if (!clip) {
+    $('share-preview-status').textContent = '';
+    return;
+  }
+  $('share-preview-status').textContent = `Loading first retained ${selected.length === 1 ? 'frame' : 'frames'}…`;
+  previewTimer = setTimeout(async () => {
+    if (revision !== previewRevision || $('share').hidden) return;
+    try {
+      const range = A22.clipExport.trimRange(clip, clip.trim);
+      const frames = await Promise.all(selected.map(({ start }) => window.api.previewFrame(clip.file, range[start])));
+      if (revision !== previewRevision || $('share').hidden) return;
+      for (const [i, { image }] of selected.entries()) {
+        $(image).src = frames[i];
+        $(image).hidden = false;
+      }
+      $('share-preview-status').textContent = `${range.len.toFixed(2)} seconds retained${selected.length === 2 ? ' per angle' : ''}.`;
+    } catch (e) {
+      if (revision === previewRevision && !$('share').hidden) $('share-preview-status').textContent = `Preview unavailable: ${e.message}`;
+    }
+  }, 300);
 }
 
 function updateReportOptions() {
@@ -1117,19 +1201,24 @@ async function exportSelection() {
   $('share-status').classList.remove('error');
   $('share-status').textContent = 'Choose where to save the MP4…';
   $('share-reveal').hidden = true;
+  $('share-trimming').disabled = true;
+  $('share-overlay-seconds').disabled = true;
   try {
     const mode = $('share-angle').value;
     const clean = $('share-clean').checked;
-    const { file, clips, matchup, team } = S.exportDraft;
+    const { file, matchup, team } = S.exportDraft;
+    const clips = trimmedExportClips();
+    const overlaySeconds = clean ? 0 : $('share-overlay-seconds').valueAsNumber;
+    if (!Number.isFinite(overlaySeconds) || overlaySeconds < 0) throw new Error('Invalid overlay duration.');
     const report = {
       ...REPORT.mergeOptions(S.settings.playReport),
       format: $('share-report-format').value,
       includeAdvanced: $('share-report-advanced').checked,
-      matchup, team, plays: clips.map((clip) => clip.play),
+      matchup, team, plays: A22.clipExport.exportSequence(clips, mode).map(({ clip }) => clip.play),
     };
     let images = new Map();
     let warnings = new Set();
-    if (!clean) {
+    if (!clean && overlaySeconds > 0) {
       $('share-status').textContent = 'Preparing player headshots…';
       ({ images, warnings } = await prepareHeadshots(clips));
     }
@@ -1139,7 +1228,7 @@ async function exportSelection() {
     }
     $('share-status').textContent = 'Choose where to save the MP4…';
     const result = await window.api.exportClips({
-      file, mode, clean, report,
+      file, mode, clean, report, overlaySeconds,
       suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play)),
       clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id)) }),
     });
@@ -1161,6 +1250,8 @@ async function exportSelection() {
     S.exporting = false;
     $('share-angle').disabled = false;
     $('share-clean').disabled = false;
+    $('share-trimming').disabled = false;
+    $('share-overlay-seconds').disabled = $('share-clean').checked;
     $('share-report-format').disabled = false;
     updateReportOptions();
     $('share-export').disabled = false;
@@ -1512,6 +1603,8 @@ function renderSettings() {
   $('set-auto').checked = draft.autoAnalyze;
   $('set-skipnofilm').checked = draft.skipNoFilm;
   $('set-cut').value = draft.cutThreshold;
+  $('set-export-trim').value = draft.exportTrim;
+  $('set-overlay-seconds').value = draft.overlaySeconds;
   $('set-report-format').value = draft.playReport.format;
   $('set-report-advanced').checked = draft.playReport.includeAdvanced;
   $('set-report-fields').innerHTML = REPORT.ADVANCED_FIELDS.map((f) =>
@@ -1548,6 +1641,8 @@ function readSettingsForm() {
   d.filmRoot = $('set-root').value;
   d.autoAnalyze = $('set-auto').checked;
   d.skipNoFilm = $('set-skipnofilm').checked;
+  d.exportTrim = $('set-export-trim').valueAsNumber;
+  d.overlaySeconds = $('set-overlay-seconds').valueAsNumber;
   d.playReport = {
     format: $('set-report-format').value,
     includeAdvanced: $('set-report-advanced').checked,
@@ -1678,10 +1773,22 @@ function wire() {
   $('btn-settings').addEventListener('click', () => { draft = null; toggleOverlay('settings', true); });
   $('btn-help').addEventListener('click', () => toggleOverlay('help'));
   $('btn-share').addEventListener('click', openShare);
+  $('share-angle').addEventListener('change', queueTrimPreview);
   $('share-clean').addEventListener('change', () => {
     $('share-overlay-description').hidden = $('share-clean').checked;
     $('share-clean-description').hidden = !$('share-clean').checked;
+    $('share-overlay-seconds').disabled = $('share-clean').checked;
+    updateExportOptions();
   });
+  $('share-preview-play').addEventListener('change', selectTrimPlay);
+  $('share-trim').addEventListener('input', () => {
+    const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+    if (!clip) return;
+    clip.trim = $('share-trim').valueAsNumber;
+    updateExportOptions();
+    queueTrimPreview();
+  });
+  $('share-overlay-seconds').addEventListener('input', updateExportOptions);
   $('share-report-format').addEventListener('change', updateReportOptions);
   $('share-report-advanced').addEventListener('change', updateReportOptions);
   $('share-export').addEventListener('click', exportSelection);
@@ -1874,6 +1981,12 @@ function wire() {
   });
   $('set-cancel').addEventListener('click', () => { draft = null; capture = null; toggleOverlay('settings', false); });
   $('set-save').addEventListener('click', async () => {
+    for (const id of ['set-export-trim', 'set-overlay-seconds']) {
+      if (!$(id).reportValidity()) {
+        $(id).focus();
+        return;
+      }
+    }
     const prev = S.settings;
     const next = readSettingsForm();
     applySettings(await window.api.saveSettings(next));

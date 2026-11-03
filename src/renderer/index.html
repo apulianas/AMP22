@@ -187,9 +187,28 @@
         <option value="sideline">Sideline</option>
         <option value="endzone">End zone</option>
         <option value="both">Both angles · portrait 9:16</option>
+        <option value="sideline-first">All sideline, then all end zone · landscape</option>
+        <option value="endzone-first">All end zone, then all sideline · landscape</option>
       </select>
+      <fieldset id="share-trimming">
+        <legend>Trim clip starts</legend>
+        <p class="muted small">Starts with your Settings default. Override each play below.<br>Previews show the first retained frame, without overlays.</p>
+        <label for="share-preview-play">Play to preview and trim</label>
+        <select id="share-preview-play"></select>
+        <p><label>Remove from this play (seconds)
+          <input id="share-trim" type="number" min="0" step="any" />
+        </label></p>
+        <div class="trim-previews">
+          <figure id="share-preview-figure-a" hidden><figcaption>Sideline</figcaption><img id="share-preview-a" alt="First retained sideline frame" hidden /></figure>
+          <figure id="share-preview-figure-b" hidden><figcaption>End zone</figcaption><img id="share-preview-b" alt="First retained end zone frame" hidden /></figure>
+        </div>
+        <p id="share-preview-status" class="muted small" role="status" aria-live="polite"></p>
+      </fieldset>
       <p><label><input id="share-clean" type="checkbox" /> Clean export (no overlays)</label></p>
-      <p id="share-overlay-description" class="muted">Both angles are stacked with play details below. Single-angle clips<br>show play results in the lower third for the first 3 seconds of each play.<br>Overlays include the primary player's headshot when available.</p>
+      <p><label>Overlay duration (seconds from each trimmed start)
+        <input id="share-overlay-seconds" type="number" min="0" step="any" />
+      </label></p>
+      <p id="share-overlay-description" class="muted">Applies to every angle and play. Zero hides overlays.<br>Both-angle portrait keeps its lower panel when the overlay ends.<br>Overlays include the primary player's headshot when available.</p>
       <p id="share-clean-description" class="muted" hidden>Clean exports omit all added text and graphics. Both-angle clean<br>exports center the stacked footage in the portrait frame.</p>
       <fieldset>
         <legend>Play breakdown</legend>
@@ -202,7 +221,7 @@
         </select>
         <p><label><input id="share-report-advanced" type="checkbox" /> Include advanced statistics</label></p>
         <p id="share-report-fields" class="muted small"></p>
-        <p class="muted small">One entry per exported play, in video order. Change defaults<br>and choose advanced fields in Settings → Play breakdown defaults.</p>
+        <p class="muted small">One entry per video clip, in video order (plays repeat for grouped angles).<br>Change defaults and advanced fields in Settings → Play breakdown defaults.</p>
       </fieldset>
       <p class="muted">MP4 video at normal speed, with audio from the selected angle<br>(sideline audio when exporting both).</p>
       <p id="share-status" role="status" aria-live="polite"></p>
@@ -246,6 +265,15 @@
         <label><input id="set-auto" type="checkbox" /> Analyze film automatically when opened</label>
         <label><input id="set-skipnofilm" type="checkbox" /> Next/previous play skips plays without film</label>
         <label>Cut sensitivity (scene score threshold) <input id="set-cut" type="number" min="0.03" max="0.5" step="0.01" /></label>
+      </div>
+      <h3>Clip export defaults</h3>
+      <div class="grid">
+        <label>Trim from each clip start (seconds)
+          <input id="set-export-trim" type="number" min="0" step="any" required />
+        </label>
+        <label>Overlay duration (seconds; 0 = hidden)
+          <input id="set-overlay-seconds" type="number" min="0" step="any" required />
+        </label>
       </div>
       <h3>Play breakdown defaults</h3>
       <div class="grid">

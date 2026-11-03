@@ -9,7 +9,7 @@ const media = require('./media');
 const clipExport = require('./export');
 const playReports = require('./reports');
 const reportOptions = require('../shared/reports');
-const { safeFilename } = require('../shared/export');
+const { safeFilename, exportSequence } = require('../shared/export');
 const { DataService } = require('./data');
 const { JsonStore } = require('./store');
 const { UpdateService } = require('./updates');
@@ -232,10 +232,13 @@ function registerIpc() {
     return !!r;
   });
 
+  ipcMain.handle('clips:preview', (_e, { file, time }) => media.previewFrame(file, time));
+
   ipcMain.handle('clips:export', async (e, request) => {
     if (exporting) throw new Error('A clip export is already in progress.');
     clipExport.validateRequest(request);
-    if (request.report) reportOptions.validateReport(request.report, request.clips.length);
+    const clipCount = exportSequence(request.clips, request.mode).length;
+    if (request.report) reportOptions.validateReport(request.report, clipCount);
     const controller = new AbortController();
     exporting = controller;
     try {
@@ -265,7 +268,7 @@ function registerIpc() {
           if (await fs.promises.realpath(file) === target) throw new Error('The play breakdown cannot replace an original film.');
         }
       }
-      const report = reportFile ? await playReports.prepareReport(request.report, request.clips.length, { signal: controller.signal }) : null;
+      const report = reportFile ? await playReports.prepareReport(request.report, clipCount, { signal: controller.signal }) : null;
       const exported = await clipExport.exportClips(request, destination, {
         signal: controller.signal,
         onProgress: (progress) => { if (!e.sender.isDestroyed()) e.sender.send('clips:progress', progress); },

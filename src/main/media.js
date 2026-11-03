@@ -88,6 +88,15 @@ async function grabGray(file, t, { w = GRAB_W, h = GRAB_H, signal } = {}) {
   return stdout.subarray(0, w * h);
 }
 
+async function previewFrame(file, time) {
+  if (typeof file !== 'string' || !Number.isFinite(time) || time < 0) throw new Error('Invalid preview timing or film.');
+  const { stdout } = await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-ss', time.toFixed(6),
+    '-i', file, '-frames:v', '1', '-an', '-vf', 'scale=480:-2', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
+  { binary: true, signal: AbortSignal.timeout(15000) });
+  if (!stdout.length) throw new Error('No preview frame at the trimmed start. Reduce the trim.');
+  return `data:image/jpeg;base64,${stdout.toString('base64')}`;
+}
+
 async function mapLimit(items, limit, fn) {
   const results = new Array(items.length);
   let next = 0;
@@ -167,4 +176,4 @@ async function analyzeFilm(file, { onProgress = () => {}, signal, cutThreshold =
   };
 }
 
-module.exports = { ANALYSIS_VERSION, run, probe, detectScenes, grabGray, classifyClips, analyzeFilm, buildPairs, mapLimit };
+module.exports = { ANALYSIS_VERSION, run, probe, previewFrame, detectScenes, grabGray, classifyClips, analyzeFilm, buildPairs, mapLimit };

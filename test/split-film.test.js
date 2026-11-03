@@ -12,12 +12,13 @@ const clipExport = require('../src/shared/export');
 const advanced = require('../src/shared/advanced');
 const reports = require('../src/shared/reports');
 
-function renderer({ cached = true } = {}) {
+function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout() {} } } = {}) {
   const elements = new Map();
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, {
       src: '', currentTime: 0, duration: 60, readyState: 1,
       innerHTML: '', textContent: '', style: {}, hidden: false,
+      get valueAsNumber() { return this.value === '' ? NaN : Number(this.value); },
       classList: { toggle() {}, add() {}, remove() {} },
       pause() {}, load() {}, focus() {}, removeAttribute(name) { this[name] = ''; },
       querySelectorAll: () => [], querySelector: () => ({ style: {} }),
@@ -40,6 +41,7 @@ function renderer({ cached = true } = {}) {
     saveGame: async (_gameId, patch) => (gameData = { ...gameData, ...patch }),
   };
   const context = vm.createContext({
+    setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     A22: { align, plays, settings, clipExport, advanced, reports },
     window: { addEventListener() {}, api },
     document: { getElementById: element, querySelectorAll: () => [] },
@@ -53,9 +55,10 @@ function renderer({ cached = true } = {}) {
     updateSelection = () => {};
     updateTimeUI = () => {};
     globalThis.renderer = { S, derivePlays, openSplitFilms, selectPlay, navClip, setAnchor,
-      nudge, pairKey, realign, corrections, openShare, analyze, closeFilm, setVideoTime };
+      nudge, pairKey, realign, corrections, openShare, trimmedExportClips, updateExportOptions, selectTrimPlay, queueTrimPreview, analyze, closeFilm, setVideoTime };
   `, context);
   const r = context.renderer;
+  element('share-angle').value = 'sideline';
   r.S.settings = settings.mergeSettings({ autoAnalyze: false });
   r.S.sel = { gameId: 'game', team: 'BAL' };
   r.S.gameData = gameData;
@@ -149,6 +152,122 @@ test('mixed exports carry each play source and frame rate in game order', async 
   r.openShare();
   assert.equal(r.S.exportDraft, null);
   assert.match(r.element('share-status').textContent, /no linked film/);
+});
+
+test('Share starts with remembered decimals, keeps per-play overrides, and blocks invalid trims', async () => {
+  const r = renderer();
+  await r.openSplitFilms();
+  r.S.settings.exportTrim = 1.25;
+  r.S.settings.overlaySeconds = 2.75;
+  r.S.selected = new Set([0, 1]);
+  r.openShare();
+  assert.equal(r.element('share-export').disabled, false);
+  assert.equal(r.element('share-overlay-seconds').value, 2.75);
+  assert.deepEqual(Array.from(r.S.exportDraft.clips, (clip) => clip.trim), [1.25, 1.25]);
+  const original = r.S.exportDraft.clips[0].aStart;
+  r.S.exportDraft.clips[0].trim = 0.125;
+  r.element('share-preview-play').value = '0';
+  r.selectTrimPlay();
+  assert.equal(r.element('share-trim').value, 0.125);
+  r.element('share-preview-play').value = '1';
+  r.selectTrimPlay();
+  assert.equal(r.element('share-trim').value, 1.25);
+  const clips = r.trimmedExportClips();
+  assert.equal(clips[0].aStart, original + 0.125);
+  assert.equal(r.S.exportDraft.clips[0].aStart, original);
+  assert.equal(r.S.settings.exportTrim, 1.25);
+  r.S.exportDraft.clips[1].trim = 999;
+  r.updateExportOptions();
+  assert.equal(r.element('share-export').disabled, true);
+  assert.match(r.element('share-status').textContent, /Play 2.*Trim/);
+  r.S.exportDraft.clips[1].trim = 0;
+  r.updateExportOptions();
+  assert.equal(r.element('share-export').disabled, false);
+  r.element('share-overlay-seconds').value = '';
+  r.updateExportOptions();
+  assert.equal(r.element('share-export').disabled, true);
+});
+
+test('trim previews follow the export mode and ignore stale angle requests', async () => {
+  let pendingTimer;
+  const timers = {
+    setTimeout(fn) { pendingTimer = fn; return fn; },
+    clearTimeout(id) { if (pendingTimer === id) pendingTimer = null; },
+    run() {
+      const fn = pendingTimer;
+      assert.ok(fn, 'preview timer scheduled');
+      pendingTimer = null;
+      return fn();
+    },
+  };
+  const r = renderer({ timers });
+  await r.openSplitFilms();
+  r.S.settings.exportTrim = 0.25;
+  r.S.selected = new Set([0, 1]);
+  r.element('share-preview-play').value = '0';
+  const requests = [];
+  r.api.previewFrame = async (file, time) => {
+    requests.push({ file, time });
+    return `frame:${time}`;
+  };
+  r.openShare();
+  const clip = r.S.exportDraft.clips[0];
+  const starts = { a: clip.aStart + clip.trim, b: clip.bStart + clip.trim };
+
+  for (const [mode, showA, showB] of [
+    ['sideline', true, false], ['endzone', false, true], ['both', true, true],
+    ['sideline-first', true, true], ['endzone-first', true, true],
+  ]) {
+    if (mode !== 'sideline') {
+      r.element('share-angle').value = mode;
+      r.queueTrimPreview();
+    }
+    assert.equal(r.element('share-preview-figure-a').hidden, !showA, mode);
+    assert.equal(r.element('share-preview-figure-b').hidden, !showB, mode);
+    assert.equal(r.element('share-preview-a').hidden, true, 'old images hidden while loading');
+    assert.equal(r.element('share-preview-b').hidden, true, 'old images hidden while loading');
+    requests.length = 0;
+    await timers.run();
+    assert.deepEqual(requests.map((request) => request.time), [
+      ...(showA ? [starts.a] : []), ...(showB ? [starts.b] : []),
+    ], mode);
+    assert.ok(requests.every((request) => request.file === clip.file));
+    assert.equal(r.element('share-preview-a').hidden, !showA, mode);
+    assert.equal(r.element('share-preview-b').hidden, !showB, mode);
+    if (showA) assert.equal(r.element('share-preview-a').src, `frame:${starts.a}`);
+    if (showB) assert.equal(r.element('share-preview-b').src, `frame:${starts.b}`);
+    assert.equal(clip.trim, 0.25, 'changing angles preserves the trim');
+  }
+
+  requests.length = 0;
+  r.element('share-preview-play').value = '1';
+  r.selectTrimPlay();
+  await timers.run();
+  const defenseClip = r.S.exportDraft.clips[1];
+  assert.deepEqual(requests.map((request) => request.file), [defenseClip.file, defenseClip.file]);
+  assert.deepEqual(requests.map((request) => request.time), [
+    defenseClip.aStart + defenseClip.trim, defenseClip.bStart + defenseClip.trim,
+  ]);
+  r.element('share-preview-play').value = '0';
+  r.selectTrimPlay();
+
+  let finishOld;
+  r.api.previewFrame = (_file, time) => time === starts.a
+    ? new Promise((resolve) => { finishOld = resolve; })
+    : Promise.resolve('new end-zone frame');
+  r.element('share-angle').value = 'sideline';
+  r.queueTrimPreview();
+  const oldRequest = timers.run();
+  r.element('share-angle').value = 'endzone';
+  r.queueTrimPreview();
+  await timers.run();
+  finishOld('stale sideline frame');
+  await oldRequest;
+  assert.equal(r.element('share-preview-figure-a').hidden, true);
+  assert.equal(r.element('share-preview-a').hidden, true);
+  assert.equal(r.element('share-preview-figure-b').hidden, false);
+  assert.equal(r.element('share-preview-b').src, 'new end-zone frame');
+  assert.equal(r.element('share-preview-b').hidden, false);
 });
 
 test('Share uses saved breakdown defaults while allowing format and advanced-statistic overrides', async () => {
