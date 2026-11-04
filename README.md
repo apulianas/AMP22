@@ -88,6 +88,8 @@ See the latest published release notes before opening the download page. This is
 
 ## Getting started
 
+For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series), the **x64 DMG** for Intel Macs, or the **Windows installer**. Each build bundles matching native video tools.
+
 Requirements: Node.js 20 or later.
 
 ```sh
@@ -233,15 +235,35 @@ npm run dist:mac   # macOS .dmg   (run on macOS)
 npm run dist:win   # Windows NSIS installer (run on Windows)
 ```
 
-`ffmpeg-static` and `ffprobe-static` download binaries only for the platform you install on. Build the Windows installer on Windows, or with the included GitHub Actions workflow (`.github/workflows/build.yml`).
+The bundled FFmpeg and FFprobe must match the runtime architecture. Install dependencies and build natively on each target platform: Apple Silicon macOS, Intel macOS, or Windows x64. Merely cross-targeting Electron does not replace the installed FFmpeg binary. The included GitHub Actions workflow (`.github/workflows/build.yml`) uses a matching native runner for each target.
 
 ### Automatic builds and releases
 
-Every merge (or push) to `master` builds the macOS DMG and Windows installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/AMP22/releases) once both builds pass. The release version normally increments the highest stable Git tag (or the `package.json` baseline if there are no stable tags) by one patch; no version-bump commit is needed. To request a specific newer release, bump `package.json` and `package-lock.json` above all existing stable tags: that exact version is published without an extra patch increment. Both installers use the same version. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
+Every merge (or push) to `master` builds separate Apple Silicon (`arm64`) and Intel (`x64`) macOS DMGs and the Windows x64 installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/AMP22/releases) once all three builds pass. The release version normally increments the highest stable Git tag (or the `package.json` baseline if there are no stable tags) by one patch; no version-bump commit is needed. To request a specific newer release, bump `package.json` and `package-lock.json` above all existing stable tags: that exact version is published without an extra patch increment. All installers use the same version. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
+
+Intel builds use `macos-15-intel` with Xcode 26 for the Icon Composer assets; native encoding tests run on both macOS architectures. GitHub has [scheduled its hosted Intel runner's retirement for August 2027](https://github.com/actions/runner-images/issues/13045), so continuing Intel builds after that will require another build host or a validated cross-build setup.
 
 GitHub-generated release notes are also the in-app changelog. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
 
-Pull requests build and test both platforms and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
+Pull requests build and test all three targets and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
+
+### Download counts
+
+GitHub tracks downloads separately for each release asset, so the `arm64` DMG, `x64` DMG, and Windows installer have independent counts. No app telemetry is required. With the GitHub CLI, show the latest release's filenames and download totals:
+
+```sh
+gh api repos/apulianas/AMP22/releases/latest \
+  --jq '.assets[] | [.name, .download_count] | @tsv'
+```
+
+For every published release, including older versions:
+
+```sh
+gh api --paginate repos/apulianas/AMP22/releases \
+  --jq '.[] | select(.draft == false) | .tag_name as $version | .assets[] | [$version, .name, .download_count] | @tsv'
+```
+
+These are download totals, not unique people, installations, or active users. Counts belong to individual assets; deleting and reuploading an installer (including a release-build rerun that replaces it) resets that asset's count. Keep old assets or record snapshots if you need historical comparisons.
 
 Development hooks for automation:
 - `A22_USER_DATA=/dir` uses a different userData folder.
