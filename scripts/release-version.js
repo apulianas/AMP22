@@ -18,7 +18,9 @@ function nextReleaseVersion(baseVersion, tags, headTags) {
   const existing = headTags.map(parseVersion).filter((v) => v && compare(v, base) >= 0);
   // A rerun of an already released commit must use the same installer version and tag.
   if (existing.length) return existing.sort(compare).at(-1).join('.');
-  const latest = [base, ...versions].sort(compare).at(-1);
+  const tagged = versions.sort(compare).at(-1);
+  if (tagged && compare(base, tagged) > 0) return base.join('.');
+  const latest = tagged || base;
   if (!Number.isSafeInteger(latest[2] + 1)) throw new Error('Release patch version is too large');
   return [latest[0], latest[1], latest[2] + 1].join('.');
 }

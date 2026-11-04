@@ -10,6 +10,7 @@ async function exerciseWorkflows({ app, win }) {
   const { pathToFileURL } = require('node:url');
   const { probe } = require('../src/main/media');
   const { parseCSV } = require('../src/shared/csv');
+  const { printPdf } = require('../src/main/reports');
   const root = app.getPath('userData');
   ipcMain.removeHandler('schedule:get');
   ipcMain.handle('schedule:get', () => { throw new Error('Offline workflow test'); });
@@ -39,6 +40,32 @@ async function exerciseWorkflows({ app, win }) {
   };
   if (win.webContents.isLoading()) await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
   await until(`$('status').textContent.includes('Offline workflow test')`);
+  assert.equal(await js(`getComputedStyle(document.querySelector('#topbar .brand')).backgroundColor`), 'rgba(0, 0, 0, 0)');
+  assert.match(await js(`getComputedStyle(document.querySelector('.brand-amp')).maskImage`), /amp\.svg/);
+  assert.match(await js(`getComputedStyle(document.querySelector('.brand-amp')).backgroundImage`), /linear-gradient/);
+  assert.equal(await js(`getComputedStyle(document.querySelector('.brand-number')).backgroundClip`), 'text');
+  assert.match(await js(`getComputedStyle(document.querySelector('.brand-number')).backgroundImage`), /linear-gradient/);
+  assert.equal(await js(`(() => {
+    const style = getComputedStyle(document.querySelector('.brand-number'));
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = style.font;
+    ctx.letterSpacing = style.letterSpacing;
+    const ink = ctx.measureText('22');
+    return Number.parseFloat(style.paddingRight) >= Math.max(0, ink.actualBoundingBoxRight - ink.width) &&
+      Number.parseFloat(style.paddingLeft) >= Math.max(0, ink.actualBoundingBoxLeft);
+  })()`), true, 'gradient text has room for the italic glyph overhang');
+  assert.equal(await js(`$('film-setup').hidden`), false);
+  assert.equal(await js(`$('btn-film').closest('#videos') !== null`), true);
+  assert.equal(await js(`document.getElementById('filmbar') === null`), true);
+  assert.equal(await js(`$('sidebar').getBoundingClientRect().top === $('topbar').getBoundingClientRect().bottom`), true);
+  assert.equal(await js(`(() => {
+    const button = $('btn-multi-select').getBoundingClientRect();
+    const items = [...document.querySelectorAll('.legend > span')].map(el => el.getBoundingClientRect());
+    const footer = document.querySelector('.filter-footer').getBoundingClientRect();
+    return items.every(r => r.top >= button.top && r.bottom <= button.bottom && r.right < button.left) &&
+      button.right <= footer.right && footer.width >= document.querySelector('.filter-footer').scrollWidth;
+  })()`), true, 'Multi-select and all legend labels fit on one line');
+  assert.equal(await js(`getComputedStyle($('selection-bar')).display`), 'none');
   await js(`(async () => {
     applySettings({...A22.settings.DEFAULT_SETTINGS, autoAnalyze: false});
     S.sel = {gameId: 'workflow-test', team: 'BAL'};
@@ -46,6 +73,7 @@ async function exerciseWorkflows({ app, win }) {
     S.gameData = await window.api.saveGame(S.sel.gameId, {
       filmFormat: 'split', splitFilmPaths: {BAL: ${JSON.stringify(sources)}}
     });
+    renderFilmControls();
     S.plays = [
       {play_id: 1, posteam: 'BAL', defteam: 'BUF', play_type: 'run', rush: 1, yards_gained: 4, rusher_player_name: 'Runner'},
       {play_id: 2, posteam: 'BUF', defteam: 'BAL', play_type: 'pass', pass: 1, complete_pass: 1, yards_gained: 9, receiver_player_name: 'Receiver'},
@@ -66,6 +94,45 @@ async function exerciseWorkflows({ app, win }) {
     assert.ok(Math.abs(await js('vidA().currentTime - S.range.aStart')) < 0.001);
     assert.ok(Math.abs(await js('vidB().currentTime - S.range.bStart')) < 0.001);
   }
+  assert.equal(await js(`$('film-setup').hidden`), true);
+  assert.equal(await js(`$('film-setup-toggle').hidden`), false);
+  assert.equal(await js(`(() => {
+    const setup = $('film-setup-toggle').getBoundingClientRect();
+    return [...document.querySelectorAll('.pop-angle, .angle figcaption')].every(el => {
+      const r = el.getBoundingClientRect();
+      return setup.right <= r.left || setup.left >= r.right || setup.bottom <= r.top || setup.top >= r.bottom;
+    });
+  })()`), true, 'Film setup does not cover camera labels or pop-out controls');
+  await js(`$('film-setup-toggle').click()`);
+  assert.equal(await js(`$('film-setup').hidden`), false);
+  assert.equal(await js(`document.activeElement.id`), 'film-format');
+  assert.equal(await js(`$('btn-defense-film').hidden || $('btn-special-film').hidden`), false);
+  let pickerCalls = 0;
+  let pickerOpened;
+  const picking = new Promise((resolve) => { pickerOpened = resolve; });
+  dialog.showOpenDialog = async () => {
+    pickerCalls++;
+    pickerOpened();
+    return { canceled: true, filePaths: [] };
+  };
+  await js(`$('btn-defense-film').click()`);
+  await picking;
+  assert.equal(pickerCalls, 1);
+  assert.equal(await js(`S.splitFilms.defense.path`), sources.defense);
+  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [sources.offense] });
+  const previousRevision = await js('S.filmRevision');
+  await js(`$('btn-film').click()`);
+  await until(`S.filmRevision > ${previousRevision} && !!S.splitFilms.special && $('film-setup').hidden`);
+  await js(`$('film-setup-toggle').click(); $('film-setup-close').click()`);
+  assert.equal(await js(`$('film-setup').hidden`), true);
+  assert.equal(await js(`document.activeElement.id`), 'film-setup-toggle');
+  await js(`$('btn-multi-select').click()`);
+  assert.equal(await js(`$('btn-multi-select').getAttribute('aria-pressed')`), 'true');
+  assert.equal(await js(`$('selection-bar').hidden`), false);
+  assert.equal(await js(`$('btn-clear-selection').hidden`), false);
+  await js(`$('btn-multi-select').click()`);
+  assert.equal(await js(`$('btn-multi-select').getAttribute('aria-pressed')`), 'false');
+  assert.equal(await js(`getComputedStyle($('selection-bar')).display`), 'none');
   await js(`popAngle('b')`);
   await until(`vidB().ownerDocument.URL.endsWith('angle.html')`);
   await js(`selectPlay(1, {autoplay: false})`);
@@ -115,11 +182,117 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js(`$('share-report-format').value`), 'pdf');
   assert.equal(await js(`$('share-report-advanced').checked`), true);
 
+  await js(`$('share-clean').checked = false; $('share-clean').dispatchEvent(new Event('change'));`);
+  await until(`!$('share-position-preview').hidden && positionHeadshots !== null`);
+  for (const mode of ['sideline', 'endzone', 'sideline-first', 'endzone-first', 'both']) {
+    await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'));`);
+    await until(`positionFrames?.mode === '${mode}'`);
+    for (const preset of ['top-left', 'top-right', 'bottom-left', 'bottom-right']) {
+      await js(`$('share-position').value = '${preset}'; $('share-position').dispatchEvent(new Event('change'));`);
+      const bounds = await js(`positionBounds`);
+      const size = await js(`A22.clipExport.dimensions('${mode}')`);
+      assert.equal(bounds.x, preset.endsWith('right') ? size.width - bounds.width - 48 : 48);
+      assert.equal(bounds.y, preset.startsWith('top') ? 48 : size.height - bounds.height - 48);
+      assert.ok(bounds.width <= size.width * (mode === 'both' ? 0.9 : 0.72) + 1);
+      const identical = await js(`(async () => {
+        const card = buildPlayCard(S.exportDraft.clips[0].play, '${mode}', S.exportDraft.matchup, null, sharePosition);
+        const image = new Image(); image.src = playCard(S.exportDraft.clips[0].play, '${mode}', S.exportDraft.matchup, null, sharePosition); await image.decode();
+        const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+        const b = card.bounds;
+        return ctx.getImageData(b.x + 2, b.y + 2, 1, 1).data[3] > 0 && ctx.getImageData(0, 0, 1, 1).data[3] === 0;
+      })()`);
+      assert.ok(identical, `${mode} ${preset}: exported card pixels use the preview position`);
+    }
+  }
+  await js(`
+    $('share-position-x').value = 25; $('share-position-y').value = 40;
+    $('share-position-x').dispatchEvent(new Event('input'));
+    $('share-location-name').value = '<Custom>';
+    $('share-location-save').click();
+  `);
+  await until(`!positionSaving && S.settings.overlayLocations.length === 1`);
+  assert.deepEqual(await js('sharePosition'), { preset: 'custom', x: 0.25, y: 0.4 });
+  assert.equal(await js(`$('share-position').selectedOptions[0].textContent`), '<Custom>');
+  await js(`$('share-position-default').click()`);
+  await until(`!positionSaving && S.settings.overlayPosition.preset === 'custom'`);
+  const positionSaved = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
+  assert.deepEqual(positionSaved.overlayPosition, { preset: 'custom', x: 0.25, y: 0.4 });
+  assert.deepEqual(positionSaved.overlayLocations, [{ name: '<Custom>', position: positionSaved.overlayPosition }]);
+  await js(`$('share-close').click(); $('btn-share').click();`);
+  await until(`!$('share-position-preview').hidden`);
+  assert.deepEqual(await js('sharePosition'), positionSaved.overlayPosition);
+  await js(`$('share-position').value = 'saved-0'; $('share-position').dispatchEvent(new Event('change'));`);
+  assert.equal(await js(`$('share-location-delete').disabled`), false);
+  await js(`$('share-location-delete').click()`);
+  await until(`!positionSaving && S.settings.overlayLocations.length === 0`);
+  assert.deepEqual(await js('S.settings.overlayPosition'), positionSaved.overlayPosition);
+  await js(`$('share-position-preview').scrollIntoView({block: 'center'})`);
+  const drag = await js(`(() => {
+    const canvas = $('share-position-preview'), rect = canvas.getBoundingClientRect(), b = positionBounds;
+    return {x: Math.round(rect.left + (b.x + b.width / 2) / canvas.width * rect.width),
+      y: Math.round(rect.top + (b.y + b.height / 2) / canvas.height * rect.height)};
+  })()`);
+  win.webContents.sendInputEvent({ type: 'mouseMove', ...drag });
+  win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...drag });
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: drag.x + 25, y: drag.y + 35 });
+  win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: drag.x + 25, y: drag.y + 35 });
+  await until(`sharePosition.x !== 0.25 && sharePosition.y !== 0.4`);
+  const moved = await js('sharePosition');
+  assert.ok(moved.x >= 0 && moved.x <= 1 && moved.y >= 0 && moved.y <= 1);
+  await js(`$('share-clean').checked = true; $('share-clean').dispatchEvent(new Event('change'));`);
+  assert.equal(await js(`$('share-positioning').disabled`), true);
+  await js(`$('share-angle').value = 'sideline'; $('share-angle').dispatchEvent(new Event('change'));`);
+
   let destination;
   let replace = 0;
   let prompts = 0;
   dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
   dialog.showMessageBox = async () => { prompts++; return { response: replace }; };
+  destination = path.join(root, 'positioned.mp4');
+  await js(`
+    $('share-clean').checked = false; $('share-clean').dispatchEvent(new Event('change'));
+    $('share-angle').value = 'both'; $('share-angle').dispatchEvent(new Event('change'));
+    $('share-position').value = 'top-right'; $('share-position').dispatchEvent(new Event('change'));
+    $('share-overlay-seconds').value = '0.5';
+    $('share-report-format').value = 'none';
+  `);
+  await until(`positionFrames?.mode === 'both' && positionHeadshots !== null`);
+  const encodedBounds = await js('positionBounds');
+  await js('exportSelection()');
+  assert.equal(await js(`$('share-status').classList.contains('error')`), false, await js(`$('share-status').textContent`));
+  const sample = (time, x, y) => {
+    const result = spawnSync(require('ffmpeg-static'), ['-hide_banner', '-v', 'error', '-ss', String(time), '-i', destination,
+      '-frames:v', '1', '-vf', `crop=2:2:${x}:${y},scale=1:1`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']);
+    assert.equal(result.status, 0, String(result.stderr));
+    assert.equal(result.stdout.length, 3);
+    return [...result.stdout];
+  };
+  const before = sample(0.2, encodedBounds.x + 2, encodedBounds.y + 2);
+  assert.ok(before[1] > 90 && before[1] > before[0] * 1.5, 'encoded overlay uses the chosen top-right location');
+  assert.ok(sample(0.8, encodedBounds.x + 2, encodedBounds.y + 2).every((v) => v < 30), 'overlay disappears after the chosen duration');
+  const filmPixel = sample(0.2, 500, 400);
+  assert.ok(filmPixel[0] > 180 && filmPixel[1] < 70, 'movable portrait overlay centers rather than shifts the film');
+  await js(`
+    $('share-clean').checked = true; $('share-clean').dispatchEvent(new Event('change'));
+    $('share-angle').value = 'sideline'; $('share-angle').dispatchEvent(new Event('change'));
+  `);
+  let headshotRequests = 0;
+  const photo = await js(`(() => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 32;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#ff8a24'; ctx.fillRect(0, 0, 32, 32);
+    return canvas.toDataURL('image/png');
+  })()`);
+  ipcMain.removeHandler('players:headshots');
+  ipcMain.handle('players:headshots', (_event, ids) => {
+    headshotRequests++;
+    return ids.map(id => id === '00-test-runner' ? { id, dataUrl: photo } : { id, warning: 'Photo unavailable' });
+  });
+  await js(`
+    S.plays[0].playerIds.rusher = '00-test-runner';
+    S.plays[1].playerIds.receiver = '00-test-receiver';
+    positionHeadshots = null;
+  `);
   for (const format of ['csv', 'txt', 'pdf', 'none']) {
     destination = path.join(root, `export-${format}.mp4`);
     await js(`$('share-report-format').value = '${format}'; $('share-report-advanced').checked = ${format !== 'csv'}; exportSelection();`);
@@ -144,16 +317,36 @@ async function exerciseWorkflows({ app, win }) {
         assert.equal(content.subarray(0, 5).toString(), '%PDF-');
         assert.ok(content.length > 5000);
         assert.match(content.toString('latin1'), /\/Type\s*\/Page\b/);
+        assert.match(content.toString('latin1'), /\/Subtype\s*\/Image\b/, 'actual PDF embeds a headshot even though the video is clean');
         assert.equal(BrowserWindow.getAllWindows().length, 1, 'PDF renderer is destroyed');
+        assert.match(await js(`$('share-status').textContent`), /Headshot notices:.*Photo unavailable/);
       }
     }
+    assert.equal(headshotRequests, ['pdf', 'none'].includes(format) ? 1 : 0, 'only the clean PDF export requests headshots');
   }
+  await assert.rejects(printPdf('<!doctype html>', {
+    headshots: ['data:image/png;base64,iVBORw0KGgo='],
+  }), /Could not decode a player headshot/);
+  assert.equal(BrowserWindow.getAllWindows().length, 1, 'invalid headshots do not leave a print window behind');
+  destination = path.join(root, 'zero-overlay-headshots.mp4');
+  await js(`
+    $('share-clean').checked = false;
+    $('share-overlay-seconds').value = '0';
+    $('share-angle').value = 'sideline-first';
+    $('share-report-format').value = 'pdf';
+    exportSelection();
+  `);
+  assert.equal(await js(`$('share-status').classList.contains('error')`), false, await js(`$('share-status').textContent`));
+  const groupedPdf = fs.readFileSync(path.join(root, 'zero-overlay-headshots-plays.pdf')).toString('latin1');
+  assert.match(groupedPdf, /\/Subtype\s*\/Image\b/, 'grouped PDF retains headshots when overlay duration is zero');
+  assert.equal(headshotRequests, 2);
+  await js(`$('share-clean').checked = true; $('share-angle').value = 'sideline';`);
   destination = path.join(root, 'export-csv.mp4');
-  const before = fs.readFileSync(destination);
+  const previousExport = fs.readFileSync(destination);
   await js(`$('share-report-format').value = 'csv'; exportSelection();`);
   assert.equal(prompts, 1);
   assert.match(await js(`$('share-status').textContent`), /cancelled/i);
-  assert.deepEqual(fs.readFileSync(destination), before);
+  assert.deepEqual(fs.readFileSync(destination), previousExport);
   for (const mode of ['sideline-first', 'endzone-first']) {
     destination = path.join(root, `${mode}.mp4`);
     await js(`$('share-angle').value = '${mode}'; exportSelection();`);

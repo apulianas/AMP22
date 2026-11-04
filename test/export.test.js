@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions } = require('../src/shared/export');
+const { clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions, overlayPosition, overlayBounds } = require('../src/shared/export');
 const { validateRequest, segmentArgs, exportClips } = require('../src/main/export');
 const { run, probe, previewFrame } = require('../src/main/media');
 const { ffmpegPath } = require('../src/main/ffpaths');
@@ -22,6 +22,37 @@ function cardHeader(mode) {
 
 const clip = { aStart: 1, bStart: 6, len: 2, card: cardHeader('both') };
 const request = (patch = {}) => ({ file: '/film.mp4', mode: 'both', clips: [{ ...clip }], ...patch });
+
+test('overlay presets and custom positions remain within every output frame', () => {
+  assert.deepEqual(overlayPosition(), { preset: 'original' });
+  for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
+    const { width, height } = dimensions(mode);
+    for (const preset of ['original', 'top-left', 'top-right', 'bottom-left', 'bottom-right']) {
+      const bounds = overlayBounds(mode, 500, 180, { preset });
+      assert.equal(bounds.x, preset.endsWith('right') ? width - 548 : 48);
+      assert.equal(bounds.y, preset.startsWith('top') ? 48 : height - 228);
+    }
+    for (const [x, y] of [[0, 0], [1, 1], [0.25, 0.75]]) {
+      const position = { preset: 'custom', x, y };
+      assert.deepEqual(overlayBounds(mode, 500, 180, position), {
+        x: Math.round((width - 500) * x), y: Math.round((height - 180) * y), width: 500, height: 180,
+      });
+      assert.deepEqual(validateRequest(request({ overlayPosition: position })).overlayPosition, position);
+    }
+  }
+  for (const value of [null, 'top-left', {}, { preset: 'custom', x: 2, y: 0 }, { preset: 'custom', x: 0, y: NaN }]) {
+    assert.throws(() => validateRequest(request({ overlayPosition: value })), /overlay position/);
+  }
+});
+
+test('movable portrait overlays center the footage while the original panel stays unchanged', () => {
+  for (const position of [{ preset: 'original' }, { preset: 'top-right' }, { preset: 'custom', x: 0.3, y: 0.2 }]) {
+    const args = segmentArgs('/film.mp4', clip, 'both', true, 30, false, 1.5, position);
+    const filter = args[args.indexOf('-filter_complex') + 1];
+    assert.ok(filter.includes(position.preset === 'original' ? 'pad=1080:1920:0:0:color=0x0d1117' : 'pad=1080:1920:0:(oh-ih)/2:color=black'));
+    assert.ok(filter.includes("enable='lt(t,1.5)'"));
+  }
+});
 
 test('decimal trim advances both synced angles equally and cannot remove a whole clip', () => {
   const range = { aStart: 10.008, bStart: 20.108, len: 4 };

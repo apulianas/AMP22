@@ -43,12 +43,23 @@
         !Array.isArray(report.fields) || report.fields.some((key) => !ADVANCED_FIELDS.some((f) => f.key === key))) {
       throw new Error('Invalid play breakdown options.');
     }
+    validateHeadshots(report.headshots);
     if (report.format === 'none') return;
     if (!Array.isArray(report.plays) || report.plays.length !== clipCount ||
         report.plays.some((p) => !p || typeof p.desc !== 'string' || typeof p.posteam !== 'string' ||
           typeof p.playType !== 'string' || !p.flags || !p.names) ||
         typeof report.matchup !== 'string' || typeof report.team !== 'string') {
       throw new Error('The play breakdown must describe every exported play in video order.');
+    }
+  }
+
+  function validateHeadshots(headshots) {
+    if (headshots === undefined) return;
+    if (!headshots || typeof headshots !== 'object' || Array.isArray(headshots) ||
+        Object.entries(headshots).some(([id, image]) => !/^[a-zA-Z0-9-]{1,32}$/.test(id) ||
+          typeof image !== 'string' || image.length > 8 * 1024 * 1024 ||
+          !/^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(image))) {
+      throw new Error('Invalid play breakdown headshot image.');
     }
   }
 
@@ -107,11 +118,15 @@
   }
 
   function html(report) {
+    validateHeadshots(report.headshots);
     const plays = report.plays;
     const [primary, accent] = teams.COLORS[report.team] || ['#241773', '#9e7c0c'];
     const fields = advancedFields(report);
     const counts = ['run', 'pass', 'special'].map((cat) => plays.filter((p) => P.category(p) === cat).length);
     const cards = plays.map((p, i) => {
+      const player = P.primaryPlayer(p);
+      const image = player?.id && report.headshots && Object.hasOwn(report.headshots, player.id) ? report.headshots[player.id] : null;
+      const headshot = image ? `<img class="headshot" src="${image}" alt="${esc(`Headshot of ${player.name || player.id}`)}" width="72" height="72">` : '';
       const color = (teams.COLORS[p.posteam] || [primary])[0];
       const badges = [...new Set([...(p.key || []), ...(p.neg || [])])];
       const statistics = fields.length ? `<dl class="statistics">${fields.map((f) =>
@@ -119,7 +134,7 @@
       return `<article style="border-left-color:${color}">
         <div class="play-heading"><span class="number">${String(i + 1).padStart(2, '0')}</span>
           <div><h2>${esc(P.clockLabel(p))}</h2><p>${esc(p.posteam)} offense <span>/</span> ${esc(p.defteam)} defense</p></div>
-          <div class="situation"><strong>${esc(P.downDistance(p)) || esc(p.playType.replace(/_/g, ' '))}</strong><span>${esc(p.yrdln)}</span></div></div>
+          <div class="situation"><strong>${esc(P.downDistance(p)) || esc(p.playType.replace(/_/g, ' '))}</strong><span>${esc(p.yrdln)}</span></div>${headshot}</div>
         <h3>${esc(P.overlaySummary(p))}</h3>
         ${badges.length ? `<div class="badges">${badges.map((b) => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
         <p class="description">${esc(p.desc)}</p>${statistics}
@@ -127,7 +142,7 @@
       </article>`;
     }).join('');
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
       <title>AMP22 play breakdown</title><style>
       * { box-sizing: border-box; } body { margin: 0; color: #17212b; font: 11px/1.5 Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .hero { background: ${primary}; color: white; border-bottom: 7px solid ${accent}; padding: 28px 30px 24px; }
@@ -140,6 +155,7 @@
       .play-heading { display: flex; gap: 14px; align-items: center; } .number { font-size: 27px; font-weight: bold; color: ${primary}; min-width: 40px; }
       h2 { margin: 0; font-size: 16px; } .play-heading p { margin: 1px 0 0; color: #526170; } .play-heading p span { padding: 0 5px; color: #a0a9b3; }
       .situation { margin-left: auto; text-align: right; } .situation strong, .situation span { display: block; } .situation span { color: #526170; }
+      .headshot { width: 72px; height: 72px; object-fit: contain; object-position: center bottom; flex: none; }
       h3 { font-size: 16px; line-height: 1.4; margin: 14px 0 5px; } .description { margin: 7px 0 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
       .badges { display: flex; gap: 5px; } .badges span { background: #edf0f5; color: ${primary}; font-size: 9px; font-weight: bold; padding: 2px 6px; border-radius: 3px; }
       .statistics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px 14px; background: #f3f5f8; padding: 12px; margin: 10px 0; }
@@ -149,7 +165,7 @@
       </style></head><body><header class="hero"><div class="eyebrow">AMP22 / FILM STUDY</div>
       <h1>${esc(teams.teamName(report.team))}</h1><p>${esc(report.matchup)}</p></header>
       <div class="summary">${[plays.length, ...counts].map((n, i) => `<div><strong>${n}</strong><span>${['EXPORTED PLAYS', 'RUNS', 'PASSES', 'SPECIAL TEAMS'][i]}</span></div>`).join('')}</div>
-      <p class="note">Plays are listed in exported video order.${fields.length ? ' Unavailable advanced statistics are marked, never filled with zero.' : ''}</p>
+      <p class="note">Plays are listed in exported video order. Player headshots are included when available.${fields.length ? ' Unavailable advanced statistics are marked, never filled with zero.' : ''}</p>
       ${cards}</body></html>`;
   }
 

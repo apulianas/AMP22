@@ -4,7 +4,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { run, probe } = require('./media');
 const { ffmpegPath } = require('./ffpaths');
-const { MODES, dimensions, exportSequence } = require('../shared/export');
+const { MODES, dimensions, exportSequence, overlayPosition } = require('../shared/export');
 
 function validateRequest(request) {
   if (!request || typeof request.file !== 'string' || !MODES.includes(request.mode) ||
@@ -17,6 +17,7 @@ function validateRequest(request) {
   if (request.overlaySeconds !== undefined && (!Number.isFinite(request.overlaySeconds) || request.overlaySeconds < 0)) {
     throw new Error('Invalid overlay duration.');
   }
+  overlayPosition(request.overlayPosition);
   const { width, height } = dimensions(request.mode);
   for (const clip of request.clips) {
     if (clip?.file !== undefined && (typeof clip.file !== 'string' || !clip.file.trim())) {
@@ -41,7 +42,8 @@ function validateRequest(request) {
   return request;
 }
 
-function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeconds = mode === 'both' ? null : 3) {
+function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeconds = mode === 'both' ? null : 3, position) {
+  const centered = clean || overlayPosition(position).preset !== 'original';
   const args = ['-hide_banner', '-v', 'error', '-xerror', '-nostats', '-progress', 'pipe:1', '-y'];
   const duration = clip.len.toFixed(6);
   const input = (start) => args.push('-ss', start.toFixed(6), '-t', duration, '-i', file);
@@ -56,7 +58,7 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeco
     ? [
       `[0:v]${scale(1080, 608)}[a]`,
       `[1:v]${scale(1080, 608)}[b]`,
-      `[a][b]vstack=inputs=2:shortest=1,pad=1080:1920:0:${clean ? '(oh-ih)/2' : '0'}:color=${clean ? 'black' : '0x0d1117'}[base]`,
+      `[a][b]vstack=inputs=2:shortest=1,pad=1080:1920:0:${centered ? '(oh-ih)/2' : '0'}:color=${centered ? 'black' : '0x0d1117'}[base]`,
     ]
     : [`[0:v]${scale(1920, 1080)}[base]`];
   filters.push(clean
@@ -100,7 +102,7 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
       const sourceFile = clip.file || file;
       const card = path.join(temp, 'card.png');
       if (!clean) await fs.writeFile(card, Buffer.from(clip.card.split(',')[1], 'base64'));
-      const args = segmentArgs(sourceFile, clip, angle, sources.get(sourceFile).hasAudio, fps, clean, request.overlaySeconds);
+      const args = segmentArgs(sourceFile, clip, angle, sources.get(sourceFile).hasAudio, fps, clean, request.overlaySeconds, request.overlayPosition);
       if (!clean) args[args.indexOf('card.png')] = card;
       args.push(path.join(temp, `clip-${i}.mp4`));
       let pending = '';
