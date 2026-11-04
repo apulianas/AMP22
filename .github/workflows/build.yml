@@ -39,26 +39,69 @@ jobs:
   build:
     needs: version
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            target: mac
+            arch: arm64
+          - os: macos-15-intel
+            target: mac
+            arch: x64
+          - os: windows-latest
+            target: win
+            arch: x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Verify native build architecture
+        run: node -e "require('node:assert/strict').equal(process.arch, '${{ matrix.arch }}')"
+      - name: Select Xcode 26 for Intel icon compilation
+        if: matrix.os == 'macos-15-intel'
+        run: sudo xcode-select --switch /Applications/Xcode_26.0.1.app/Contents/Developer
       - run: npm ci
       - run: npm version "$APP_VERSION" --no-git-tag-version --ignore-scripts --allow-same-version
         shell: bash
         env:
           APP_VERSION: ${{ needs.version.outputs.version }}
       - run: npm test
-      - run: npx electron-builder --publish never
+        env:
+          A22_TEST_EXPORT: ${{ runner.os == 'macOS' && '1' || '0' }}
+      - run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Verify packaged macOS architectures and media tools
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APP_ARCH: ${{ matrix.arch }}
+        run: |
+          if [ "$APP_ARCH" = "arm64" ]; then
+            contents="dist/mac-arm64/AMP22.app/Contents"
+            cpu="arm64"
+          else
+            contents="dist/mac/AMP22.app/Contents"
+            cpu="x86_64"
+          fi
+          media="$contents/Resources/app.asar.unpacked/node_modules"
+          ffmpeg="$media/ffmpeg-static/ffmpeg"
+          ffprobe="$media/ffprobe-static/bin/darwin/$APP_ARCH/ffprobe"
+          for binary in "$contents/MacOS/AMP22" "$ffmpeg"; do
+            file "$binary"
+            file -b "$binary" | grep -q "$cpu"
+          done
+          file "$ffprobe"
+          if [ "$APP_ARCH" = "x64" ]; then
+            file -b "$ffprobe" | grep -q "$cpu"
+          fi
+          "$ffmpeg" -version > /dev/null
+          "$ffprobe" -version > /dev/null
       - uses: actions/upload-artifact@v4
         with:
-          name: amp22-${{ matrix.os }}
+          name: amp22-${{ matrix.target }}-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             dist/*.dmg
