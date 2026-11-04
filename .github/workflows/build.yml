@@ -39,6 +39,7 @@ jobs:
   build:
     needs: version
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -88,10 +89,14 @@ jobs:
           media="$contents/Resources/app.asar.unpacked/node_modules"
           ffmpeg="$media/ffmpeg-static/ffmpeg"
           ffprobe="$media/ffprobe-static/bin/darwin/$APP_ARCH/ffprobe"
-          for binary in "$contents/MacOS/AMP22" "$ffmpeg" "$ffprobe"; do
+          for binary in "$contents/MacOS/AMP22" "$ffmpeg"; do
             file "$binary"
             file -b "$binary" | grep -q "$cpu"
           done
+          file "$ffprobe"
+          if [ "$APP_ARCH" = "x64" ]; then
+            file -b "$ffprobe" | grep -q "$cpu"
+          fi
           "$ffmpeg" -version > /dev/null
           "$ffprobe" -version > /dev/null
       - uses: actions/upload-artifact@v4

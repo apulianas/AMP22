@@ -88,7 +88,7 @@ See the latest published release notes before opening the download page. This is
 
 ## Getting started
 
-For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series), the **x64 DMG** for Intel Macs, or the **Windows installer**. Each build bundles matching native video tools.
+For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series), the **x64 DMG** for Intel Macs, or the **Windows installer**. Each installer includes the video-processing tools it needs. Apple Silicon Macs currently need Rosetta 2 for the bundled Intel FFprobe helper; the app and FFmpeg are native arm64. Intel builds run both helpers natively.
 
 Requirements: Node.js 20 or later.
 
@@ -235,7 +235,7 @@ npm run dist:mac   # macOS .dmg   (run on macOS)
 npm run dist:win   # Windows NSIS installer (run on Windows)
 ```
 
-The bundled FFmpeg and FFprobe must match the runtime architecture. Install dependencies and build natively on each target platform: Apple Silicon macOS, Intel macOS, or Windows x64. Merely cross-targeting Electron does not replace the installed FFmpeg binary. The included GitHub Actions workflow (`.github/workflows/build.yml`) uses a matching native runner for each target.
+The bundled FFmpeg and FFprobe must run on the target platform. Install dependencies and build natively on each target platform: Apple Silicon macOS, Intel macOS, or Windows x64. Merely cross-targeting Electron does not replace the installed FFmpeg binary. The included GitHub Actions workflow (`.github/workflows/build.yml`) uses a matching native runner for each target, checks the packaged app/FFmpeg architectures, and executes the packaged media tools. The current `ffprobe-static` dependency supplies an Intel FFprobe even in its `arm64` directory, so Apple Silicon uses Rosetta 2 for that helper; Intel packages are fully native.
 
 ### Automatic builds and releases
 
