@@ -18,7 +18,11 @@ function renderer() {
     window: { addEventListener() {}, open: () => null },
     document: {
       getElementById(id) {
-        if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', querySelector: () => null });
+        if (!elements.has(id)) elements.set(id, {
+          innerHTML: '', textContent: '', querySelector: () => null,
+          setAttribute(name, value) { this[name] = value; },
+          classList: { toggle() {} },
+        });
         return elements.get(id);
       },
     },
@@ -29,7 +33,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -73,6 +77,36 @@ test('update notes render as text and automatic checks do not interrupt playback
   assert.equal(r.S.playing, false, 'film shortcuts are blocked while the update dialog is open');
   await r.closeUpdate();
   assert.equal(modal.open, false);
+});
+
+test('film setup occupies the empty viewer and becomes an optional panel after analysis', () => {
+  const r = renderer();
+  const el = (id) => r.context.document.getElementById(id);
+  r.renderFilmSetup();
+  assert.equal(el('film-setup').hidden, false);
+  assert.equal(el('film-setup-toggle').hidden, true);
+  assert.equal(el('film-setup-close').hidden, true);
+  r.S.film = {};
+  r.S.pairs = [{}];
+  r.renderFilmSetup();
+  assert.equal(el('film-setup').hidden, true);
+  assert.equal(el('film-setup-toggle').hidden, false);
+  r.S.filmSetupOpen = true;
+  el('message').innerHTML = '<div>Choose the missing film.</div>';
+  r.renderFilmSetup();
+  assert.equal(el('film-setup').hidden, false);
+  assert.equal(el('film-setup-close').hidden, false);
+  assert.equal(el('message').hidden, true);
+  assert.equal(el('film-setup-message').innerHTML, '<div>Choose the missing film.</div>');
+  r.S.filmSetupOpen = false;
+  r.S.analyzing = {};
+  r.renderFilmSetup();
+  assert.equal(el('film-setup').hidden, false, 'analysis progress stays in the viewer panel');
+  assert.equal(el('film-setup-close').hidden, true);
+  r.S.analyzing = false;
+  r.renderFilmSetup();
+  assert.equal(el('film-setup').hidden, true);
+  assert.equal(el('message').hidden, false);
 });
 
 test('update errors remain visible, offer retry, and leave controls enabled', async () => {

@@ -10,6 +10,7 @@ const { normalizePlay } = require('../src/shared/plays');
 const { parseCSV } = require('../src/shared/csv');
 const { prepareReport, reportPath, saveReport } = require('../src/main/reports');
 const { COLORS, TEAMS } = require('../src/shared/teams');
+const HEADSHOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jS7sAAAAASUVORK5CYII=';
 
 function report(patch = {}) {
   const plays = [
@@ -104,14 +105,51 @@ test('breakdown validation requires one play per clip and known options', () => 
   assert.throws(() => reports.validateReport(report({ plays: [null, {}, {}] }), 3), /every exported play/);
 });
 
+test('PDF headshots match primary-player IDs, repeat in video order, and safely escape names', () => {
+  const input = report({ format: 'pdf' });
+  input.plays[0].playerIds.receiver = '00-receiver';
+  input.plays[0].playerIds.passer = '00-passer';
+  input.plays[0].names.receiver = 'Receiver <"name">';
+  input.plays[1].playerIds.rusher = '00-runner';
+  input.headshots = { '00-receiver': HEADSHOT, '00-passer': HEADSHOT };
+  input.plays.push(
+    normalizePlay({ play_type: 'pass', pass: 1, complete_pass: 0, receiver_player_id: '00-receiver', receiver_player_name: 'Receiver' }),
+    normalizePlay({ play_type: 'no_play', rush: 1, rusher_player_id: '00-receiver', rusher_player_name: 'Receiver' })
+  );
+  input.plays = [...input.plays, ...input.plays];
+  reports.validateReport(input, 10);
+  const html = reports.html(input);
+  assert.equal((html.match(/<img class="headshot"/g) || []).length, 2, 'only the matched receiver appears in each angle block');
+  assert.match(html, /Headshot of Receiver &lt;&quot;name&quot;&gt;/);
+  assert.match(html, /img-src data:/);
+  assert.match(html, /object-fit: contain/);
+  assert.ok(html.includes(`src="${HEADSHOT}"`));
+  assert.equal(reports.csv(input), reports.csv({ ...input, headshots: undefined }));
+  assert.equal(reports.text(input), reports.text({ ...input, headshots: undefined }));
+});
+
+test('PDF reports reject remote, local, malformed, or oversized headshot sources', () => {
+  for (const headshots of [null, [], 'invalid', { bad: 'https://example.com/photo.png' },
+    { bad: 'file:///private/photo.png' }, { bad: 'data:image/svg+xml;base64,AAAA' },
+    { bad: `${HEADSHOT}" onerror="bad()` }, { bad: 'data:image/png;base64,AAAA' },
+    { 'bad id': HEADSHOT }, { bad: 'data:image/png;base64,' + 'A'.repeat(8 * 1024 * 1024) }]) {
+    const input = report({ format: 'pdf', headshots });
+    assert.throws(() => reports.validateReport(input, 3), /headshot image/);
+    assert.throws(() => reports.html(input), /headshot image/);
+  }
+});
+
 test('report preparation, cancellation and atomic sidecar saves are explicit', async () => {
   const input = report();
   assert.equal((await prepareReport(input, 3)).toString(), reports.csv(input));
   assert.equal((await prepareReport({ ...input, format: 'txt' }, 3)).toString(), reports.text(input));
   assert.equal(await prepareReport({ ...input, format: 'none' }, 3), null);
-  const pdf = await prepareReport({ ...input, format: 'pdf' }, 3, {
-    pdf: async (html) => {
+  input.plays[0].playerIds.receiver = '00-receiver';
+  const pdf = await prepareReport({ ...input, format: 'pdf', headshots: { '00-receiver': HEADSHOT } }, 3, {
+    pdf: async (html, options) => {
       assert.match(html, /Baltimore Ravens/);
+      assert.match(html, /<img class="headshot"/);
+      assert.deepEqual(options.headshots, [HEADSHOT]);
       return Buffer.from('%PDF-test');
     },
   });

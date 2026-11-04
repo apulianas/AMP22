@@ -5,6 +5,26 @@ const s = require('../src/shared/settings');
 
 const ev = (key, mods = {}) => Object.assign({ key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, mods);
 
+test('overlay defaults and named locations round-trip without accepting malformed positions', () => {
+  const position = { preset: 'custom', x: 0.125, y: 0.75 };
+  const saved = s.mergeSettings({
+    overlayPosition: position,
+    overlayLocations: [{ name: ' My spot ', position }, { name: 'Top', position: { preset: 'top-right' } }],
+  });
+  assert.deepEqual(s.mergeSettings(JSON.parse(JSON.stringify(saved))).overlayPosition, position);
+  assert.equal(saved.overlayLocations[0].name, 'My spot');
+  saved.overlayLocations[0].position.x = 1;
+  assert.equal(position.x, 0.125);
+  for (const invalid of [null, {}, { preset: 'bad' }, { preset: 'custom', x: -0.1, y: 0 }, { preset: 'custom', x: 0, y: '0' }]) {
+    const merged = s.mergeSettings({ overlayPosition: invalid, overlayLocations: [{ name: 'Bad', position: invalid }] });
+    assert.deepEqual(merged.overlayPosition, { preset: 'original' });
+    assert.deepEqual(merged.overlayLocations, []);
+  }
+  assert.deepEqual(s.mergeSettings({ overlayLocations: [
+    { name: '', position }, { name: 'a'.repeat(61), position }, { name: 'Spot', position }, { name: 'Spot', position },
+  ] }).overlayLocations, [{ name: 'Spot', position }]);
+});
+
 test('export defaults retain decimal seconds, preserve zero, and reject invalid saved values', () => {
   assert.equal(s.mergeSettings({}).exportTrim, 0);
   assert.equal(s.mergeSettings({}).overlaySeconds, 3);

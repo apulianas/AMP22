@@ -8,6 +8,29 @@
   const START_PAD = 0.008;
   const END_TRIM_FRAMES = 3; // Detected cuts can be late; avoid flashing the next shot.
   const MODES = ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first'];
+  const OVERLAY_PRESETS = ['original', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'custom'];
+
+  function overlayPosition(value = { preset: 'original' }) {
+    if (!value || !OVERLAY_PRESETS.includes(value.preset) ||
+        (value.preset === 'custom' && (![value.x, value.y].every(Number.isFinite) ||
+          value.x < 0 || value.x > 1 || value.y < 0 || value.y > 1))) {
+      throw new Error('Invalid overlay position.');
+    }
+    return value.preset === 'custom' ? { preset: 'custom', x: value.x, y: value.y } : { preset: value.preset };
+  }
+
+  function overlayBounds(mode, cardWidth, cardHeight, position) {
+    const { width, height } = dimensions(mode);
+    const p = overlayPosition(position);
+    const travelX = Math.max(0, width - cardWidth);
+    const travelY = Math.max(0, height - cardHeight);
+    const margin = 48;
+    return {
+      x: Math.round(p.preset === 'custom' ? travelX * p.x : p.preset.endsWith('right') ? Math.max(0, travelX - margin) : Math.min(margin, travelX)),
+      y: Math.round(p.preset === 'custom' ? travelY * p.y : p.preset.startsWith('top') ? Math.min(margin, travelY) : Math.max(0, travelY - margin)),
+      width: cardWidth, height: cardHeight,
+    };
+  }
 
   function trimRange(range, seconds) {
     if (!Number.isFinite(seconds) || seconds < 0 || seconds >= range.len) {
@@ -77,5 +100,5 @@
     return mode === 'both' ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
   }
 
-  return { START_PAD, END_TRIM_FRAMES, MODES, clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions };
+  return { START_PAD, END_TRIM_FRAMES, MODES, OVERLAY_PRESETS, overlayPosition, overlayBounds, clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions };
 });

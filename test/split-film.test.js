@@ -17,10 +17,12 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, {
       src: '', currentTime: 0, duration: 60, readyState: 1,
-      innerHTML: '', textContent: '', style: {}, hidden: false,
+      innerHTML: '', textContent: '', style: {}, hidden: false, checked: false, disabled: false,
       get valueAsNumber() { return this.value === '' ? NaN : Number(this.value); },
       classList: { toggle() {}, add() {}, remove() {} },
       pause() {}, load() {}, focus() {}, removeAttribute(name) { this[name] = ''; },
+      setAttribute(name, value) { this[name] = value; }, decode: async () => {},
+      getContext: () => ({ fillRect() {}, drawImage() {} }),
       querySelectorAll: () => [], querySelector: () => ({ style: {} }),
     });
     return elements.get(id);
@@ -55,7 +57,8 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
     updateSelection = () => {};
     updateTimeUI = () => {};
     globalThis.renderer = { S, derivePlays, openSplitFilms, selectPlay, navClip, setAnchor,
-      nudge, pairKey, realign, corrections, openShare, trimmedExportClips, updateExportOptions, selectTrimPlay, queueTrimPreview, analyze, closeFilm, setVideoTime };
+      nudge, pairKey, realign, corrections, openShare, trimmedExportClips, updateExportOptions, selectTrimPlay, queueTrimPreview, analyze, closeFilm, setVideoTime,
+      setCustomPosition, savePositionPreference };
   `, context);
   const r = context.renderer;
   element('share-angle').value = 'sideline';
@@ -115,6 +118,20 @@ test('clip browsing stays in the selected unit and a missing special-teams file 
   await r.setAnchor(r.S.plays[4], r.pairKey(r.S.pairs[0]));
   assert.equal(r.corrections().anchors, undefined);
   assert.match(r.element('status').textContent, /offense, defense, or special-teams file/);
+});
+
+test('selecting a missing split source opens viewer film setup without losing loaded sources', async () => {
+  const r = renderer();
+  await r.openSplitFilms();
+  assert.equal(r.element('film-setup').hidden, true);
+  r.selectPlay(4, { autoplay: false });
+  assert.equal(r.element('film-setup').hidden, false);
+  assert.equal(r.S.filmSetupOpen, true);
+  assert.match(r.element('film-setup-message').innerHTML, /matching offense, defense, or special-teams/);
+  assert.equal(r.S.splitFilms.offense.path, '/offense.mp4');
+  r.selectPlay(0, { autoplay: false });
+  assert.equal(r.element('film-setup').hidden, true);
+  assert.equal(r.S.filmSetupOpen, false);
 });
 
 test('special teams have independent playback, corrections, and export sources', async () => {
@@ -283,6 +300,29 @@ test('Share uses saved breakdown defaults while allowing format and advanced-sta
   assert.equal(r.element('share-report-advanced').checked, true);
   assert.match(r.element('share-report-fields').textContent, /Motion, Coverage/);
   assert.ok(!r.element('share-report-fields').textContent.includes('Air yards'));
+});
+
+test('overlay preferences save explicitly and failed writes retain the previous default', async () => {
+  const r = renderer();
+  await r.openSplitFilms();
+  r.S.selected = new Set([0]);
+  r.openShare();
+  r.setCustomPosition(0.2, 0.6);
+  assert.equal(r.S.settings.overlayPosition.preset, 'original', 'moving is not a settings write');
+  r.api.saveSettings = async (value) => settings.mergeSettings(JSON.parse(JSON.stringify(value)));
+  r.element('share-location-name').value = 'My spot';
+  await r.savePositionPreference('save');
+  assert.equal(r.S.settings.overlayLocations.length, 1);
+  assert.equal(r.S.settings.overlayPosition.preset, 'original', 'saving a location does not make it the default');
+  await r.savePositionPreference('default');
+  assert.deepEqual(JSON.parse(JSON.stringify(r.S.settings.overlayPosition)), { preset: 'custom', x: 0.2, y: 0.6 });
+  r.setCustomPosition(0.8, 0.1);
+  r.api.saveSettings = async () => { throw new Error('Disk full'); };
+  await r.savePositionPreference('default');
+  assert.match(r.element('share-position-saved').textContent, /Could not save overlay preference: Disk full/);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.S.settings.overlayPosition)), { preset: 'custom', x: 0.2, y: 0.6 });
+  assert.equal(r.element('share-positioning').disabled, false);
+  assert.equal(r.element('share-export').disabled, false);
 });
 
 test('uncached split files analyze once each and retain separate results', async () => {

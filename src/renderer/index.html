@@ -9,8 +9,8 @@
 <body>
   <header id="topbar">
     <div class="brand" role="img" aria-label="AMP22">
-      <img src="assets/amp.svg" alt="" />
-      <span aria-hidden="true">22</span>
+      <span class="brand-amp" aria-hidden="true"></span>
+      <span class="brand-number" aria-hidden="true">22</span>
     </div>
     <select id="sel-season" title="Season"></select>
     <select id="sel-team" title="Team"></select>
@@ -23,23 +23,6 @@
     <button id="btn-settings" title="Settings">⚙</button>
     <button id="btn-help" data-shortcut="help" title="Keyboard shortcuts">?</button>
   </header>
-
-  <div id="filmbar">
-    <select id="film-format" aria-label="Film format">
-      <option value="single">Single file</option>
-      <option value="split">Split offense / defense / ST</option>
-    </select>
-    <button id="btn-film" title="Choose the A22 film file for this game">Choose film…</button>
-    <button id="btn-defense-film" hidden>Choose defense…</button>
-    <button id="btn-special-film" hidden>Choose special teams…</button>
-    <span id="film-name" class="muted"></span>
-    <button id="btn-analyze" hidden>Analyze film</button>
-    <div id="progress" hidden>
-      <div class="bar"><div class="fill"></div></div>
-      <span class="label"></span>
-      <button id="btn-cancel" title="Cancel analysis">✕</button>
-    </div>
-  </div>
 
   <main>
     <aside id="sidebar">
@@ -95,20 +78,22 @@
           <div id="adv-choices" class="adv-choices"></div>
           <p id="adv-note" class="muted small" hidden>No personnel or charting data for this game yet. Charting (motion, play action, box, blitzers…) covers 2022 onward and updates during the season; personnel, coverage, and players on the field cover 2016 onward and arrive after each season ends.</p>
         </details>
-        <div class="legend">
-          <span><i class="sw run"></i>Run</span>
-          <span><i class="sw pass"></i>Pass</span>
-          <span title="Special teams"><i class="sw special"></i>ST</span>
-          <span><i class="sw penalty"></i>No play</span>
-          <span title="Key play"><i class="sw key"></i>Key</span>
-          <span title="Negative play"><i class="sw neg"></i>Negative</span>
+        <div class="filter-footer">
+          <div class="legend">
+            <span><i class="sw run"></i>Run</span>
+            <span><i class="sw pass"></i>Pass</span>
+            <span title="Special teams"><i class="sw special"></i>ST</span>
+            <span><i class="sw penalty"></i>No play</span>
+            <span title="Key play"><i class="sw key"></i>Key</span>
+            <span title="Negative play"><i class="sw neg"></i>Negative</span>
+          </div>
+          <button id="btn-multi-select" aria-pressed="false" title="Toggle multi-select, or Shift-click a play to select a range">Multi-select</button>
         </div>
       </div>
-      <div id="selection-bar" class="row">
+      <div id="selection-bar" class="row" hidden>
         <span id="selection-count" class="muted" hidden>0 selected</span>
         <span class="spacer"></span>
         <button id="btn-clear-selection" hidden disabled>Clear selection</button>
-        <button id="btn-multi-select" aria-pressed="false" title="Toggle multi-select, or Shift-click a play to select a range">Multi-select</button>
       </div>
       <ol id="play-list"></ol>
       <div id="list-footer" class="muted"></div>
@@ -127,6 +112,35 @@
           <button id="pop-b" class="pop-angle" disabled title="Open end zone in a separate window">Pop out</button>
         </figure>
         <div id="message"></div>
+        <button id="film-setup-toggle" hidden aria-controls="film-setup" aria-expanded="false">Film setup</button>
+        <section id="film-setup" aria-labelledby="film-setup-title">
+          <div class="film-setup-panel">
+            <div class="row">
+              <h2 id="film-setup-title">Choose your game film</h2>
+              <span class="spacer"></span>
+              <button id="film-setup-close" hidden aria-label="Close film setup">✕</button>
+            </div>
+            <p id="film-setup-game" class="muted"></p>
+            <div id="film-setup-message" role="status" aria-live="polite"></div>
+            <label for="film-format">Film format</label>
+            <select id="film-format">
+              <option value="single">Single file</option>
+              <option value="split">Split offense / defense / ST</option>
+            </select>
+            <div class="film-file-buttons">
+              <button id="btn-film" class="primary" title="Choose the A22 film file for this game">Choose film…</button>
+              <button id="btn-defense-film" hidden>Choose defense…</button>
+              <button id="btn-special-film" hidden>Choose special teams…</button>
+            </div>
+            <p id="film-name" class="muted"></p>
+            <button id="btn-analyze" hidden>Analyze film</button>
+            <div id="progress" hidden>
+              <div class="bar"><div class="fill"></div></div>
+              <span class="label"></span>
+              <button id="btn-cancel" title="Cancel analysis">✕</button>
+            </div>
+          </div>
+        </section>
       </div>
       <div id="detached-angle" hidden>
         <span id="detached-label"></span>
@@ -208,7 +222,26 @@
       <p><label>Overlay duration (seconds from each trimmed start)
         <input id="share-overlay-seconds" type="number" min="0" step="any" />
       </label></p>
-      <p id="share-overlay-description" class="muted">Applies to every angle and play. Zero hides overlays.<br>Both-angle portrait keeps its lower panel when the overlay ends.<br>Overlays include the primary player's headshot when available.</p>
+      <p id="share-overlay-description" class="muted">Applies to every angle and play. Zero hides overlays.<br>Original portrait layout keeps its lower panel when the overlay ends.<br>Overlays include the primary player's headshot when available.</p>
+      <fieldset id="share-positioning">
+        <legend>Overlay position</legend>
+        <label for="share-position">Location</label>
+        <select id="share-position"></select>
+        <p class="muted small">Applies to every play and angle. Corner presets and custom locations use a compact card; the original portrait layout keeps its lower panel.</p>
+        <canvas id="share-position-preview" tabindex="0" role="img" aria-label="Export overlay preview. Drag the card to move it, or use the horizontal and vertical position controls." hidden></canvas>
+        <p id="share-position-status" class="muted small" role="status" aria-live="polite"></p>
+        <div class="grid">
+          <label>Horizontal position (%)
+            <input id="share-position-x" type="range" min="0" max="100" step="0.1" />
+          </label>
+          <label>Vertical position (%)
+            <input id="share-position-y" type="range" min="0" max="100" step="0.1" />
+          </label>
+        </div>
+        <p class="row"><input id="share-location-name" type="text" maxlength="60" aria-label="Custom location name" placeholder="Custom location name" /><button id="share-location-save">Save / replace location</button></p>
+        <div class="row"><button id="share-location-delete" disabled>Delete saved location</button><button id="share-position-default">Make default</button></div>
+        <p id="share-position-saved" class="muted small" role="status" aria-live="polite"></p>
+      </fieldset>
       <p id="share-clean-description" class="muted" hidden>Clean exports omit all added text and graphics. Both-angle clean<br>exports center the stacked footage in the portrait frame.</p>
       <fieldset>
         <legend>Play breakdown</legend>
@@ -221,6 +254,7 @@
         </select>
         <p><label><input id="share-report-advanced" type="checkbox" /> Include advanced statistics</label></p>
         <p id="share-report-fields" class="muted small"></p>
+        <p class="muted small">PDF breakdowns include available player headshots, even with clean video.</p>
         <p class="muted small">One entry per video clip, in video order (plays repeat for grouped angles).<br>Change defaults and advanced fields in Settings → Play breakdown defaults.</p>
       </fieldset>
       <p class="muted">MP4 video at normal speed, with audio from the selected angle<br>(sideline audio when exporting both).</p>
@@ -331,9 +365,9 @@
   <script src="../shared/advanced.js"></script>
   <script src="../shared/teams.js"></script>
   <script src="../shared/reports.js"></script>
+  <script src="../shared/export.js"></script>
   <script src="../shared/settings.js"></script>
   <script src="../shared/align.js"></script>
-  <script src="../shared/export.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

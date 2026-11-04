@@ -5,9 +5,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const reports = require('../shared/reports');
 
-async function printPdf(html, { signal } = {}) {
-  const { BrowserWindow } = require('electron');
+async function printPdf(html, { signal, headshots = [] } = {}) {
+  const { BrowserWindow, nativeImage } = require('electron');
   signal?.throwIfAborted();
+  for (const image of headshots) {
+    if (nativeImage.createFromDataURL(image).isEmpty()) throw new Error('Could not decode a player headshot for the PDF.');
+  }
   const window = new BrowserWindow({
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false },
@@ -37,7 +40,7 @@ async function prepareReport(report, clipCount, { signal, pdf = printPdf } = {})
   reports.validateReport(report, clipCount);
   signal?.throwIfAborted();
   if (report.format === 'none') return null;
-  if (report.format === 'pdf') return pdf(reports.html(report), { signal });
+  if (report.format === 'pdf') return pdf(reports.html(report), { signal, headshots: Object.values(report.headshots || {}) });
   return Buffer.from(report.format === 'csv' ? reports.csv(report) : reports.text(report));
 }
 

@@ -24,6 +24,7 @@ const S = {
   film: null, // {path, url, info, analysis}
   splitFilms: {},
   filmRevision: 0,
+  filmSetupOpen: false,
   analyzing: false,
   fps: 59.94,
   pairs: [],
@@ -66,6 +67,7 @@ function setStatus(msg, isErr) {
 }
 function showMessage(html) {
   $('message').innerHTML = html ? `<div>${html}</div>` : '';
+  renderFilmSetup();
 }
 function pairKey(pair) {
   return (pair.role ? `${S.sel.team}:${pair.role}|` : '') + pair.sideline.start.toFixed(2);
@@ -249,7 +251,7 @@ async function loadGame(force) {
   if (filmPath) await openFilm(filmPath);
   else {
     closeFilm();
-    showMessage(`Choose the A22 film for <b>${S.game ? esc(gameLabel(S.game, S.sel.team)) : 'this game'}</b> with <b>Choose film…</b><br><span class="muted">Tip: set a film folder in Settings ⚙ to find files automatically.</span>`);
+    showMessage('Choose an All-22 file containing both sideline and end zone angles.<br><span class="muted">Tip: set a film folder in Settings ⚙ to find files automatically.</span>');
   }
   realign();
   renderList();
@@ -302,6 +304,7 @@ function realign() {
 
 function closeFilm() {
   S.filmRevision++;
+  S.filmSetupOpen = false;
   S.analyzing = false;
   S.progressFile = null;
   $('progress').hidden = true;
@@ -322,6 +325,20 @@ function closeFilm() {
   updateAngleButtons();
   $('film-name').textContent = '';
   $('btn-analyze').hidden = true;
+  renderFilmSetup();
+}
+
+function renderFilmSetup() {
+  const ready = !!S.film && S.pairs.length > 0;
+  const open = !ready || S.filmSetupOpen || !!S.analyzing;
+  $('film-setup').hidden = !open;
+  $('film-setup-toggle').hidden = !ready || open;
+  $('film-setup-toggle').setAttribute('aria-expanded', String(open));
+  $('film-setup-close').hidden = !ready || !!S.analyzing;
+  $('film-setup-game').textContent = S.game ? gameLabel(S.game, S.sel.team) : '';
+  $('film-setup-message').innerHTML = $('message').innerHTML;
+  $('message').hidden = open;
+  $('videos').classList.toggle('choosing-film', open);
 }
 
 function renderFilmControls() {
@@ -334,6 +351,7 @@ function renderFilmControls() {
   $('btn-defense-film').title = `Both angles of ${S.sel.team}'s defensive plays`;
   $('btn-special-film').hidden = !split;
   $('btn-special-film').title = 'Both angles of the game’s special-teams plays (kicks and returns)';
+  renderFilmSetup();
 }
 
 function rebuildSplitPairs() {
@@ -344,6 +362,7 @@ function rebuildSplitPairs() {
   $('videos').classList.toggle('single', !S.pairs.length);
   $('btn-analyze').hidden = !!S.analyzing || !Object.values(S.splitFilms).some((film) => !film.analysis);
   updateAngleButtons();
+  renderFilmSetup();
 }
 
 function selectFirstLinked() {
@@ -413,6 +432,7 @@ function setAnalysis(analysis) {
   $('btn-analyze').hidden = !!analysis;
   if (analysis) showMessage('');
   updateAngleButtons();
+  renderFilmSetup();
 }
 
 async function analyze(force) {
@@ -424,6 +444,7 @@ async function analyze(force) {
   S.analyzing = run;
   $('progress').hidden = false;
   $('btn-analyze').hidden = true;
+  renderFilmSetup();
   try {
     for (const film of films) {
       if (revision !== S.filmRevision) return;
@@ -448,6 +469,7 @@ async function analyze(force) {
       S.progressFile = null;
       $('progress').hidden = true;
       if (isSplitFilm()) rebuildSplitPairs();
+      renderFilmSetup();
     }
   }
 }
@@ -861,6 +883,7 @@ function loadPair(pairIdx, { autoplay = false, keepRel = false } = {}) {
   }
   S.curPair = pairIdx;
   S.range = computeRange(pairIdx);
+  S.filmSetupOpen = false;
   showMessage('');
   seekRel(rel);
   renderInfo();
@@ -888,6 +911,7 @@ function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
     if (isSplitFilm() && !A22.align.filmRole(S.plays[i], S.sel.team)) {
       showMessage('This play cannot be classified as offense, defense, or special teams and has no linked film.');
     } else if (isSplitFilm() && !S.splitFilms[A22.align.filmRole(S.plays[i], S.sel.team)]) {
+      S.filmSetupOpen = true;
       showMessage('Choose the matching offense, defense, or special-teams file to watch this play.');
     } else if (S.film && S.pairs.length) showMessage('No film linked to this play.<br><span class="muted">Browse clips with Shift+↑/↓ and press Shift+L to link one.</span>');
   }
@@ -897,6 +921,7 @@ function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
 
 function updateSelection() {
   const multi = S.multiSelect || S.selected.size > 1;
+  $('selection-bar').hidden = !multi;
   $('selection-count').textContent = `${S.selected.size} selected`;
   $('selection-count').hidden = !multi;
   $('btn-clear-selection').hidden = !multi;
@@ -962,7 +987,8 @@ function drawHeadshot(ctx, image, x, y, size) {
   ctx.drawImage(image, x + (size - width) / 2, y + size - height, width, height);
 }
 
-function playCard(play, mode, matchup, headshot = null) {
+function buildPlayCard(play, mode, matchup, headshot = null, position) {
+  position = A22.clipExport.overlayPosition(position);
   const { width, height } = A22.clipExport.dimensions(mode);
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -975,10 +1001,10 @@ function playCard(play, mode, matchup, headshot = null) {
   const summary = P.overlaySummary(play);
   const notes = [box.penalty, ...play.key, ...play.neg].filter(Boolean).join('  ·  ');
   ctx.textBaseline = 'top';
-  if (!both) {
+  if (!both || position.preset !== 'original') {
     const padding = 24;
     const photoSpace = headshot ? 148 : 0;
-    const maxWidth = Math.floor(width * 0.72) - padding * 2 - photoSpace;
+    const maxWidth = Math.floor(width * (both ? 0.9 : 0.72)) - padding * 2 - photoSpace;
     const rows = [
       { text: context, font: '24px sans-serif', color: '#c9d1d9', height: 28 },
       { text: summary, font: 'bold 32px sans-serif', color: '#e6edf3', height: 38 },
@@ -991,8 +1017,8 @@ function playCard(play, mode, matchup, headshot = null) {
     const cardWidth = contentWidth + padding * 2 + photoSpace;
     const contentHeight = Math.max(headshot ? 128 : 0, rows.reduce((sum, row) => sum + row.height, 0) + Math.max(0, rows.length - 1) * 10);
     const cardHeight = padding * 2 + contentHeight;
-    const left = 48;
-    const top = height - 48 - cardHeight;
+    const bounds = A22.clipExport.overlayBounds(mode, cardWidth, cardHeight, position);
+    const { x: left, y: top } = bounds;
     ctx.fillStyle = 'rgba(13,17,23,0.88)';
     ctx.fillRect(left, top, cardWidth, cardHeight);
     ctx.fillStyle = color;
@@ -1005,7 +1031,7 @@ function playCard(play, mode, matchup, headshot = null) {
       drawWrapped(ctx, row.text, left + padding + photoSpace, y, contentWidth, row.height, 1);
       y += row.height + 10;
     }
-    return canvas.toDataURL('image/png');
+    return { canvas, bounds };
   }
   const top = 1216;
   const left = 48;
@@ -1030,10 +1056,25 @@ function playCard(play, mode, matchup, headshot = null) {
   ctx.fillStyle = '#c9d1d9';
   ctx.font = '32px sans-serif';
   drawWrapped(ctx, play.desc, left, top + 350, available, 42, 7);
-  return canvas.toDataURL('image/png');
+  return { canvas, bounds: { x: 0, y: top, width, height: height - top } };
 }
 
+function playCard(play, mode, matchup, headshot = null, position) {
+  return buildPlayCard(play, mode, matchup, headshot, position).canvas.toDataURL('image/png');
+}
+
+let headshotQueue = Promise.resolve();
+
 async function prepareHeadshots(clips) {
+  const previous = headshotQueue;
+  let release;
+  headshotQueue = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try { return await loadHeadshots(clips); }
+  finally { release(); }
+}
+
+async function loadHeadshots(clips) {
   const players = clips.map(({ play }) => P.primaryPlayer(play)).filter(Boolean);
   const byId = new Map(players.filter((player) => player.id).map((player) => [player.id, player]));
   const images = new Map();
@@ -1075,6 +1116,15 @@ function openShare() {
   $('share-preview-play').innerHTML = '';
   $('share-overlay-seconds').value = S.settings.overlaySeconds;
   $('share-overlay-seconds').disabled = $('share-clean').checked;
+  sharePosition = A22.clipExport.overlayPosition(S.settings.overlayPosition);
+  positionDrag = null;
+  positionFrames = null;
+  positionHeadshots = null;
+  positionHeadshotPromise = null;
+  $('share-position-saved').textContent = '';
+  $('share-location-name').value = '';
+  renderPositionOptions();
+  updatePositionControls();
   const report = REPORT.mergeOptions(S.settings.playReport);
   $('share-report-format').value = report.format;
   $('share-report-advanced').checked = report.includeAdvanced;
@@ -1120,7 +1170,7 @@ function updateExportOptions() {
     if (!$('share-clean').checked && (!Number.isFinite(seconds) || seconds < 0)) throw new Error('Overlay duration must be zero or more seconds.');
     $('share-status').textContent = '';
     $('share-status').classList.remove('error');
-    $('share-export').disabled = S.exporting;
+    $('share-export').disabled = S.exporting || positionSaving;
   } catch (e) {
     $('share-status').textContent = e.message;
     $('share-status').classList.add('error');
@@ -1130,6 +1180,176 @@ function updateExportOptions() {
 
 let previewRevision = 0;
 let previewTimer = null;
+let sharePosition = { preset: 'original' };
+let positionFrames = null;
+let positionHeadshots = null;
+let positionHeadshotPromise = null;
+let positionBounds = null;
+let positionDrag = null;
+let positionSaving = false;
+
+function renderPositionOptions(selected) {
+  const labels = ['Original layout', 'Top left', 'Top right', 'Bottom left', 'Bottom right', 'Custom (drag or adjust below)'];
+  $('share-position').innerHTML = A22.clipExport.OVERLAY_PRESETS.map((value, i) =>
+    `<option value="${value}">${labels[i]}</option>`).join('') +
+    S.settings.overlayLocations.map((location, i) => `<option value="saved-${i}">${esc(location.name)}</option>`).join('');
+  $('share-position').value = selected || sharePosition.preset;
+  $('share-location-delete').disabled = !$('share-position').value.startsWith('saved-');
+}
+
+function updatePositionControls() {
+  $('share-positioning').disabled = S.exporting || positionSaving || $('share-clean').checked;
+  const custom = sharePosition.preset === 'custom';
+  $('share-position-x').value = custom ? sharePosition.x * 100 : sharePosition.preset.endsWith('right') ? 100 : 0;
+  $('share-position-y').value = custom ? sharePosition.y * 100 : sharePosition.preset.startsWith('top') ? 0 : 100;
+  $('share-position-preview').setAttribute('aria-disabled', String($('share-positioning').disabled));
+  renderPositionPreview();
+}
+
+async function loadPositionHeadshots() {
+  if (!S.exportDraft || $('share-clean').checked || !($('share-overlay-seconds').valueAsNumber > 0) || positionHeadshots || positionHeadshotPromise) return;
+  const currentDraft = S.exportDraft;
+  const pending = prepareHeadshots(currentDraft.clips);
+  positionHeadshotPromise = pending;
+  try {
+    const result = await pending;
+    if (S.exportDraft !== currentDraft || $('share').hidden) return;
+    positionHeadshots = result;
+    renderPositionPreview();
+  } catch (e) {
+    if (S.exportDraft === currentDraft && !$('share').hidden) {
+      $('share-position-status').textContent = `Headshot preview unavailable: ${e.message}`;
+    }
+  } finally {
+    if (positionHeadshotPromise === pending) positionHeadshotPromise = null;
+  }
+}
+
+function renderPositionPreview() {
+  const canvas = $('share-position-preview');
+  const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+  const mode = $('share-angle').value;
+  const clean = $('share-clean').checked;
+  canvas.hidden = !positionFrames || positionFrames.clip !== clip || positionFrames.mode !== mode;
+  positionBounds = null;
+  if (canvas.hidden) return;
+  const { width, height } = A22.clipExport.dimensions(mode);
+  canvas.width = width;
+  canvas.height = height;
+  canvas.style.width = mode === 'both' ? '236px' : '100%';
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = clean || sharePosition.preset !== 'original' ? 'black' : '#0d1117';
+  ctx.fillRect(0, 0, width, height);
+  function drawFrame(image, x, y, w, h) {
+    const scale = Math.min(w / image.naturalWidth, h / image.naturalHeight);
+    const iw = image.naturalWidth * scale, ih = image.naturalHeight * scale;
+    ctx.drawImage(image, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+  }
+  if (mode === 'both') {
+    const top = clean || sharePosition.preset !== 'original' ? 352 : 0;
+    drawFrame($('share-preview-a'), 0, top, 1080, 608);
+    drawFrame($('share-preview-b'), 0, top + 608, 1080, 608);
+  } else {
+    drawFrame($(mode === 'endzone' || mode === 'endzone-first' ? 'share-preview-b' : 'share-preview-a'), 0, 0, width, height);
+  }
+  if (!clean && $('share-overlay-seconds').valueAsNumber > 0) {
+    const card = buildPlayCard(clip.play, mode, S.exportDraft.matchup,
+      positionHeadshots?.images.get(P.primaryPlayer(clip.play)?.id), sharePosition);
+    ctx.drawImage(card.canvas, 0, 0);
+    positionBounds = card.bounds;
+    if (sharePosition.preset !== 'custom') {
+      $('share-position-x').value = positionBounds.x / Math.max(1, width - positionBounds.width) * 100;
+      $('share-position-y').value = positionBounds.y / Math.max(1, height - positionBounds.height) * 100;
+    }
+  }
+  const warnings = positionHeadshots?.warnings;
+  $('share-position-status').textContent = clean ? 'Clean export: overlays are disabled.'
+    : $('share-overlay-seconds').valueAsNumber === 0 ? 'Overlay duration is zero: overlays are hidden.'
+    : `First retained frame${mode.endsWith('-first') ? ' of the first angle block' : ''}. Drag the card or adjust its position below.${warnings?.size ? ` Headshot notices: ${[...warnings].join('; ')}` : ''}`;
+}
+
+function setCustomPosition(x, y) {
+  sharePosition = { preset: 'custom', x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+  $('share-position').value = 'custom';
+  $('share-location-delete').disabled = true;
+  $('share-position-saved').textContent = '';
+  updatePositionControls();
+}
+
+function positionPoint(event) {
+  const canvas = $('share-position-preview');
+  const rect = canvas.getBoundingClientRect();
+  return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
+}
+
+function startPositionDrag(event) {
+  if (event.button !== 0 || $('share-positioning').disabled || !positionBounds) return;
+  const point = positionPoint(event);
+  const bounds = positionBounds;
+  if (point.x < bounds.x || point.x > bounds.x + bounds.width || point.y < bounds.y || point.y > bounds.y + bounds.height) return;
+  event.preventDefault();
+  if ($('share-angle').value === 'both' && sharePosition.preset === 'original') {
+    setCustomPosition(0, 1);
+  }
+  positionDrag = {
+    id: event.pointerId,
+    x: Math.min(positionBounds.width, point.x - positionBounds.x),
+    y: Math.max(0, Math.min(positionBounds.height, point.y - positionBounds.y)),
+  };
+  $('share-position-preview').setPointerCapture(event.pointerId);
+}
+
+function movePositionDrag(event) {
+  if (!positionDrag || event.pointerId !== positionDrag.id || !positionBounds || $('share-positioning').disabled) return;
+  const point = positionPoint(event);
+  const canvas = $('share-position-preview');
+  setCustomPosition((point.x - positionDrag.x) / Math.max(1, canvas.width - positionBounds.width),
+    (point.y - positionDrag.y) / Math.max(1, canvas.height - positionBounds.height));
+}
+
+async function savePositionPreference(action) {
+  if (positionSaving || S.exporting || $('share-clean').checked) return;
+  const locations = S.settings.overlayLocations.slice();
+  const selected = $('share-position').value;
+  let message;
+  const next = { ...S.settings };
+  if (action === 'default') {
+    next.overlayPosition = A22.clipExport.overlayPosition(sharePosition);
+    message = 'Default overlay position saved for future exports.';
+  } else if (action === 'delete') {
+    if (!selected.startsWith('saved-')) return;
+    locations.splice(Number(selected.slice(6)), 1);
+    next.overlayLocations = locations;
+    message = 'Saved location deleted. Your current position and default are unchanged.';
+  } else {
+    const name = $('share-location-name').value.trim();
+    if (!name || name.length > 60) {
+      $('share-position-saved').textContent = 'Enter a location name (1-60 characters).';
+      return;
+    }
+    const location = { name, position: A22.clipExport.overlayPosition(sharePosition) };
+    const index = locations.findIndex((item) => item.name === name);
+    if (index < 0) locations.push(location);
+    else locations[index] = location;
+    next.overlayLocations = locations;
+    message = `Location "${name}" saved. Use Make default to apply it to future exports.`;
+  }
+  positionSaving = true;
+  updatePositionControls();
+  $('share-export').disabled = true;
+  try {
+    S.settings = mergeSettings(await window.api.saveSettings(next));
+    const index = S.settings.overlayLocations.findIndex((item) => item.name === $('share-location-name').value.trim());
+    renderPositionOptions(action === 'save' ? `saved-${index}` : action === 'default' ? selected : undefined);
+    $('share-position-saved').textContent = message;
+  } catch (e) {
+    $('share-position-saved').textContent = `Could not save overlay preference: ${e.message}`;
+  } finally {
+    positionSaving = false;
+    updatePositionControls();
+    updateExportOptions();
+  }
+}
 
 function selectTrimPlay() {
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
@@ -1141,6 +1361,8 @@ function selectTrimPlay() {
 function queueTrimPreview() {
   const revision = ++previewRevision;
   clearTimeout(previewTimer);
+  positionFrames = null;
+  renderPositionPreview();
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   const sequence = clip ? A22.clipExport.exportSequence([clip], $('share-angle').value) : [];
   const previews = [
@@ -1154,8 +1376,10 @@ function queueTrimPreview() {
   }
   if (!clip) {
     $('share-preview-status').textContent = '';
+    $('share-position-status').textContent = '';
     return;
   }
+  $('share-position-status').textContent = 'Loading export preview…';
   $('share-preview-status').textContent = `Loading first retained ${selected.length === 1 ? 'frame' : 'frames'}…`;
   previewTimer = setTimeout(async () => {
     if (revision !== previewRevision || $('share').hidden) return;
@@ -1165,11 +1389,19 @@ function queueTrimPreview() {
       if (revision !== previewRevision || $('share').hidden) return;
       for (const [i, { image }] of selected.entries()) {
         $(image).src = frames[i];
+        await $(image).decode();
+        if (revision !== previewRevision || $('share').hidden) return;
         $(image).hidden = false;
       }
+      positionFrames = { clip, mode: $('share-angle').value };
+      renderPositionPreview();
+      loadPositionHeadshots();
       $('share-preview-status').textContent = `${range.len.toFixed(2)} seconds retained${selected.length === 2 ? ' per angle' : ''}.`;
     } catch (e) {
-      if (revision === previewRevision && !$('share').hidden) $('share-preview-status').textContent = `Preview unavailable: ${e.message}`;
+      if (revision === previewRevision && !$('share').hidden) {
+        $('share-preview-status').textContent = `Preview unavailable: ${e.message}`;
+        $('share-position-status').textContent = `Preview unavailable: ${e.message}`;
+      }
     }
   }, 300);
 }
@@ -1184,7 +1416,7 @@ function updateReportOptions() {
 }
 
 async function exportSelection() {
-  if (!S.exportDraft || S.exporting) return;
+  if (!S.exportDraft || S.exporting || positionSaving) return;
   S.exporting = true;
   S.exportCancelRequested = false;
   updateSelection();
@@ -1203,6 +1435,7 @@ async function exportSelection() {
   $('share-reveal').hidden = true;
   $('share-trimming').disabled = true;
   $('share-overlay-seconds').disabled = true;
+  $('share-positioning').disabled = true;
   try {
     const mode = $('share-angle').value;
     const clean = $('share-clean').checked;
@@ -1218,9 +1451,12 @@ async function exportSelection() {
     };
     let images = new Map();
     let warnings = new Set();
-    if (!clean && overlaySeconds > 0) {
+    if (report.format === 'pdf' || (!clean && overlaySeconds > 0)) {
       $('share-status').textContent = 'Preparing player headshots…';
-      ({ images, warnings } = await prepareHeadshots(clips));
+      ({ images, warnings } = positionHeadshots || await (positionHeadshotPromise || prepareHeadshots(clips)));
+    }
+    if (report.format === 'pdf') {
+      report.headshots = Object.fromEntries([...images].map(([id, image]) => [id, image.toDataURL('image/png')]));
     }
     if (S.exportCancelRequested) {
       $('share-status').textContent = 'Export cancelled.';
@@ -1229,8 +1465,9 @@ async function exportSelection() {
     $('share-status').textContent = 'Choose where to save the MP4…';
     const result = await window.api.exportClips({
       file, mode, clean, report, overlaySeconds,
+      overlayPosition: sharePosition,
       suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play)),
-      clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id)) }),
+      clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition) }),
     });
     $('share-status').textContent = result.cancelled ? 'Export cancelled.' : `Saved to ${result.path}`;
     if (!result.cancelled) {
@@ -1252,6 +1489,7 @@ async function exportSelection() {
     $('share-clean').disabled = false;
     $('share-trimming').disabled = false;
     $('share-overlay-seconds').disabled = $('share-clean').checked;
+    updatePositionControls();
     $('share-report-format').disabled = false;
     updateReportOptions();
     $('share-export').disabled = false;
@@ -1773,13 +2011,53 @@ function wire() {
   $('btn-settings').addEventListener('click', () => { draft = null; toggleOverlay('settings', true); });
   $('btn-help').addEventListener('click', () => toggleOverlay('help'));
   $('btn-share').addEventListener('click', openShare);
+  $('film-setup-toggle').addEventListener('click', () => {
+    pause();
+    S.filmSetupOpen = true;
+    renderFilmSetup();
+    $('film-format').focus();
+  });
+  $('film-setup-close').addEventListener('click', () => {
+    S.filmSetupOpen = false;
+    renderFilmSetup();
+    $('film-setup-toggle').focus();
+  });
   $('share-angle').addEventListener('change', queueTrimPreview);
   $('share-clean').addEventListener('change', () => {
     $('share-overlay-description').hidden = $('share-clean').checked;
     $('share-clean-description').hidden = !$('share-clean').checked;
     $('share-overlay-seconds').disabled = $('share-clean').checked;
+    updatePositionControls();
+    loadPositionHeadshots();
     updateExportOptions();
   });
+  $('share-position').addEventListener('change', () => {
+    const selected = $('share-position').value;
+    if (selected.startsWith('saved-')) {
+      const location = S.settings.overlayLocations[Number(selected.slice(6))];
+      sharePosition = A22.clipExport.overlayPosition(location.position);
+      $('share-location-name').value = location.name;
+    } else if (selected === 'custom') {
+      sharePosition = { preset: 'custom', x: Number($('share-position-x').value) / 100, y: Number($('share-position-y').value) / 100 };
+    } else {
+      sharePosition = { preset: selected };
+    }
+    $('share-location-delete').disabled = !selected.startsWith('saved-');
+    $('share-position-saved').textContent = '';
+    updatePositionControls();
+  });
+  for (const axis of ['x', 'y']) {
+    $(`share-position-${axis}`).addEventListener('input', () =>
+      setCustomPosition(Number($('share-position-x').value) / 100, Number($('share-position-y').value) / 100));
+  }
+  $('share-position-preview').addEventListener('pointerdown', startPositionDrag);
+  $('share-position-preview').addEventListener('pointermove', movePositionDrag);
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    $('share-position-preview').addEventListener(event, () => { positionDrag = null; });
+  }
+  $('share-location-save').addEventListener('click', () => savePositionPreference('save'));
+  $('share-location-delete').addEventListener('click', () => savePositionPreference('delete'));
+  $('share-position-default').addEventListener('click', () => savePositionPreference('default'));
   $('share-preview-play').addEventListener('change', selectTrimPlay);
   $('share-trim').addEventListener('input', () => {
     const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
@@ -1788,7 +2066,11 @@ function wire() {
     updateExportOptions();
     queueTrimPreview();
   });
-  $('share-overlay-seconds').addEventListener('input', updateExportOptions);
+  $('share-overlay-seconds').addEventListener('input', () => {
+    updateExportOptions();
+    updatePositionControls();
+    loadPositionHeadshots();
+  });
   $('share-report-format').addEventListener('change', updateReportOptions);
   $('share-report-advanced').addEventListener('change', updateReportOptions);
   $('share-export').addEventListener('click', exportSelection);

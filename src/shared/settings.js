@@ -1,8 +1,9 @@
 (function (root, factory) {
-  const mod = factory(typeof module === 'object' && module.exports ? require('./reports') : root.A22.reports);
+  const node = typeof module === 'object' && module.exports;
+  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).settings = mod;
-})(typeof self !== 'undefined' ? self : this, function (reports) {
+})(typeof self !== 'undefined' ? self : this, function (reports, clipExport) {
   'use strict';
 
   const ACTIONS = [
@@ -39,6 +40,8 @@
     skipNoFilm: true,
     exportTrim: 0,
     overlaySeconds: 3,
+    overlayPosition: { preset: 'original' },
+    overlayLocations: [],
     playReport: reports.mergeOptions(),
     keyPlays: {
       turnovers: true,
@@ -57,6 +60,16 @@
     const out = Object.assign({}, DEFAULT_SETTINGS, s);
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
     out.playReport = reports.mergeOptions(s.playReport);
+    try { out.overlayPosition = clipExport.overlayPosition(s.overlayPosition); }
+    catch { out.overlayPosition = { preset: 'original' }; }
+    out.overlayLocations = [];
+    for (const location of Array.isArray(s.overlayLocations) ? s.overlayLocations : []) {
+      if (typeof location?.name !== 'string' || !location.name.trim() || location.name.trim().length > 60 ||
+          out.overlayLocations.some((item) => item.name === location.name.trim())) continue;
+      try {
+        out.overlayLocations.push({ name: location.name.trim(), position: clipExport.overlayPosition(location.position) });
+      } catch { /* Ignore malformed saved preferences. */ }
+    }
     for (const key of ['exportTrim', 'overlaySeconds']) {
       if (!Number.isFinite(out[key]) || out[key] < 0) out[key] = DEFAULT_SETTINGS[key];
     }
