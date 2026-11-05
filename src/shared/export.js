@@ -79,16 +79,16 @@
     return `${/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(stem) ? 'AMP22-' : ''}${stem}.mp4`;
   }
 
-  function exportFilename(plays) {
+  function exportFilename(plays, { team, playNumber, role } = {}) {
     const clock = (p) => p ? `${p.qtr >= 5 ? `OT${p.qtr === 5 ? '' : p.qtr - 4}` : `Q${p.qtr || ''}`}-${String(p.time || '').replace(':', 'm')}s` : '';
     let detail = 'clip';
     if (plays.length === 1) {
       const p = plays[0];
-      const names = p.names || {};
-      const player = names.rusher || (p.flags?.complete_pass && names.receiver) || names.passer ||
-        names.returner || names.kicker || names.punter || names.receiver;
-      const yards = Number.isFinite(p.yards) ? `${p.yards < 0 ? 'minus' : ''}${Math.abs(p.yards)}yds` : '';
-      detail = [clock(p), player, yards].filter(Boolean).join('-');
+      if (!team || !Number.isInteger(playNumber) || playNumber < 1) {
+        throw new Error('Single-play export names require a team and game play number.');
+      }
+      const possession = { offense: 'O', defense: 'D', special: 'ST' }[role] || 'NA';
+      detail = [team, possession, playNumber, p.down ?? 'NA', p.ydstogo ?? 'NA'].join('-');
     } else if (plays.length > 1) {
       detail = `${clock(plays[0])}-to-${clock(plays[plays.length - 1])}`;
     }
