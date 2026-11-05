@@ -407,6 +407,48 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js(`$('share-status').classList.contains('error')`), true);
   assert.match(await js(`$('share-status').textContent`), /Video saved.*breakdown could not be saved/);
   assert.ok(!fs.readdirSync(root).some((file) => file.endsWith('.tmp')));
+  // Delayed analysis exercises background readiness without inventing detected film pairs.
+  const pending = new Map();
+  ipcMain.removeHandler('film:open');
+  ipcMain.handle('film:open', async (_e, file) => ({
+    path: file, url: pathToFileURL(file).href, info: await probe(file), analysis: null,
+  }));
+  ipcMain.removeHandler('film:analyze');
+  ipcMain.handle('film:analyze', (_e, { file }) => new Promise((resolve, reject) => {
+    pending.set(file, { resolve, reject });
+  }));
+  ipcMain.removeHandler('film:cancel');
+  ipcMain.handle('film:cancel', (_e, file) => {
+    pending.get(file).reject(new Error('Cancelled'));
+    return true;
+  });
+  await js(`(async () => { $('share').hidden = true; S.curPlay = -1; await openSplitFilms(); analyze(false); })()`);
+  await until(`S.analyzing && S.analyzing.files.size === 3`);
+  for (let i = 0; i < 200 && pending.size < 3; i++) await wait(25);
+  assert.equal(pending.size, 3, 'all unit analyses start before any completes');
+  const fixture = { pairs: [{ sideline: { start: 0, end: 2 }, endzone: { start: 2, end: 4 } }] };
+  pending.get(sources.defense).resolve(fixture);
+  await until(`!!S.splitFilms.defense.analysis && $('film-setup').hidden`);
+  assert.equal(await js(`$('progress').hidden`), false);
+  assert.equal(await js(`$('progress').closest('#film-setup') === null`), true, 'progress remains visible outside setup');
+  assert.equal(await js(`$('progress').getBoundingClientRect().height > 0`), true);
+  await js(`selectPlay(1, {autoplay: false}); seekRel(0.4)`);
+  await until(settled);
+  const playbackBefore = await js(`({ time: vidA().currentTime, range: S.range, play: S.curPlay })`);
+  pending.get(sources.offense).resolve(fixture);
+  await until(`!!S.splitFilms.offense.analysis`);
+  assert.equal(await js(`vidA().src`), pathToFileURL(sources.defense).href);
+  assert.equal(await js(`S.pairs[S.curPair].role`), 'defense');
+  assert.deepEqual(await js('S.range'), playbackBefore.range);
+  assert.equal(await js('S.curPlay'), playbackBefore.play);
+  assert.ok(Math.abs(await js('vidA().currentTime') - playbackBefore.time) < 0.001);
+  await js(`selectPlay(2, {autoplay: false})`);
+  assert.match(await js(`$('message').textContent`), /still processing/);
+  await js(`$('btn-cancel').click()`);
+  await until(`!S.analyzing`);
+  assert.equal(await js('S.pairs.length'), 2);
+  assert.match(await js(`$('status').textContent`), /cancelled.*Completed film/);
+  assert.match(await js(`$('message').textContent`), /Analyze film to retry/);
   console.log('FILM WORKFLOWS PASSED');
   app.exit(0);
 }

@@ -36,7 +36,7 @@ button:disabled { opacity: .4; cursor: default; }
 #topbar .brand-amp, #topbar .brand-number { filter: drop-shadow(0 1px 0 rgba(255,255,255,.18)) drop-shadow(0 2px 2px rgba(0,0,0,.4)); }
 #film-name { overflow-wrap: anywhere; font-size: 12px; }
 #film-name:empty, #film-setup-game:empty, #film-setup-message:empty { display: none; }
-#progress { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; margin-top: 12px; }
+#progress { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--border); }
 #progress[hidden] { display: none; }
 #progress .bar { width: 180px; height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; }
 #progress .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }

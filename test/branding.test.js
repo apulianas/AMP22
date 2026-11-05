@@ -9,16 +9,22 @@ const config = require('../package.json');
 
 const root = path.join(__dirname, '..');
 
-test('AMP22 keeps its application identifier and original profile across the rename', () => {
+test('stable branding keeps the original profile and experimental builds use an isolated profile', () => {
   assert.equal(config.name, 'amp22');
   assert.equal(config.productName, 'AMP22');
   assert.equal(config.build.productName, 'AMP22');
   assert.equal(config.build.appId, 'com.apulianas.a22filmtool');
   const source = fs.readFileSync(path.join(root, 'src/main/main.js'), 'utf8');
-  for (const override of [undefined, path.join(root, 'out', 'test-profile')]) {
+  for (const [version, override, profile] of [
+    ['0.4.0', undefined, 'A22 Film Tool'],
+    ['0.4.1-experimental.123.1', undefined, 'AMP22 Experimental'],
+    ['0.4.0', path.join(root, 'out', 'test-profile'), null],
+    ['0.4.1-experimental.123.1', path.join(root, 'out', 'test-profile'), null],
+  ]) {
     const calls = {};
     const app = {
       setName(name) { calls.name = name; },
+      getVersion() { return version; },
       getPath(key) { assert.equal(key, 'appData'); return '/profiles'; },
       setPath(key, value) { calls[key] = value; },
       whenReady() { return { then() {} }; },
@@ -35,7 +41,7 @@ test('AMP22 keeps its application identifier and original profile across the ren
       Map,
     });
     assert.equal(calls.name, 'AMP22');
-    assert.equal(calls.userData, override || path.join('/profiles', 'A22 Film Tool'));
+    assert.equal(calls.userData, override || path.join('/profiles', profile));
   }
 });
 

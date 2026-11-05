@@ -302,10 +302,10 @@ function registerIpc() {
 }
 
 app.setName('AMP22');
-// Keep the original profile so the rebrand retains settings, film links, and caches.
+// Experimental builds must not modify the stable installation's profile.
 app.setPath('userData', process.env.A22_USER_DATA
   ? path.resolve(process.env.A22_USER_DATA)
-  : path.join(app.getPath('appData'), 'A22 Film Tool'));
+  : path.join(app.getPath('appData'), /-experimental\./.test(app.getVersion()) ? 'AMP22 Experimental' : 'A22 Film Tool'));
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && !app.isPackaged) app.dock.setIcon(appIcon);

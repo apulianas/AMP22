@@ -46,6 +46,11 @@ async function main() {
     process.stderr.write(`\nAnalyzed in ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
   }
   fs.writeFileSync(path.join(out, 'analysis.json'), JSON.stringify(analysis, null, 1));
+  if (analysis.timings) {
+    console.log(`Phase times (seconds, including queue waits): ${Object.entries(analysis.timings)
+      .map(([phase, ms]) => `${phase.replace(/Ms$/, '')}=${(ms / 1000).toFixed(2)}`).join(' ')} · worker limit=${media.ANALYSIS_CONCURRENCY}`);
+  }
+  for (const warning of analysis.warnings || []) console.warn(`Clip ${warning.clipIndex}: ${warning.message}`);
 
   const { clips, pairs } = analysis;
   console.log(`clips=${clips.length} pairs=${pairs.length} fps=${analysis.info.fps.toFixed(3)} duration=${analysis.info.duration.toFixed(1)}s`);

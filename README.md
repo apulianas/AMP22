@@ -20,7 +20,7 @@ Browse color-coded plays and drive summaries while watching both angles together
 
 ### Choose film in the viewer
 
-Select **Single file** and click **Choose film…** directly in the empty video area. The setup panel also shows film analysis and its progress, then gets out of the way when the analyzed film is ready. This running-app capture uses real 2026 Bengals at Ravens play-by-play before assigning film.
+Select **Single file** and click **Choose film…** directly in the empty video area. The setup panel gets out of the way when analyzed film is ready; analysis progress appears below the viewer so completed split-film sources can be watched while others finish. This running-app capture uses real 2026 Bengals at Ravens play-by-play before assigning film.
 
 ![AMP22 with its film-format selector and Choose film button centered in the empty viewer, without a separate film-selection bar](docs/screenshots/film-selection.png)
 
@@ -29,6 +29,8 @@ Select **Single file** and click **Choose film…** directly in the empty video 
 Choose **Split offense / defense / ST** in the viewer's setup panel to assign three files. Offense and defense refer to the team selected above; each file contains both camera angles and aligns independently. This is the running app with real Bengals at Ravens play-by-play, before film selection—not a playback or alignment demonstration.
 
 ![AMP22 viewer-hosted split-film setup with separate Ravens offense, Ravens defense, and special-teams file pickers](docs/screenshots/split-film-setup.png)
+
+The setup captures above show file selection, not the new background-analysis progress strip. A refreshed in-progress game-film capture is pending: representative game film is not available in the development checkout. Synthetic clips are used only for automated workflow checks, not as screenshots of working game alignment.
 
 ### Filters and charting
 
@@ -70,6 +72,7 @@ See the latest published release notes before opening the download page. This is
 
 - **Two synced angles.** Each A22 file contains sideline followed by end zone for each play. The app finds the cuts, pairs the angles, and plays them together on one clock. Use **Single file** for continuous full-game film, or **Split offense / defense / ST** for separate offense, defense, and special-teams files. In split mode, offense means the selected team's offense and defense means that team defending; the special-teams file covers kicks and returns by either team. Each file aligns independently, and selecting a play switches both viewers to the appropriate source. You can load only the files you have; the other plays remain unlinked. File choices and corrections are remembered per game and team perspective, separately from single-file film. The layout switches between side-by-side and stacked depending on the window shape.
 - **Multi-monitor viewing.** After film analysis, click **Pop out** on either angle to open it in a separate window. Drag that window to another display and maximize it or click **Fullscreen**. The remaining angle fills the main viewer. Playback, seeking, frame stepping, speed changes, sync offsets, and play navigation still use the same controls and clock; keyboard shortcuts also work in the pop-out. Click **Return angle** in either window, or close the pop-out, to restore the two-angle layout. One angle can be detached at a time.
+- **Background split-film analysis.** Offense, defense, and special-teams files process concurrently through one shared, CPU-aware worker limit (one to four media processes). Each completed file becomes usable without waiting for the other units; arriving results preserve playback of an already-ready source. The progress strip below the viewer shows each unit's status, and **Cancel** stops all unfinished analyses while retaining completed results. Unfinished sources are identified as still processing when selected. A single full-game file still requires its complete scan and classification before play links become available; partial single-file alignment is not enabled.
 - **Play-by-play navigation.** Pick the season, team, and week from the drop-downs. The default is the current season, the Ravens, and the most recently completed week. Plays come from [nflverse](https://github.com/nflverse/nflverse-data) and are color-coded:
   - **Run** is green, **pass** is blue, **special teams** is purple, and **no play** (penalty) is gray.
   - **Key plays** get a gold edge and badges: INT, FUM, TOD (turnover on downs), TD, FG, SAF, 2PT, BIG (run ≥ 10 or pass ≥ 20 yards), 4TH (4th-down conversion), and optionally SACK.
@@ -111,7 +114,7 @@ npm 11 blocks install scripts unless they are approved. The `allowScripts` entry
 2. In the empty video area, leave **Single file** selected and click **Choose film…** for full-game A22. For separate units, select **Split offense / defense / ST**, then use **Choose [team] offense…**, **Choose [team] defense…**, and **Choose special teams…** in the same panel. Each file must contain both angles, not one camera per file. Select the team whose offense/defense the files describe before assigning them. The app streams files from where they are and never copies or changes them. After loading analyzed film, use **Film setup** in the viewer's lower-right corner to change files or formats; close the panel to return to the footage. Selecting a play whose split-film source is missing reopens setup so you can assign it.
    In single-file mode, you can also set a **film folder** in Settings (⚙), for example `~/Movies/2026 Ravens Games`. The app then finds the A22 file automatically by matching week folders such as `w7vBengals` or `w1@Colts` and preferring files with `a22` in the name. Split files are assigned explicitly, not guessed from filenames.
    The app remembers the format and file choices. Switching formats preserves both sets of choices and their corrections.
-3. The first time you open film, the app analyzes each selected file. This takes about 3–5 minutes for a full game's film, and you can see progress for each unit in split mode. Results are cached by file path, size, and modified time.
+3. The first time you open film, the app analyzes each selected file. Processing time depends on the footage and computer; full-game film previously took about 3–5 minutes, and the new bounded workers and batched sampling still need real-game benchmarks. Split files process concurrently, with each unit's progress shown below the viewer. Start watching a completed unit immediately while other units finish. Setup can be reopened and dismissed without stopping analysis. **Cancel** stops all unfinished files; completed film stays available, and **Analyze film** retries unfinished files. Single-file film becomes usable after that whole file finishes. Results are cached by file path, size, and modified time.
 4. Click a play, or use ↓/↑, to watch it.
 5. To save a clip, click **Share**, choose an angle, and click **Export…** to pick an MP4 destination. The suggested filename contains only the quarter, clock, main player, and yards (for example `Q2-08m34s-Z.Flowers-48yds.mp4`); multiple plays use only the game-clock range (`Q2-08m34s-to-Q3-04m12s.mp4`). Single-angle results use a compact card sized to its text rather than a full-width banner, positioned in the lower left by default. Shift-click to select a range, or use **Multi-select** and checkboxes for individual plays. Selected plays remain selected when filtering; the selection count includes hidden plays. A normal row click outside explicit multi-select mode, or navigating to another play, returns to a single selection and hides the checkboxes. Turn **Multi-select** off to return to a single selection. Plays without linked film must be deselected or linked before export. Export progress and cancellation are available in the Share dialog. After export, **Show in Finder** (macOS) or **Show in File Explorer** (Windows) opens the containing folder with the exported file selected.
 
@@ -214,17 +217,19 @@ The download button opens the release page, not an unattended installer. After d
 
 1. `ffprobe` reads the frame rate (59.94 fps for A22) and duration.
 2. `ffmpeg` scene detection runs on a 64×36 downscale to find hard cuts (scene score ≥ 0.1).
-3. A small grayscale frame from the middle of each clip is classified as **sideline** or **end zone** by comparing vertical and horizontal edge energy. In end zone views the yard lines run horizontally.
+3. Two small grayscale frames, at 35% and 65% of each clip, are classified as **sideline** or **end zone** by comparing vertical and horizontal edge energy. In end zone views the yard lines run horizontally. Both samples use one FFmpeg process per clip with independent timestamp seeks, rather than launching a separate process for each frame. Damaged clips retry individual samples and record warnings instead of silently discarding failures.
 4. Clips are paired (sideline followed by end zone) with dynamic programming. This handles extra cuts and stray short clips.
 5. Plays are aligned to the pairs with a second dynamic program. This step accounts for plays that are unlikely to be on film (such as non-play penalties) and for the user's fixes.
 
-In split mode, the same analysis runs on each file and alignment runs independently on the appropriate offensive, defensive, or special-teams plays. Turnovers stay with the unit that began the play; unclassified plays remain unlinked rather than consuming another unit's clip.
+In split mode, the same analysis runs concurrently on each file and alignment runs independently on the appropriate offensive, defensive, or special-teams plays. Scans and sample extraction share a worker queue across files, with explicit FFmpeg thread limits to avoid multiplying unrestricted decoders. Turnovers stay with the unit that began the play; unclassified plays remain unlinked rather than consuming another unit's clip. Only complete file analyses are published and cached: whole-film orientation normalization, pairing, and play alignment have not been replaced by provisional prefix alignment.
 
 The core logic is in `src/shared/` and has unit tests. You can also run the analysis from the command line:
 
 ```sh
 npm run analyze -- "/path/to/TeamA22.mp4" --out analysis-out/team --frames 6
 ```
+
+New analyses print probe, scan, classification, pairing, and total elapsed times, plus the worker limit. `analysis.json` includes the same `timings` in milliseconds and any sampling `warnings`. Times include worker-queue waits. For home-machine comparisons, run this command on the same film before and after the change with the same options and no competing exports; compare both total time and phase times. Previously cached analyses have no timing fields; the CLI performs fresh analysis unless `--from-json` is supplied. No real-game speedup is claimed yet.
 
 ## Data sources
 
@@ -239,6 +244,7 @@ Follow [the repository contribution instructions](AGENTS.md). User-visible PRs s
 ```sh
 npm test           # unit tests (node:test)
 A22_TEST_EXPORT=1 npm test # also encode and inspect synthetic clips (macOS / Linux)
+A22_TEST_MEDIA=1 node --test test/media.test.js # native batched-vs-individual sample parity and analysis timings
 A22_TEST_WINDOWS=1 node --test test/angle-window.test.js # exercise native pop-outs (requires a desktop)
 A22_TEST_WORKFLOWS=1 node --test test/film-workflows.test.js # native split playback and CSV/text/PDF exports (requires a desktop)
 npm run dist:mac   # macOS .dmg   (run on macOS)
@@ -256,6 +262,12 @@ Intel builds use `macos-15-intel` with Xcode 26 for the Icon Composer assets; na
 GitHub-generated release notes are also the in-app changelog. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
 
 Pull requests build and test all three targets and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
+
+### Experimental builds
+
+To publish a testing build without promoting it to stable, run **Actions → build → Run workflow**, select the feature branch, and enable **experimental**. The workflow definition with this input must first be available on the default branch for GitHub to expose the dispatch form. All three native builds must pass before publishing. The version is suffixed with `-experimental.RUN_ID.RUN_ATTEMPT`; installers and the app are named **AMP22 Experimental**, use a separate application identifier, and save settings, film links, and caches in a separate **AMP22 Experimental** profile. Stable settings are not copied automatically. `A22_USER_DATA`, when explicitly set, overrides either profile.
+
+Experimental releases are marked **Prerelease**, never **Latest**, and are not offered to stable users by the app's update checker. Download and install them manually from Releases; experimental builds still check only for stable updates, not newer experiments. Normal pushes to `master` still publish stable releases, so keep unapproved experimental code on its feature branch. This provides a release path, not an already-published testing build.
 
 ### Download counts
 

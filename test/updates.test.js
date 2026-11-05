@@ -51,6 +51,14 @@ test('checks public stable releases with a timeout and preserves notes as plain 
   assert.deepEqual(state.opened, ['https://github.com/apulianas/AMP22/releases/tag/v0.2.4']);
 });
 
+test('experimental installations can check stable releases without errors or downgrades', async () => {
+  assert.equal(isNewer('0.4.0', '0.4.1-experimental.123.1'), false);
+  assert.equal(isNewer('0.4.1', '0.4.1-experimental.123.1'), true);
+  assert.equal(isNewer('0.4.2', '0.4.1-experimental.123.1'), true);
+  const { updates } = service({ version: '0.2.4-experimental.123.1' });
+  assert.equal((await updates.check()).status, 'available');
+});
+
 test('Later suppresses automatic prompts only for that version; manual checks and newer releases still notify', async () => {
   const { updates, state, release } = service();
   await updates.check();
