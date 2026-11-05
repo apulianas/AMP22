@@ -44,7 +44,7 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
   };
   const context = vm.createContext({
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
-    A22: { align, plays, settings, clipExport, advanced, reports },
+    A22: { align, plays, settings, clipExport, advanced, reports, teams: require('../src/shared/teams'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, api },
     document: { getElementById: element, querySelectorAll: () => [] },
   });
@@ -58,7 +58,7 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
     updateTimeUI = () => {};
     globalThis.renderer = { S, derivePlays, openSplitFilms, selectPlay, navClip, setAnchor,
       nudge, pairKey, realign, corrections, openShare, trimmedExportClips, updateExportOptions, selectTrimPlay, queueTrimPreview, analyze, closeFilm, setVideoTime,
-      setCustomPosition, savePositionPreference };
+      setCustomPosition, savePositionPreference, saveThemePreference, currentOverlayAppearance };
   `, context);
   const r = context.renderer;
   element('share-angle').value = 'sideline';
@@ -323,6 +323,35 @@ test('overlay preferences save explicitly and failed writes retain the previous 
   assert.deepEqual(JSON.parse(JSON.stringify(r.S.settings.overlayPosition)), { preset: 'custom', x: 0.2, y: 0.6 });
   assert.equal(r.element('share-positioning').disabled, false);
   assert.equal(r.element('share-export').disabled, false);
+});
+
+test('overlay defaults follow the analyzed team, and custom theme saves preserve automatic/default semantics', async () => {
+  const r = renderer();
+  await r.openSplitFilms();
+  r.S.selected = new Set([0]);
+  r.api.saveSettings = async (value) => settings.mergeSettings(JSON.parse(JSON.stringify(value)));
+  r.openShare();
+  assert.equal(r.currentOverlayAppearance().background, require('../src/shared/overlay').teamTheme('BAL').background);
+  r.S.sel.team = 'BUF';
+  r.openShare();
+  assert.equal(r.currentOverlayAppearance().background, require('../src/shared/overlay').teamTheme('BUF').background);
+  r.element('share-theme-name').value = 'My theme';
+  await r.saveThemePreference('save');
+  assert.equal(r.S.settings.overlayThemes.length, 1);
+  assert.equal(r.S.settings.overlayTheme, null, 'saving a theme does not change automatic selection');
+  await r.saveThemePreference('default');
+  assert.equal(r.S.settings.overlayTheme.background, r.currentOverlayAppearance().background);
+  r.S.sel.team = 'BAL';
+  r.openShare();
+  assert.equal(r.currentOverlayAppearance().background, r.S.settings.overlayTheme.background);
+  r.api.saveSettings = async () => { throw new Error('Disk full'); };
+  await r.saveThemePreference('default');
+  assert.match(r.element('share-theme-status').textContent, /Could not save overlay theme: Disk full/);
+  assert.equal(r.element('share-theming').disabled, false);
+  assert.equal(r.element('share-export').disabled, false);
+  r.element('share-clean').checked = true;
+  await r.saveThemePreference('delete');
+  assert.equal(r.S.settings.overlayThemes.length, 1, 'clean exports cannot change theme preferences');
 });
 
 test('uncached split files analyze once each and retain separate results', async () => {

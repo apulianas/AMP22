@@ -14,7 +14,7 @@ const reports = require('../src/shared/reports');
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
-    A22: { plays, settings, clipExport, advanced, reports },
+    A22: { plays, settings, clipExport, advanced, reports, overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {
       getElementById(id) {

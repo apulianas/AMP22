@@ -223,6 +223,21 @@
         <input id="share-overlay-seconds" type="number" min="0" step="any" />
       </label></p>
       <p id="share-overlay-description" class="muted">Applies to every angle and play. Zero hides overlays.<br>Original portrait layout keeps its lower panel when the overlay ends.<br>Overlays include the primary player's headshot when available.</p>
+      <fieldset id="share-theming">
+        <legend>Overlay theme</legend>
+        <label for="share-theme">Team or saved theme</label>
+        <select id="share-theme"></select>
+        <div class="grid">
+          <label>Background <input id="share-theme-background" type="color" /></label>
+          <label>Accent <input id="share-theme-accent" type="color" /></label>
+        </div>
+        <p><label for="share-opacity">Background opacity: <output id="share-opacity-value" for="share-opacity"></output></label>
+          <input id="share-opacity" type="range" min="0" max="100" step="1" /></p>
+        <p class="muted small">Text stays opaque, automatically contrasts with the background, and has an outline for legibility over turf. Low opacity reduces panel contrast. Preview changes below.</p>
+        <p class="row"><input id="share-theme-name" type="text" maxlength="60" aria-label="Custom theme name" placeholder="Custom theme name" /><button id="share-theme-save">Save / replace theme</button></p>
+        <div class="row"><button id="share-theme-delete" disabled>Delete saved theme</button><button id="share-theme-default">Make theme / opacity default</button></div>
+        <p id="share-theme-status" class="muted small" role="status" aria-live="polite"></p>
+      </fieldset>
       <fieldset id="share-positioning">
         <legend>Overlay position</legend>
         <label for="share-position">Location</label>
@@ -366,6 +381,7 @@
   <script src="../shared/teams.js"></script>
   <script src="../shared/reports.js"></script>
   <script src="../shared/export.js"></script>
+  <script src="../shared/overlay.js"></script>
   <script src="../shared/settings.js"></script>
   <script src="../shared/align.js"></script>
   <script src="renderer.js"></script>
