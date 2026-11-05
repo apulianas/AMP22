@@ -570,8 +570,11 @@ test('film setup occupies the empty viewer and becomes an optional panel after a
   r.S.filmSetupOpen = false;
   r.S.analyzing = {};
   r.renderFilmSetup();
-  assert.equal(el('film-setup').hidden, false, 'analysis progress stays in the viewer panel');
-  assert.equal(el('film-setup-close').hidden, true);
+  assert.equal(el('film-setup').hidden, true, 'completed film remains visible during background analysis');
+  r.S.filmSetupOpen = true;
+  r.renderFilmSetup();
+  assert.equal(el('film-setup-close').hidden, false, 'setup can be dismissed while analysis continues');
+  r.S.filmSetupOpen = false;
   r.S.analyzing = false;
   r.renderFilmSetup();
   assert.equal(el('film-setup').hidden, true);

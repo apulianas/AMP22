@@ -23,7 +23,7 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
       pause() {}, load() {}, focus() {}, removeAttribute(name) { this[name] = ''; },
       setAttribute(name, value) { this[name] = value; }, decode: async () => {},
       getContext: () => ({ fillRect() {}, drawImage() {} }),
-      querySelectorAll: () => [], querySelector: () => ({ style: {} }),
+      querySelectorAll: () => [], querySelector: (selector) => element(`${id} ${selector}`),
     });
     return elements.get(id);
   };
@@ -58,7 +58,8 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
     updateTimeUI = () => {};
     globalThis.renderer = { S, derivePlays, openSplitFilms, selectPlay, navClip, setAnchor,
       nudge, pairKey, realign, corrections, openShare, trimmedExportClips, updateExportOptions, selectTrimPlay, queueTrimPreview, analyze, closeFilm, setVideoTime,
-      setCustomPosition, savePositionPreference, saveThemePreference, currentOverlayAppearance };
+      setCustomPosition, savePositionPreference, saveThemePreference, currentOverlayAppearance,
+      cancelAnalysis, renderAnalysisProgress };
   `, context);
   const r = context.renderer;
   element('share-angle').value = 'sideline';
@@ -375,18 +376,16 @@ test('uncached split files analyze once each and retain separate results', async
 test('stale analysis cannot replace a newly opened game or clear its progress', async () => {
   const r = renderer({ cached: false });
   await r.openSplitFilms();
-  let finish;
-  r.api.analyzeFilm = () => new Promise((resolve) => { finish = resolve; });
+  const pending = [];
+  r.api.analyzeFilm = () => new Promise((resolve) => { pending.push(resolve); });
   const running = r.analyze(false);
   r.closeFilm();
   const newerRun = {};
   r.S.analyzing = newerRun;
-  r.S.progressFile = '/new.mp4';
-  finish({ pairs: [{ sideline: { start: 99, end: 100 } }] });
+  for (const finish of pending) finish({ pairs: [{ sideline: { start: 99, end: 100 } }] });
   await running;
   assert.equal(r.S.pairs.length, 0);
   assert.equal(r.S.analyzing, newerRun);
-  assert.equal(r.S.progressFile, '/new.mp4');
 });
 
 test('source-open failures are reported without assigning the other unit to missing film', async () => {
@@ -399,6 +398,98 @@ test('source-open failures are reported without assigning the other unit to miss
   await r.openSplitFilms();
   assert.match(r.element('status').textContent, /offense: Film was moved/);
   assert.deepEqual(Array.from(r.S.mapping), [null, 0, null, 1, null]);
+});
+
+test('split analysis starts concurrently and late results preserve playback, indices, and selection', async () => {
+  const r = renderer({ cached: false });
+  await r.openSplitFilms();
+  const pending = new Map();
+  r.api.analyzeFilm = (file) => new Promise((resolve) => pending.set(file, resolve));
+  const running = r.analyze(false);
+  assert.deepEqual([...pending.keys()], ['/offense.mp4', '/defense.mp4']);
+  const result = { pairs: [0, 20].map((start) => ({
+    sideline: { start, end: start + 5 }, endzone: { start: start + 5, end: start + 10 },
+  })) };
+  pending.get('/defense.mp4')(result);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(r.S.analyzing.files.get('/offense.mp4').done, false);
+  assert.equal(r.element('film-setup').hidden, true);
+  assert.equal(r.element('progress').hidden, false);
+  r.selectPlay(1, { autoplay: false });
+  r.S.playing = true;
+  r.element('vidA').currentTime = 2;
+  const range = r.S.range;
+  const selection = r.S.selected;
+  assert.equal(r.S.curPair, 0);
+  pending.get('/offense.mp4')(result);
+  await running;
+  assert.equal(r.S.curPair, 2, 'defense index shifts when offense is inserted');
+  assert.equal(r.S.pairs[r.S.curPair].role, 'defense');
+  assert.equal(r.S.film.path, '/defense.mp4');
+  assert.equal(r.element('vidA').currentTime, 2);
+  assert.equal(r.S.range, range);
+  assert.equal(r.S.selected, selection);
+  assert.equal(r.S.playing, true);
+  assert.equal(r.S.mapping[1], 2);
+});
+
+test('failed sources do not prevent completed sources becoming available and can be retried', async () => {
+  const r = renderer({ cached: false });
+  await r.openSplitFilms();
+  const requested = [];
+  r.api.analyzeFilm = async (file) => {
+    requested.push(file);
+    if (file === '/offense.mp4') throw new Error('Unreadable video');
+    return { pairs: [{ sideline: { start: 0, end: 5 }, endzone: { start: 5, end: 10 } }] };
+  };
+  await r.analyze(false);
+  assert.match(r.element('status').textContent, /Offense:.*Unreadable/);
+  assert.equal(r.S.pairs.length, 1);
+  assert.equal(r.element('btn-analyze').hidden, false);
+  requested.length = 0;
+  await r.analyze(false);
+  assert.deepEqual(requested, ['/offense.mp4']);
+});
+
+test('cancellation targets all unfinished sources and retains completed film', async () => {
+  const r = renderer({ cached: false });
+  await r.openSplitFilms();
+  const pending = new Map();
+  r.api.analyzeFilm = (file) => new Promise((resolve, reject) => pending.set(file, { resolve, reject }));
+  const cancelled = [];
+  r.api.cancelAnalysis = async (file) => {
+    cancelled.push(file);
+    pending.get(file).reject(new Error('Cancelled'));
+  };
+  const running = r.analyze(false);
+  pending.get('/defense.mp4').resolve({ pairs: [{ sideline: { start: 0, end: 5 }, endzone: { start: 5, end: 10 } }] });
+  await new Promise((resolve) => setImmediate(resolve));
+  r.selectPlay(0, { autoplay: false });
+  assert.match(r.element('message').innerHTML, /still processing/);
+  await r.cancelAnalysis();
+  await running;
+  assert.deepEqual(cancelled, ['/offense.mp4']);
+  assert.equal(r.S.pairs.length, 1);
+  assert.match(r.element('status').textContent, /cancelled.*Completed film/);
+  assert.match(r.element('message').innerHTML, /Analyze film to retry/);
+  assert.doesNotMatch(r.element('message').innerHTML, /still processing/);
+  assert.equal(r.element('progress').hidden, true);
+});
+
+test('aggregate progress is monotonic, includes every source, and ignores unrelated events', async () => {
+  const r = renderer({ cached: false });
+  await r.openSplitFilms();
+  const pending = [];
+  r.api.analyzeFilm = () => new Promise((resolve) => pending.push(resolve));
+  const running = r.analyze(false);
+  r.renderAnalysisProgress({ file: '/offense.mp4', phase: 'classify', fraction: 0.5 });
+  assert.equal(r.element('progress .fill').style.width, '45%');
+  assert.match(r.element('progress .label').textContent, /Offense: 90%.*Defense: 0%/);
+  r.renderAnalysisProgress({ file: '/offense.mp4', phase: 'scan', fraction: 0.5 });
+  r.renderAnalysisProgress({ file: '/unrelated.mp4', phase: 'done', fraction: 1 });
+  assert.equal(r.element('progress .fill').style.width, '45%');
+  for (const finish of pending) finish({ pairs: [] });
+  await running;
 });
 
 test('source switches defer seeking until video metadata is ready', () => {

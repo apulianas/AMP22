@@ -4,6 +4,11 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      experimental:
+        description: Publish an experimental prerelease from the selected branch
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,8 +33,11 @@ jobs:
         shell: bash
         env:
           CREATE_RELEASE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+          EXPERIMENTAL: ${{ github.event_name == 'workflow_dispatch' && inputs.experimental }}
         run: |
-          if [ "$CREATE_RELEASE" = "true" ]; then
+          if [ "$EXPERIMENTAL" = "true" ]; then
+            version="$(node scripts/release-version.js)-experimental.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          elif [ "$CREATE_RELEASE" = "true" ]; then
             version=$(node scripts/release-version.js)
           else
             version=$(node -p "require('./package.json').version")
@@ -70,26 +78,39 @@ jobs:
       - run: npm test
         env:
           A22_TEST_EXPORT: ${{ runner.os == 'macOS' && '1' || '0' }}
-      - run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+          A22_TEST_MEDIA: '1'
+      - name: Build installers
+        shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          EXPERIMENTAL: ${{ github.event_name == 'workflow_dispatch' && inputs.experimental }}
+        run: |
+          options=()
+          if [ "$EXPERIMENTAL" = "true" ]; then
+            options+=(--config.productName="AMP22 Experimental" --config.appId=com.apulianas.amp22.experimental)
+            options+=('--config.artifactName=AMP22-Experimental-${version}-${arch}.${ext}')
+          fi
+          npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never "${options[@]}"
       - name: Verify packaged macOS architectures and media tools
         if: runner.os == 'macOS'
         shell: bash
         env:
           APP_ARCH: ${{ matrix.arch }}
+          EXPERIMENTAL: ${{ github.event_name == 'workflow_dispatch' && inputs.experimental }}
         run: |
+          product="AMP22"
+          if [ "$EXPERIMENTAL" = "true" ]; then product="AMP22 Experimental"; fi
           if [ "$APP_ARCH" = "arm64" ]; then
-            contents="dist/mac-arm64/AMP22.app/Contents"
+            contents="dist/mac-arm64/$product.app/Contents"
             cpu="arm64"
           else
-            contents="dist/mac/AMP22.app/Contents"
+            contents="dist/mac/$product.app/Contents"
             cpu="x86_64"
           fi
           media="$contents/Resources/app.asar.unpacked/node_modules"
           ffmpeg="$media/ffmpeg-static/ffmpeg"
           ffprobe="$media/ffprobe-static/bin/darwin/$APP_ARCH/ffprobe"
-          for binary in "$contents/MacOS/AMP22" "$ffmpeg"; do
+          for binary in "$contents/MacOS/$product" "$ffmpeg"; do
             file "$binary"
             file -b "$binary" | grep -q "$cpu"
           done
@@ -126,7 +147,7 @@ jobs:
           path: out/AMP22-NFL-Pro-Extension.zip
 
   release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    if: (github.event_name == 'workflow_dispatch' && inputs.experimental) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master')
     needs: [version, build, extension]
     runs-on: ubuntu-latest
     permissions:
@@ -143,14 +164,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           APP_VERSION: ${{ needs.version.outputs.version }}
+          EXPERIMENTAL: ${{ github.event_name == 'workflow_dispatch' && inputs.experimental }}
         run: |
           tag="v$APP_VERSION"
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber
           else
+            options=(--latest)
+            title="AMP22 $tag"
+            if [ "$EXPERIMENTAL" = "true" ]; then
+              options=(--prerelease --latest=false)
+              title="AMP22 Experimental $tag"
+            fi
             gh release create "$tag" release/* \
               --target "$GITHUB_SHA" \
-              --title "AMP22 $tag" \
+              --title "$title" \
               --generate-notes \
-              --latest
+              "${options[@]}"
           fi

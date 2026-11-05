@@ -39,7 +39,6 @@ const S = {
     choices: {}, // ADV_CHOICES key -> option value; player -> selected player IDs
   },
   visible: [], // play indices in list order
-  progressFile: null,
   selected: new Set(),
   selectionAnchor: -1,
   multiSelect: false,
@@ -312,7 +311,6 @@ function closeFilm() {
   S.filmRevision++;
   S.filmSetupOpen = false;
   S.analyzing = false;
-  S.progressFile = null;
   $('progress').hidden = true;
   pause();
   dockAngle();
@@ -336,11 +334,11 @@ function closeFilm() {
 
 function renderFilmSetup() {
   const ready = !!S.film && S.pairs.length > 0;
-  const open = !ready || S.filmSetupOpen || !!S.analyzing;
+  const open = !ready || S.filmSetupOpen;
   $('film-setup').hidden = !open;
   $('film-setup-toggle').hidden = !ready || open;
   $('film-setup-toggle').setAttribute('aria-expanded', String(open));
-  $('film-setup-close').hidden = !ready || !!S.analyzing;
+  $('film-setup-close').hidden = !ready;
   $('film-setup-game').textContent = S.game ? gameLabel(S.game, S.sel.team) : '';
   $('film-setup-message').innerHTML = $('message').innerHTML;
   $('message').hidden = open;
@@ -361,10 +359,12 @@ function renderFilmControls() {
 }
 
 function rebuildSplitPairs() {
+  const current = S.pairs[S.curPair];
   S.pairs = ['offense', 'defense', 'special'].flatMap((role) => {
     const film = S.splitFilms[role];
     return (film?.analysis?.pairs || []).map((pair) => ({ ...pair, role, film }));
   });
+  S.curPair = current ? S.pairs.findIndex((pair) => pairKey(pair) === pairKey(current)) : -1;
   $('videos').classList.toggle('single', !S.pairs.length);
   $('btn-analyze').hidden = !!S.analyzing || !Object.values(S.splitFilms).some((film) => !film.analysis);
   updateAngleButtons();
@@ -446,24 +446,53 @@ async function analyze(force) {
   const revision = S.filmRevision;
   const split = isSplitFilm();
   const films = split ? Object.values(S.splitFilms).filter((film) => force || !film.analysis) : [S.film];
-  const run = {};
+  if (!films.length) return;
+  const run = {
+    files: new Map(films.map((film) => [film.path, { film, fraction: 0, done: false, error: null }])),
+    cancelled: false,
+  };
   S.analyzing = run;
   $('progress').hidden = false;
   $('btn-analyze').hidden = true;
+  renderAnalysisProgress();
   renderFilmSetup();
   try {
-    for (const film of films) {
-      if (revision !== S.filmRevision) return;
-      S.progressFile = film.path;
-      const a = await window.api.analyzeFilm(film.path, force);
-      if (revision !== S.filmRevision) return;
-      film.analysis = a;
-      if (split) rebuildSplitPairs();
-      else setAnalysis(a);
-      selectFirstLinked();
-      if (S.curPair < 0 && S.pairs.length) loadPair(0, { autoplay: false });
-    }
-    setStatus(`Found ${S.pairs.length} plays on film`);
+    await Promise.all([...run.files.values()].map(async (job) => {
+      try {
+        const a = await window.api.analyzeFilm(job.film.path, force);
+        if (revision !== S.filmRevision) return;
+        const hadPlayback = S.curPair >= 0 && !!S.range;
+        const wasCurrentSource = S.film?.path === job.film.path;
+        job.film.analysis = a;
+        if (split) rebuildSplitPairs();
+        else setAnalysis(a);
+        if (hadPlayback && !wasCurrentSource) {
+          realign();
+          renderList();
+          renderInfo();
+        } else if (S.curPlay >= 0) {
+          realign();
+          renderList();
+          selectPlay(S.curPlay, { autoplay: false, keepSelection: true });
+        } else {
+          selectFirstLinked();
+          if (S.curPair < 0 && S.pairs.length) loadPair(0, { autoplay: false });
+        }
+      } catch (error) {
+        job.error = error.message;
+      } finally {
+        job.done = true;
+        job.fraction = 1;
+        if (S.analyzing === run) renderAnalysisProgress();
+      }
+    }));
+    if (revision !== S.filmRevision) return;
+    const errors = [...run.files.values()].filter((job) => job.error && !/Cancelled/.test(job.error));
+    const cancelled = run.cancelled || [...run.files.values()].some((job) => /Cancelled/.test(job.error || ''));
+    const warningCount = [...run.files.values()].reduce((n, job) => n + (job.film.analysis?.warnings?.length || 0), 0);
+    if (errors.length) setStatus(`Analysis failed: ${errors.map((job) => `${analysisLabel(job.film)}: ${job.error}`).join('; ')}`, true);
+    else if (cancelled) setStatus('Analysis cancelled. Completed film remains available.');
+    else setStatus(`Found ${S.pairs.length} plays on film${warningCount ? ` (${warningCount} frame-sampling warnings; details in the analysis cache)` : ''}`, warningCount > 0);
   } catch (e) {
     if (revision === S.filmRevision) {
       $('btn-analyze').hidden = false;
@@ -472,10 +501,56 @@ async function analyze(force) {
   } finally {
     if (S.analyzing === run) {
       S.analyzing = false;
-      S.progressFile = null;
       $('progress').hidden = true;
       if (isSplitFilm()) rebuildSplitPairs();
+      else $('btn-analyze').hidden = !!S.film?.analysis;
+      if (isSplitFilm() && S.curPlay >= 0 && S.curPair < 0 && S.mapping[S.curPlay] == null) {
+        selectPlay(S.curPlay, { autoplay: false, keepSelection: true });
+      }
       renderFilmSetup();
+    }
+  }
+}
+
+function analysisLabel(film) {
+  if (!isSplitFilm()) return 'Film';
+  const role = Object.keys(S.splitFilms).find((key) => S.splitFilms[key].path === film.path);
+  return role === 'special' ? 'Special teams' : role === 'offense' ? 'Offense' : 'Defense';
+}
+
+function renderAnalysisProgress(progress) {
+  const run = S.analyzing;
+  if (!run?.files) return;
+  if (progress) {
+    const job = run.files.get(progress.file);
+    if (!job || job.done) return;
+    const phases = { probe: [0, 0.02], scan: [0.02, 0.8], classify: [0.8, 1], done: [1, 1] };
+    const [a, b] = phases[progress.phase] || [0, 1];
+    job.fraction = Math.max(job.fraction, a + (b - a) * progress.fraction);
+    job.message = progress.message;
+  }
+  const jobs = [...run.files.values()];
+  const fraction = jobs.reduce((n, job) => n + job.fraction, 0) / (jobs.length || 1);
+  $('progress').querySelector('.fill').style.width = `${Math.round(fraction * 100)}%`;
+  $('progress').querySelector('.label').textContent = run.cancelled ? 'Cancelling analysis…' : jobs.map((job) => {
+    const state = job.done ? (job.error ? 'stopped' : 'ready') : `${Math.round(job.fraction * 100)}%${jobs.length === 1 && job.message ? ` ${job.message}` : ''}`;
+    return `${analysisLabel(job.film)}: ${state}`;
+  }).join(' · ');
+}
+
+async function cancelAnalysis() {
+  const run = S.analyzing;
+  if (!run?.files || run.cancelled) return;
+  run.cancelled = true;
+  renderAnalysisProgress();
+  try {
+    await Promise.all([...run.files.values()].filter((job) => !job.done)
+      .map((job) => window.api.cancelAnalysis(job.film.path)));
+  } catch (error) {
+    if (S.analyzing === run) {
+      run.cancelled = false;
+      renderAnalysisProgress();
+      setStatus(`Could not cancel analysis: ${error.message}`, true);
     }
   }
 }
@@ -1032,6 +1107,8 @@ function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
   S.curPlay = i;
   markSelected();
   updateSelection();
+  const role = isSplitFilm() ? A22.align.filmRole(S.plays[i], S.sel.team) : null;
+  const source = role ? S.splitFilms[role] : null;
   const pi = S.mapping[i];
   if (pi != null && S.pairs[pi]) {
     loadPair(pi, { autoplay });
@@ -1040,11 +1117,16 @@ function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
     S.curPair = -1;
     S.range = null;
     renderInfo();
-    if (isSplitFilm() && !A22.align.filmRole(S.plays[i], S.sel.team)) {
+    if (isSplitFilm() && !role) {
       showMessage('This play cannot be classified as offense, defense, or special teams and has no linked film.');
-    } else if (isSplitFilm() && !S.splitFilms[A22.align.filmRole(S.plays[i], S.sel.team)]) {
+    } else if (isSplitFilm() && !source) {
       S.filmSetupOpen = true;
       showMessage('Choose the matching offense, defense, or special-teams file to watch this play.');
+    } else if (isSplitFilm() && !source.analysis) {
+      const job = S.analyzing?.files?.get(source.path);
+      showMessage(job && !job.done
+        ? 'This play’s film is still processing. You can watch plays from completed files while it finishes.'
+        : 'This play’s film has not finished analysis. Open Film setup and choose Analyze film to retry.');
     } else if (S.film && S.pairs.length) showMessage('No film linked to this play.<br><span class="muted">Browse clips with Shift+↑/↓ and press Shift+L to link one.</span>');
   }
 }
@@ -2236,7 +2318,7 @@ function wire() {
   $('btn-defense-film').addEventListener('click', () => chooseFilm('defense'));
   $('btn-special-film').addEventListener('click', () => chooseFilm('special'));
   $('btn-analyze').addEventListener('click', () => analyze(false));
-  $('btn-cancel').addEventListener('click', () => S.progressFile && window.api.cancelAnalysis(S.progressFile));
+  $('btn-cancel').addEventListener('click', cancelAnalysis);
   $('btn-refresh').addEventListener('click', async () => { await loadSchedule(true); await loadGame(true); });
   $('btn-settings').addEventListener('click', () => { draft = null; toggleOverlay('settings', true); });
   $('btn-help').addEventListener('click', () => toggleOverlay('help'));
@@ -2408,15 +2490,7 @@ function wire() {
     if (S.curPlay >= 0) selectPlay(S.curPlay, { autoplay: false });
   });
 
-  window.api.onProgress((p) => {
-    if (p.file !== S.progressFile) return;
-    const phases = { probe: [0, 0.02], scan: [0.02, 0.8], classify: [0.8, 1], done: [1, 1] };
-    const [a, b] = phases[p.phase] || [0, 1];
-    const total = a + (b - a) * p.fraction;
-    $('progress').querySelector('.fill').style.width = `${Math.round(total * 100)}%`;
-    const role = isSplitFilm() ? Object.keys(S.splitFilms).find((key) => S.splitFilms[key].path === p.file) : null;
-    $('progress').querySelector('.label').textContent = `${role ? `${role === 'special' ? 'Special teams' : role}: ` : ''}${p.message} ${Math.round(total * 100)}%`;
-  });
+  window.api.onProgress(renderAnalysisProgress);
 
   document.querySelectorAll('[data-action]').forEach((btn) =>
     btn.addEventListener('click', (e) => { e.currentTarget.blur(); runAction(btn.dataset.action); })

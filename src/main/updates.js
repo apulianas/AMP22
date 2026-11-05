@@ -10,11 +10,12 @@ function versionParts(version) {
 }
 
 function isNewer(latest, current) {
-  const a = versionParts(latest), b = versionParts(current);
+  const experimental = /-experimental\.\d+\.\d+$/.test(current);
+  const a = versionParts(latest), b = versionParts(experimental ? current.replace(/-experimental\.\d+\.\d+$/, '') : current);
   for (let i = 0; i < a.length; i++) {
     if (a[i] !== b[i]) return a[i] > b[i];
   }
-  return false;
+  return experimental;
 }
 
 class UpdateService {
