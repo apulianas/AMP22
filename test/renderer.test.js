@@ -14,14 +14,15 @@ const reports = require('../src/shared/reports');
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
-    A22: { plays, settings, clipExport, advanced, reports, overlay: require('../src/shared/overlay') },
+    A22: { plays, settings, clipExport, advanced, reports, align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {
       getElementById(id) {
         if (!elements.has(id)) elements.set(id, {
           innerHTML: '', textContent: '', querySelector: () => null,
           setAttribute(name, value) { this[name] = value; },
-          classList: { toggle() {} },
+          focus() {},
+          classList: { toggle() {}, add() {}, remove() {} },
         });
         return elements.get(id);
       },
@@ -48,6 +49,48 @@ function renderer() {
   api.derivePlays();
   return { ...api, elements, context, visible: () => Array.from(api.S.visible) };
 }
+
+test('single-play export names retain game numbering and selected-team possession through Share', async () => {
+  const r = renderer();
+  vm.runInContext(`
+    clearTimeout = pause = toggleOverlay = renderThemeOptions = renderPositionOptions =
+      updatePositionControls = selectTrimPlay = updateExportOptions = updateThemeControls =
+      updateReportOptions = () => {};
+    currentOverlayAppearance = () => ({});
+    globalThis.openShare = openShare;
+    globalThis.exportSelection = exportSelection;
+  `, r.context);
+  r.S.settings = { ...settings.DEFAULT_SETTINGS, defaultTeam: 'BUF' };
+  r.S.sel.team = 'BAL';
+  r.S.film = { path: '/film.mp4', info: { fps: 30 } };
+  r.S.pairs = Array.from({ length: 5 }, () => ({
+    sideline: { start: 1, end: 3 }, endzone: { start: 4, end: 6 },
+  }));
+  r.S.plays[2].defteam = 'BAL';
+  r.S.plays[4].playType = 'punt';
+  r.derivePlays();
+  const el = (id) => r.context.document.getElementById(id);
+  el('share-angle').value = 'sideline';
+  el('share-clean').checked = true;
+  const requests = [];
+  r.context.window.api = { exportClips: async (request) => {
+    requests.push(request);
+    return { cancelled: true };
+  } };
+  for (const [index, possession] of [[2, 'D'], [3, 'O'], [4, 'ST']]) {
+    r.S.selected = new Set([index]);
+    r.S.visible = [index];
+    r.S.plays[index].down = 2;
+    r.S.plays[index].ydstogo = 7;
+    r.S.plays[index].playId = 1000 + index;
+    r.context.openShare();
+    assert.equal(r.S.exportDraft.clips[0].playNumber, index + 1);
+    el('share-report-format').value = 'none';
+    await r.context.exportSelection();
+    assert.equal(requests.at(-1)?.suggestedName, `BAL-${possession}-${index + 1}-2-7.mp4`);
+    assert.equal('playNumber' in requests.at(-1).clips[0], false);
+  }
+});
 
 test('update notes render as text and automatic checks do not interrupt playback or another dialog', async () => {
   const r = renderer();

@@ -117,19 +117,30 @@ test('shift-click selects the entire visible range in either direction', () => {
   assert.deepEqual(selectionRange(visible, 1, 2), []);
 });
 
-test('suggested names contain only clock, main player and yards, or a clock range', () => {
-  const first = { qtr: 2, time: '08:34', names: { passer: 'L.Jackson', receiver: 'Z.Flowers' }, flags: { complete_pass: true }, yards: 48 };
+test('single-play names use team, possession, game play number, down and distance', () => {
+  const first = { qtr: 2, time: '08:34', down: 2, ydstogo: 7 };
+  const context = { team: 'BAL', playNumber: 12, role: 'offense' };
+  assert.equal(exportFilename([first], context), 'BAL-O-12-2-7.mp4');
+  assert.equal(exportFilename([first], { ...context, role: 'defense' }), 'BAL-D-12-2-7.mp4');
+  assert.equal(exportFilename([{ down: null, ydstogo: null }], { ...context, role: 'special' }), 'BAL-ST-12-NA-NA.mp4');
+  assert.equal(exportFilename([{ down: 1, ydstogo: 0 }], context), 'BAL-O-12-1-0.mp4');
+  assert.equal(exportFilename([first], { ...context, role: null }), 'BAL-NA-12-2-7.mp4');
+  for (const patch of [{ team: '' }, { playNumber: 0 }, { playNumber: undefined }]) {
+    assert.throws(() => exportFilename([first], { ...context, ...patch }), /team and game play number/);
+  }
+  assert.throws(() => exportFilename([first]), /team and game play number/);
+});
+
+test('multi-play names retain clock ranges and all filenames remain safe', () => {
+  const first = { qtr: 2, time: '08:34' };
   const last = { qtr: 3, time: '04:12' };
-  assert.equal(exportFilename([first]), 'Q2-08m34s-Z.Flowers-48yds.mp4');
   assert.equal(exportFilename([first, last]), 'Q2-08m34s-to-Q3-04m12s.mp4');
-  assert.equal(exportFilename([{ qtr: 5, time: '8:12' }]), 'OT-8m12s.mp4');
-  assert.equal(exportFilename([{ ...first, names: { rusher: 'D.Henry' }, yards: 0 }]), 'Q2-08m34s-D.Henry-0yds.mp4');
-  assert.equal(exportFilename([{ ...first, flags: {}, yards: -6 }]), 'Q2-08m34s-L.Jackson-minus6yds.mp4');
-  assert.equal(exportFilename([{ ...first, names: { kicker: 'T.Loop' }, yards: null }]), 'Q2-08m34s-T.Loop.mp4');
+  assert.equal(exportFilename([{ qtr: 5, time: '8:12' }, { qtr: 6, time: '4:00' }]), 'OT-8m12s-to-OT2-4m00s.mp4');
+  assert.equal(exportFilename([]), 'clip.mp4');
   assert.equal(safeFilename('../clip\\bad:name?*.mp4'), 'clip-bad-name.mp4');
   assert.equal(safeFilename('CON.mp4'), 'AMP22-CON.mp4');
   assert.equal(safeFilename('...'), 'AMP22-clip.mp4');
-  assert.ok(exportFilename([{ ...first, names: { rusher: 'A'.repeat(500) } }]).length <= 184);
+  assert.equal(exportFilename([first], { team: '../BAL', role: 'offense', playNumber: 12 }), 'BAL-O-12-NA-NA.mp4');
   assert.ok(safeFilename('x'.repeat(500)).length <= 184);
 });
 
