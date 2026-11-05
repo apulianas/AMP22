@@ -1156,7 +1156,7 @@ function openShare() {
       if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
       const pair = S.pairs[pairIdx];
       const film = pair.film || S.film;
-      return { ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)), file: film.path, play: S.plays[i], trim: S.settings.exportTrim };
+      return { ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)), file: film.path, play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim };
     });
     const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'AMP22';
     S.exportDraft = { file: S.film.path, clips, matchup, team: S.sel.team || S.settings.defaultTeam };
@@ -1557,8 +1557,10 @@ async function exportSelection() {
     const result = await window.api.exportClips({
       file, mode, clean, report, overlaySeconds,
       overlayPosition: sharePosition,
-      suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play)),
-      clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition, appearance) }),
+      suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play), {
+        team, playNumber: clips[0].playNumber, role: A22.align.filmRole(clips[0].play, team),
+      }),
+      clips: clips.map(({ play, playNumber, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition, appearance) }),
     });
     $('share-status').textContent = result.cancelled ? 'Export cancelled.' : `Saved to ${result.path}`;
     if (!result.cancelled) {
