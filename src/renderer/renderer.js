@@ -949,6 +949,7 @@ function drawWrapped(ctx, text, x, y, width, lineHeight, maxLines) {
   lines.slice(0, maxLines).forEach((value, i) => {
     if (i === maxLines - 1 && lines.length > maxLines) value += '…';
     while (ctx.measureText(value).width > width && value.length > 1) value = value.slice(0, -2) + '…';
+    ctx.strokeText(value, x, y + i * lineHeight);
     ctx.fillText(value, x, y + i * lineHeight);
   });
 }
@@ -987,7 +988,7 @@ function drawHeadshot(ctx, image, x, y, size) {
   ctx.drawImage(image, x + (size - width) / 2, y + size - height, width, height);
 }
 
-function buildPlayCard(play, mode, matchup, headshot = null, position) {
+function buildPlayCard(play, mode, matchup, headshot = null, position, appearance = currentOverlayAppearance()) {
   position = A22.clipExport.overlayPosition(position);
   const { width, height } = A22.clipExport.dimensions(mode);
   const canvas = document.createElement('canvas');
@@ -995,20 +996,34 @@ function buildPlayCard(play, mode, matchup, headshot = null, position) {
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   const both = mode === 'both';
-  const color = { run: '#2ea043', pass: '#388bfd', special: '#a371f7' }[play.cat] || '#6e7681';
+  const color = appearance.accent;
   const context = [P.clockLabel(play), P.downDistance(play), play.yrdln, play.posteam && `${play.posteam} ball`].filter(Boolean).join('  ·  ');
   const box = play.box;
   const summary = P.overlaySummary(play);
   const notes = [box.penalty, ...play.key, ...play.neg].filter(Boolean).join('  ·  ');
   ctx.textBaseline = 'top';
+  ctx.strokeStyle = appearance.outline;
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  function background(x, y, w, h) {
+    ctx.fillStyle = appearance.background;
+    ctx.globalAlpha = appearance.opacity;
+    ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = appearance.text;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.strokeStyle = appearance.outline;
+    ctx.lineWidth = 3;
+  }
   if (!both || position.preset !== 'original') {
     const padding = 24;
     const photoSpace = headshot ? 148 : 0;
     const maxWidth = Math.floor(width * (both ? 0.9 : 0.72)) - padding * 2 - photoSpace;
     const rows = [
-      { text: context, font: '24px sans-serif', color: '#c9d1d9', height: 28 },
-      { text: summary, font: 'bold 32px sans-serif', color: '#e6edf3', height: 38 },
-      { text: notes, font: '22px sans-serif', color: '#f2cc60', height: 26 },
+      { text: context, font: '24px sans-serif', color: appearance.text, height: 28 },
+      { text: summary, font: 'bold 32px sans-serif', color: appearance.text, height: 38 },
+      { text: notes, font: '22px sans-serif', color: appearance.text, height: 26 },
     ].filter((row) => row.text);
     const contentWidth = Math.ceil(Math.min(maxWidth, Math.max(0, ...rows.map((row) => {
       ctx.font = row.font;
@@ -1019,8 +1034,7 @@ function buildPlayCard(play, mode, matchup, headshot = null, position) {
     const cardHeight = padding * 2 + contentHeight;
     const bounds = A22.clipExport.overlayBounds(mode, cardWidth, cardHeight, position);
     const { x: left, y: top } = bounds;
-    ctx.fillStyle = 'rgba(13,17,23,0.88)';
-    ctx.fillRect(left, top, cardWidth, cardHeight);
+    background(left, top, cardWidth, cardHeight);
     ctx.fillStyle = color;
     ctx.fillRect(left, top, 4, cardHeight);
     if (headshot) drawHeadshot(ctx, headshot, left + padding, top + padding + (contentHeight - 128) / 2, 128);
@@ -1036,14 +1050,13 @@ function buildPlayCard(play, mode, matchup, headshot = null, position) {
   const top = 1216;
   const left = 48;
   const available = width - left * 2;
-  ctx.fillStyle = '#0d1117';
-  ctx.fillRect(0, top, width, height - top);
+  background(0, top, width, height - top);
   ctx.fillStyle = color;
   ctx.fillRect(0, top, width, 8);
-  ctx.fillStyle = '#8b949e';
+  ctx.fillStyle = appearance.text;
   ctx.font = '28px sans-serif';
   drawWrapped(ctx, matchup, left, top + 32, available, 34, 1);
-  ctx.fillStyle = '#e6edf3';
+  ctx.fillStyle = appearance.text;
   ctx.font = '32px sans-serif';
   drawWrapped(ctx, context, left, top + 80, available, 40, 1);
   ctx.font = 'bold 42px sans-serif';
@@ -1051,16 +1064,16 @@ function buildPlayCard(play, mode, matchup, headshot = null, position) {
   if (headshot) drawHeadshot(ctx, headshot, left, top + 130, 208);
   drawWrapped(ctx, summary, left + photoSpace, top + 138, available - photoSpace, 52, 2);
   ctx.font = '30px sans-serif';
-  ctx.fillStyle = '#f2cc60';
+  ctx.fillStyle = appearance.text;
   drawWrapped(ctx, notes, left + photoSpace, top + 252, available - photoSpace, 38, 2);
-  ctx.fillStyle = '#c9d1d9';
+  ctx.fillStyle = appearance.text;
   ctx.font = '32px sans-serif';
   drawWrapped(ctx, play.desc, left, top + 350, available, 42, 7);
   return { canvas, bounds: { x: 0, y: top, width, height: height - top } };
 }
 
-function playCard(play, mode, matchup, headshot = null, position) {
-  return buildPlayCard(play, mode, matchup, headshot, position).canvas.toDataURL('image/png');
+function playCard(play, mode, matchup, headshot = null, position, appearance) {
+  return buildPlayCard(play, mode, matchup, headshot, position, appearance).canvas.toDataURL('image/png');
 }
 
 let headshotQueue = Promise.resolve();
@@ -1117,6 +1130,11 @@ function openShare() {
   $('share-overlay-seconds').value = S.settings.overlaySeconds;
   $('share-overlay-seconds').disabled = $('share-clean').checked;
   sharePosition = A22.clipExport.overlayPosition(S.settings.overlayPosition);
+  shareTheme = S.settings.overlayTheme == null ? null : A22.overlay.theme(S.settings.overlayTheme);
+  shareOpacity = S.settings.overlayOpacity;
+  $('share-theme-name').value = '';
+  $('share-theme-status').textContent = '';
+  renderThemeOptions(shareTheme ? 'custom' : 'auto');
   positionDrag = null;
   positionFrames = null;
   positionHeadshots = null;
@@ -1187,6 +1205,76 @@ let positionHeadshotPromise = null;
 let positionBounds = null;
 let positionDrag = null;
 let positionSaving = false;
+let shareTheme = null;
+let shareOpacity = A22.overlay.DEFAULT_OPACITY;
+
+function currentOverlayAppearance() {
+  return A22.overlay.appearance(shareTheme, shareOpacity, S.exportDraft?.team || S.sel.team || S.settings.defaultTeam);
+}
+
+function renderThemeOptions(selected) {
+  const team = S.sel.team || S.settings.defaultTeam;
+  $('share-theme').innerHTML = `<option value="auto">Automatic · ${esc(A22.teams.teamName(team))}</option>` +
+    Object.keys(A22.teams.TEAMS).map((id) => `<option value="team-${id}">${esc(A22.teams.teamName(id))}</option>`).join('') +
+    S.settings.overlayThemes.map((item, i) => `<option value="saved-${i}">${esc(item.name)}</option>`).join('') +
+    '<option value="custom">Custom / modified</option>';
+  $('share-theme').value = selected;
+}
+
+function updateThemeControls() {
+  $('share-theming').disabled = S.exporting || positionSaving || $('share-clean').checked;
+  const appearance = currentOverlayAppearance();
+  $('share-theme-background').value = appearance.background;
+  $('share-theme-accent').value = appearance.accent;
+  $('share-opacity').value = shareOpacity * 100;
+  $('share-opacity-value').textContent = `${Math.round(shareOpacity * 100)}%`;
+  $('share-theme-delete').disabled = !$('share-theme').value.startsWith('saved-');
+}
+
+async function saveThemePreference(action) {
+  if (positionSaving || S.exporting || $('share-clean').checked) return;
+  const next = { ...S.settings, overlayThemes: S.settings.overlayThemes.slice() };
+  const selected = $('share-theme').value;
+  let message;
+  let selection = selected;
+  if (action === 'default') {
+    next.overlayTheme = shareTheme == null ? null : A22.overlay.theme(shareTheme);
+    next.overlayOpacity = shareOpacity;
+    message = 'Theme and opacity defaults saved for future exports.';
+  } else if (action === 'delete') {
+    if (!selected.startsWith('saved-')) return;
+    next.overlayThemes.splice(Number(selected.slice(6)), 1);
+    selection = 'custom';
+    message = 'Saved theme deleted. Current colors and defaults are unchanged.';
+  } else {
+    const name = $('share-theme-name').value.trim();
+    if (!name || name.length > 60) {
+      $('share-theme-status').textContent = 'Enter a theme name (1-60 characters).';
+      return;
+    }
+    const item = { name, ...A22.overlay.theme(currentOverlayAppearance()) };
+    let index = next.overlayThemes.findIndex((saved) => saved.name === name);
+    if (index < 0) index = next.overlayThemes.length;
+    next.overlayThemes[index] = item;
+    shareTheme = A22.overlay.theme(item);
+    selection = `saved-${index}`;
+    message = `Theme "${name}" saved. Use Make theme / opacity default for future exports.`;
+  }
+  positionSaving = true;
+  updatePositionControls();
+  updateExportOptions();
+  try {
+    S.settings = mergeSettings(await window.api.saveSettings(next));
+    renderThemeOptions(selection);
+    $('share-theme-status').textContent = message;
+  } catch (e) {
+    $('share-theme-status').textContent = `Could not save overlay theme: ${e.message}`;
+  } finally {
+    positionSaving = false;
+    updatePositionControls();
+    updateExportOptions();
+  }
+}
 
 function renderPositionOptions(selected) {
   const labels = ['Original layout', 'Top left', 'Top right', 'Bottom left', 'Bottom right', 'Custom (drag or adjust below)'];
@@ -1198,6 +1286,7 @@ function renderPositionOptions(selected) {
 }
 
 function updatePositionControls() {
+  updateThemeControls();
   $('share-positioning').disabled = S.exporting || positionSaving || $('share-clean').checked;
   const custom = sharePosition.preset === 'custom';
   $('share-position-x').value = custom ? sharePosition.x * 100 : sharePosition.preset.endsWith('right') ? 100 : 0;
@@ -1436,12 +1525,14 @@ async function exportSelection() {
   $('share-trimming').disabled = true;
   $('share-overlay-seconds').disabled = true;
   $('share-positioning').disabled = true;
+  updateThemeControls();
   try {
     const mode = $('share-angle').value;
     const clean = $('share-clean').checked;
     const { file, matchup, team } = S.exportDraft;
     const clips = trimmedExportClips();
     const overlaySeconds = clean ? 0 : $('share-overlay-seconds').valueAsNumber;
+    const appearance = currentOverlayAppearance();
     if (!Number.isFinite(overlaySeconds) || overlaySeconds < 0) throw new Error('Invalid overlay duration.');
     const report = {
       ...REPORT.mergeOptions(S.settings.playReport),
@@ -1467,7 +1558,7 @@ async function exportSelection() {
       file, mode, clean, report, overlaySeconds,
       overlayPosition: sharePosition,
       suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play)),
-      clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition) }),
+      clips: clips.map(({ play, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition, appearance) }),
     });
     $('share-status').textContent = result.cancelled ? 'Export cancelled.' : `Saved to ${result.path}`;
     if (!result.cancelled) {
@@ -2058,6 +2149,34 @@ function wire() {
   $('share-location-save').addEventListener('click', () => savePositionPreference('save'));
   $('share-location-delete').addEventListener('click', () => savePositionPreference('delete'));
   $('share-position-default').addEventListener('click', () => savePositionPreference('default'));
+  $('share-theme').addEventListener('change', () => {
+    const selected = $('share-theme').value;
+    if (selected === 'auto') shareTheme = null;
+    else if (selected.startsWith('team-')) shareTheme = A22.overlay.teamTheme(selected.slice(5));
+    else if (selected.startsWith('saved-')) {
+      const saved = S.settings.overlayThemes[Number(selected.slice(6))];
+      shareTheme = A22.overlay.theme(saved);
+      $('share-theme-name').value = saved.name;
+    } else shareTheme = A22.overlay.theme(currentOverlayAppearance());
+    $('share-theme-status').textContent = '';
+    updatePositionControls();
+  });
+  for (const key of ['background', 'accent']) {
+    $(`share-theme-${key}`).addEventListener('input', () => {
+      shareTheme = A22.overlay.theme({ ...currentOverlayAppearance(), [key]: $(`share-theme-${key}`).value });
+      $('share-theme').value = 'custom';
+      $('share-theme-status').textContent = '';
+      updatePositionControls();
+    });
+  }
+  $('share-opacity').addEventListener('input', () => {
+    shareOpacity = A22.overlay.opacity(Number($('share-opacity').value) / 100);
+    $('share-theme-status').textContent = '';
+    updatePositionControls();
+  });
+  $('share-theme-save').addEventListener('click', () => saveThemePreference('save'));
+  $('share-theme-delete').addEventListener('click', () => saveThemePreference('delete'));
+  $('share-theme-default').addEventListener('click', () => saveThemePreference('default'));
   $('share-preview-play').addEventListener('change', selectTrimPlay);
   $('share-trim').addEventListener('input', () => {
     const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];

@@ -197,6 +197,10 @@ main { display: flex; height: calc(100% - 46px); }
 #share-position-preview[hidden] { display: none; }
 #share-position-preview:active { cursor: grabbing; }
 #share-location-name { min-width: 0; flex: 1; }
+#share-theme { width: 100%; margin: 6px 0 12px; }
+#share-theme-name { min-width: 0; flex: 1; }
+#share-opacity { width: 100%; }
+#share-theming input[type=color] { width: 100%; height: 34px; padding: 2px; }
 .panel h2 { margin-top: 0; }
 .panel h3 { margin: 18px 0 8px; }
 .panel fieldset { border: 1px solid var(--border); border-radius: 6px; margin: 16px 0; padding: 10px 12px; }

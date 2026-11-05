@@ -1,9 +1,9 @@
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport);
+  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport, node ? require('./overlay') : root.A22.overlay);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).settings = mod;
-})(typeof self !== 'undefined' ? self : this, function (reports, clipExport) {
+})(typeof self !== 'undefined' ? self : this, function (reports, clipExport, overlay) {
   'use strict';
 
   const ACTIONS = [
@@ -42,6 +42,9 @@
     overlaySeconds: 3,
     overlayPosition: { preset: 'original' },
     overlayLocations: [],
+    overlayTheme: null,
+    overlayThemes: [],
+    overlayOpacity: overlay.DEFAULT_OPACITY,
     playReport: reports.mergeOptions(),
     keyPlays: {
       turnovers: true,
@@ -60,6 +63,17 @@
     const out = Object.assign({}, DEFAULT_SETTINGS, s);
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
     out.playReport = reports.mergeOptions(s.playReport);
+    try { out.overlayTheme = s.overlayTheme == null ? null : overlay.theme(s.overlayTheme); }
+    catch { out.overlayTheme = null; }
+    try { out.overlayOpacity = overlay.opacity(out.overlayOpacity); }
+    catch { out.overlayOpacity = overlay.DEFAULT_OPACITY; }
+    out.overlayThemes = [];
+    for (const item of Array.isArray(s.overlayThemes) ? s.overlayThemes : []) {
+      if (typeof item?.name !== 'string' || !item.name.trim() || item.name.trim().length > 60 ||
+          out.overlayThemes.some((saved) => saved.name === item.name.trim())) continue;
+      try { out.overlayThemes.push({ name: item.name.trim(), ...overlay.theme(item) }); }
+      catch { /* Ignore malformed saved preferences. */ }
+    }
     try { out.overlayPosition = clipExport.overlayPosition(s.overlayPosition); }
     catch { out.overlayPosition = { preset: 'original' }; }
     out.overlayLocations = [];

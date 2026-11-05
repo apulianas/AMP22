@@ -184,6 +184,49 @@ async function exerciseWorkflows({ app, win }) {
 
   await js(`$('share-clean').checked = false; $('share-clean').dispatchEvent(new Event('change'));`);
   await until(`!$('share-position-preview').hidden && positionHeadshots !== null`);
+  assert.equal(await js(`$('share-theme').value`), 'auto');
+  assert.deepEqual(await js(`A22.overlay.theme(currentOverlayAppearance())`), require('../src/shared/overlay').teamTheme('BAL'));
+  await js(`$('share-theme').value = 'team-CIN'; $('share-theme').dispatchEvent(new Event('change'))`);
+  assert.deepEqual(await js(`A22.overlay.theme(currentOverlayAppearance())`), require('../src/shared/overlay').teamTheme('CIN'));
+  await js(`
+    $('share-theme-background').value = '#123456'; $('share-theme-background').dispatchEvent(new Event('input'));
+    $('share-theme-accent').value = '#ff8800'; $('share-theme-accent').dispatchEvent(new Event('input'));
+    $('share-opacity').value = 65; $('share-opacity').dispatchEvent(new Event('input'));
+    $('share-theme-name').value = '<Custom theme>'; $('share-theme-save').click();
+  `);
+  await until(`!positionSaving && S.settings.overlayThemes.length === 1`);
+  assert.equal(await js(`$('share-theme').selectedOptions[0].textContent`), '<Custom theme>');
+  assert.equal(await js(`S.settings.overlayTheme`), null, 'named themes do not implicitly replace the default');
+  await js(`$('share-theme-default').click()`);
+  await until(`!positionSaving && S.settings.overlayOpacity === 0.65`);
+  await js(`$('share-close').click(); $('btn-share').click()`);
+  await until(`!$('share-position-preview').hidden`);
+  assert.equal(await js(`$('share-opacity-value').textContent`), '65%');
+  assert.equal(await js(`currentOverlayAppearance().background`), '#123456');
+  for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
+    for (const preset of ['original', 'top-left']) {
+      for (const alpha of [0, 0.65, 1]) {
+        const pixels = await js(`(() => {
+          const appearance = A22.overlay.appearance({background: '#123456', accent: '#ff8800'}, ${alpha});
+          const {canvas, bounds: b} = buildPlayCard(S.exportDraft.clips[0].play, '${mode}', S.exportDraft.matchup, null, {preset: '${preset}'}, appearance);
+          const ctx = canvas.getContext('2d');
+          const background = [...ctx.getImageData(b.x + 12, b.y + 12, 1, 1).data];
+          const ink = ctx.getImageData(b.x + 24, b.y + 24, b.width - 48, b.height - 48).data;
+          let opaque = 0;
+          for (let i = 3; i < ink.length; i += 4) if (ink[i] === 255) opaque++;
+          return {background, opaque};
+        })()`);
+        assert.ok(Math.abs(pixels.background[3] - Math.round(alpha * 255)) <= 1, `${mode}/${preset} background alpha`);
+        if (alpha > 0) [18, 52, 86].forEach((value, i) => assert.ok(Math.abs(pixels.background[i] - value) <= 1));
+        assert.ok(pixels.opaque > 100, 'text remains opaque even with transparent panels');
+      }
+    }
+  }
+  await js(`$('share-theme').value = 'saved-0'; $('share-theme').dispatchEvent(new Event('change')); $('share-theme-delete').click()`);
+  await until(`!positionSaving && S.settings.overlayThemes.length === 0`);
+  assert.equal(await js(`S.settings.overlayTheme.background`), '#123456', 'deletion does not change defaults');
+  await js(`$('share-theme').value = 'auto'; $('share-theme').dispatchEvent(new Event('change')); $('share-theme-default').click()`);
+  await until(`!positionSaving && S.settings.overlayTheme === null`);
   for (const mode of ['sideline', 'endzone', 'sideline-first', 'endzone-first', 'both']) {
     await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'));`);
     await until(`positionFrames?.mode === '${mode}'`);
@@ -259,6 +302,7 @@ async function exerciseWorkflows({ app, win }) {
   `);
   await until(`positionFrames?.mode === 'both' && positionHeadshots !== null`);
   const encodedBounds = await js('positionBounds');
+  const encodedAppearance = await js('currentOverlayAppearance()');
   await js('exportSelection()');
   assert.equal(await js(`$('share-status').classList.contains('error')`), false, await js(`$('share-status').textContent`));
   const sample = (time, x, y) => {
@@ -268,9 +312,10 @@ async function exerciseWorkflows({ app, win }) {
     assert.equal(result.stdout.length, 3);
     return [...result.stdout];
   };
-  const before = sample(0.2, encodedBounds.x + 2, encodedBounds.y + 2);
-  assert.ok(before[1] > 90 && before[1] > before[0] * 1.5, 'encoded overlay uses the chosen top-right location');
-  assert.ok(sample(0.8, encodedBounds.x + 2, encodedBounds.y + 2).every((v) => v < 30), 'overlay disappears after the chosen duration');
+  const before = sample(0.2, encodedBounds.x + 12, encodedBounds.y + 12);
+  const expectedBackground = encodedAppearance.background.slice(1).match(/../g).map((part) => parseInt(part, 16) * encodedAppearance.opacity);
+  assert.ok(before.every((value, i) => Math.abs(value - expectedBackground[i]) < 12), 'encoded overlay uses the preview theme, opacity, and top-right location');
+  assert.ok(sample(0.8, encodedBounds.x + 12, encodedBounds.y + 12).every((v) => v < 30), 'overlay disappears after the chosen duration');
   const filmPixel = sample(0.2, 500, 400);
   assert.ok(filmPixel[0] > 180 && filmPixel[1] < 70, 'movable portrait overlay centers rather than shifts the film');
   await js(`
