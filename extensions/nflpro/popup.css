@@ -1,0 +1,7 @@
+body { width: 320px; margin: 16px; font: 13px/1.5 system-ui, sans-serif; }
+h1 { font-size: 18px; display: flex; align-items: center; gap: 8px; }
+button { margin: 3px; padding: 7px 10px; }
+#capture { background: #1f6feb; color: white; border: 0; border-radius: 5px; }
+progress { display: block; width: 100%; margin-top: 12px; }
+progress[hidden] { display: none; }
+#status { min-height: 40px; overflow-wrap: anywhere; }

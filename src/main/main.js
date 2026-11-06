@@ -24,6 +24,9 @@ let settingsStore;
 let gamesStore;
 let analysisDir;
 let updates;
+let participationWatcher = null;
+let participationTimer = null;
+let participationWatchError = '';
 const running = new Map(); // film path -> {controller, promise}
 let exporting = null;
 let lastExportPath = null;
@@ -85,6 +88,34 @@ function getSettings() {
   return settingsMod.mergeSettings(settingsStore.get());
 }
 
+function watchParticipation() {
+  participationWatcher?.close();
+  participationWatcher = null;
+  participationWatchError = '';
+  clearTimeout(participationTimer);
+  const folder = getSettings().participationRoot;
+  if (!folder) return;
+  try {
+    participationWatcher = fs.watch(folder, (_event, filename) => {
+      if (filename && !/^nflpro-.*\.csv$/i.test(String(filename))) return;
+      clearTimeout(participationTimer);
+      participationTimer = setTimeout(() => {
+        if (win && !win.isDestroyed()) win.webContents.send('participation:changed');
+      }, 750);
+    });
+    participationWatcher.on('error', (error) => {
+      participationWatchError = `Automatic participation updates unavailable: ${error.message}`;
+      participationWatcher?.close();
+      participationWatcher = null;
+      console.error('Participation folder watcher:', error.message);
+      if (win && !win.isDestroyed()) win.webContents.send('participation:changed');
+    });
+  } catch (error) {
+    participationWatchError = `Automatic participation updates unavailable: ${error.message}`;
+    console.error('Participation folder watcher:', error.message);
+  }
+}
+
 function analysisKey(file, st) {
   return crypto.createHash('sha1').update(`${path.resolve(file)}|${st.size}|${st.mtimeMs}`).digest('hex');
 }
@@ -121,7 +152,10 @@ function registerIpc() {
   ipcMain.handle('updates:download', () => updates.openDownload());
 
   ipcMain.handle('settings:save', (_e, s) => {
+    if (typeof s?.participationRoot !== 'string') throw new Error('Invalid participation folder.');
+    const previousFolder = getSettings().participationRoot;
     settingsStore.set(settingsMod.mergeSettings(s));
+    if (previousFolder !== getSettings().participationRoot || (!participationWatcher && getSettings().participationRoot)) watchParticipation();
     return getSettings();
   });
 
@@ -133,7 +167,8 @@ function registerIpc() {
 
   ipcMain.handle('pbp:get', async (_e, { season, gameId, force }) => {
     const def = data.games ? schedule.defaultSelection(data.games.list) : null;
-    return data.loadGamePlays(season, gameId, { force, current: !def || season >= def.season });
+    const result = await data.loadGamePlays(season, gameId, { force, current: !def || season >= def.season, participationRoot: getSettings().participationRoot });
+    return { ...result, warning: [result.warning, participationWatchError].filter(Boolean).join(' ') };
   });
   ipcMain.handle('players:headshots', async (_e, ids) => {
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string' && /^[a-zA-Z0-9-]{1,32}$/.test(id))) {
@@ -184,6 +219,31 @@ function registerIpc() {
   ipcMain.handle('dialog:folder', async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Choose film folder', properties: ['openDirectory'] });
     return r.canceled ? null : r.filePaths[0];
+  });
+  ipcMain.handle('dialog:participation-folder', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Choose participation CSV folder', defaultPath: getSettings().participationRoot || app.getPath('downloads'),
+      properties: ['openDirectory'],
+    });
+    return r.canceled ? null : r.filePaths[0];
+  });
+
+  ipcMain.handle('data:export', async (_e, request) => {
+    reportOptions.validateReport(request, request?.plays?.length);
+    if (request.format !== 'csv' || !request.plays.length || request.plays.length > 1000) throw new Error('Invalid analysis export.');
+    const content = reportOptions.analysisCsv(request, request.layout);
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export play analysis CSV',
+      defaultPath: path.join(app.getPath('downloads'), `AMP22-${request.plays[0].gameId || 'game'}-${request.layout}.csv`),
+      filters: [{ name: 'CSV spreadsheet', extensions: ['csv'] }],
+    });
+    if (r.canceled) return { cancelled: true };
+    const destination = /\.csv$/i.test(r.filePath) ? r.filePath : `${r.filePath}.csv`;
+    // Analysis export must not replace its own participation input.
+    if (getSettings().participationRoot && path.resolve(path.dirname(destination)) === path.resolve(getSettings().participationRoot) &&
+        /^nflpro-/i.test(path.basename(destination))) throw new Error('Choose a filename outside the nflpro- import namespace.');
+    await playReports.saveReport(destination, Buffer.from(content));
+    return { path: destination };
   });
 
   ipcMain.handle('film:suggest', (_e, game) => {
@@ -312,6 +372,10 @@ app.whenReady().then(() => {
   const ud = app.getPath('userData');
   data = new DataService(path.join(ud, 'cache'), (url, options) => net.fetch(url, options));
   settingsStore = new JsonStore(path.join(ud, 'settings.json'), {});
+  if (!Object.hasOwn(settingsStore.get(), 'participationRoot')) {
+    const participationRoot = app.getPath('downloads');
+    settingsStore.set({ ...settingsStore.get(), participationRoot });
+  }
   gamesStore = new JsonStore(path.join(ud, 'games.json'), {});
   analysisDir = path.join(ud, 'analysis');
   updates = new UpdateService({
@@ -323,6 +387,7 @@ app.whenReady().then(() => {
   });
   registerIpc();
   createWindow();
+  watchParticipation();
   if (process.env.A22_DEV_SCRIPT) {
     Promise.resolve()
       .then(() => require(path.resolve(process.env.A22_DEV_SCRIPT))({ app, win, analysisDir }))
@@ -338,4 +403,8 @@ app.on('window-all-closed', () => {
   if (exporting) exporting.abort();
   if (headshotPreparation) headshotPreparation.abort();
   if (process.platform !== 'darwin') app.quit();
+});
+app.on('before-quit', () => {
+  participationWatcher?.close();
+  clearTimeout(participationTimer);
 });

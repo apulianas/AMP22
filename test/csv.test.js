@@ -12,3 +12,12 @@ test('parses header, quoted fields, embedded commas/quotes/newlines and CRLF', (
   assert.equal(rows[1].b, 'multi\nline');
   assert.equal(rows[1].c, '');
 });
+
+test('visits selected columns without retaining large source tables', () => {
+  const visited = [];
+  const result = parseCSV('\ufeffa,b,c\r\n1,"two,\nlines",3\r\n4,"a ""quote""",6',
+    { columns: ['b', 'missing'], onRow: row => visited.push(row) });
+  assert.deepEqual(result.header, ['a', 'b', 'c']);
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(visited, [{ b: 'two,\nlines', missing: '' }, { b: 'a "quote"', missing: '' }]);
+});

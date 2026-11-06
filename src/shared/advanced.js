@@ -152,6 +152,100 @@
     return !!(play.flags && (play.flags.pass || play.flags.qb_scramble || play.flags.sack));
   }
 
+  function playerKey(player) {
+    return player.id || (player.sourceId ? `nflpro:${player.sourceId}` : '');
+  }
+
+  const GENERIC_LINE = { T: ['LT', 'RT'], OT: ['LT', 'RT'], G: ['LG', 'RG'], OG: ['LG', 'RG'], OL: ['LT', 'LG', 'C', 'RG', 'RT'] };
+  const OFFENSE_ORDER = ['WR', 'RB', 'FB', 'TE', 'EL', 'QB', 'LT', 'LG', 'C', 'RG', 'RT', 'G', 'T', 'OL', 'K', 'P', 'LS'];
+  const DEFENSE_POSITIONS = { LDE: 'DE', RDE: 'DE', NT: 'DT', LDT: 'DT', RDT: 'DT',
+    LOLB: 'OLB', ROLB: 'OLB', MLB: 'ILB', FS: 'S', SS: 'S', SAF: 'S', DB: 'CB' };
+  const DEFENSE_POSITION_ORDER = ['DE', 'DT', 'DL', 'OLB', 'ILB', 'LB', 'CB', 'S', 'K', 'P', 'LS'];
+  const PLAYER_POSITION_ORDER = [...OFFENSE_ORDER.filter(position => !SPECIALISTS.includes(position)), ...DEFENSE_POSITION_ORDER];
+
+  function needsDepthPosition(player) {
+    return !!GENERIC_LINE[player.position];
+  }
+
+  function attachDepthPositions(play, charts) {
+    for (const player of play.onField?.offense || []) {
+      delete player.positionInference;
+      if (!needsDepthPosition(player) || !player.id) continue;
+      const chart = charts.get(play.posteam);
+      const record = chart?.players.get(player.id);
+      // A backup listed equally at both tackle/guard spots does not establish a side.
+      if (!record || record.positions.size !== 1) continue;
+      const position = [...record.positions][0];
+      if (GENERIC_LINE[player.position].includes(position)) {
+        player.positionInference = { position, source: chart.source, asOf: chart.asOf };
+      }
+    }
+  }
+
+  function annotateEligible(play) {
+    const players = play.onField?.offense || [];
+    for (const player of players) delete player.eligibleReceiver;
+    const linemen = players.filter(player => needsDepthPosition(player) || ['LT', 'LG', 'C', 'RG', 'RT'].includes(player.position));
+    if (linemen.length < 6) return;
+    for (const match of (play.desc || '').matchAll(/\b(\d{1,2})-[a-z][a-z.'-]*\s+reported in as eligible\b/gi)) {
+      const found = players.filter(player => int(player.number) === Number(match[1]));
+      if (found.length === 1 && linemen.includes(found[0])) found[0].eligibleReceiver = true;
+    }
+  }
+
+  function displayPosition(player) {
+    return player.eligibleReceiver ? 'OL-E' : player.positionInference?.position || player.position || '?';
+  }
+
+  function playerPositionRank(player, side) {
+    const order = side === 'offense' ? OFFENSE_ORDER : side === 'defense' ? DEFENSE_POSITION_ORDER : PLAYER_POSITION_ORDER;
+    let position = displayPosition(player);
+    if (player.eligibleReceiver) position = 'EL';
+    else {
+      if (side !== 'offense') position = DEFENSE_POSITIONS[position] || position;
+      if (side !== 'defense') position = { HB: 'RB', OT: 'T', OG: 'G' }[position] || position;
+    }
+    const i = order.indexOf(position);
+    return i < 0 ? order.length : i;
+  }
+
+  function orderedPlayers(play, side) {
+    return (play.onField?.[side] || []).slice().sort((a, b) => playerPositionRank(a, side) - playerPositionRank(b, side) ||
+      (int(a.number) ?? 100) - (int(b.number) ?? 100) || (a.name || '').localeCompare(b.name || '') ||
+      playerKey(a).localeCompare(playerKey(b)));
+  }
+
+  function inferPersonnel(play) {
+    if (!isScrimmage(play) || !play.onField) return;
+    const detail = (players, groups) => {
+      if (players?.length !== 11 || new Set(players.map(playerKey)).size !== 11 ||
+          players.some((p) => !playerKey(p) || !groups[p.position])) return '';
+      const counts = {};
+      for (const p of players) counts[p.position] = (counts[p.position] || 0) + 1;
+      return Object.entries(counts).map(([pos, n]) => `${n} ${pos}`).join(', ');
+    };
+    const offenseDetail = detail(play.onField.offense, OFFENSE_GROUPS);
+    const offenseGroups = group(parsePersonnel(offenseDetail), OFFENSE_GROUPS);
+    const standardOffense = offenseGroups.QB === 1 && offenseGroups.OL === 5;
+    const defenseDetail = detail(play.onField.defense, DEFENSE_GROUPS);
+    const defense = defenseDetail ? defensePackage(defenseDetail) : null;
+    play.inferredPersonnel = {
+      offense: standardOffense ? offenseCode(offenseDetail) : '',
+      offenseDetail, defense: defense?.label || '', front: defense?.front || '', defenseDetail,
+    };
+    if (play.inferredPersonnel.offense || defense) {
+      const personnel = { ...play.personnel };
+      if (!personnel.offense && play.inferredPersonnel.offense) {
+        Object.assign(personnel, { offense: play.inferredPersonnel.offense, offenseDetail, offenseInferred: true });
+      }
+      if (!personnel.defense && defense) {
+        Object.assign(personnel, { defense: defense.label, front: defense.front, defenseDetail, defenseInferred: true });
+      }
+      if (personnel.offenseInferred || personnel.defenseInferred) personnel.inferred = true;
+      play.personnel = personnel;
+    }
+  }
+
   /**
    * Adds `personnel`, `charting`, and `onField` to a normalized play from its participation
    * and FTN rows (either may be missing). Only scrimmage plays get advanced data.
@@ -231,6 +325,7 @@
 
   return {
     PARTICIPATION_FIRST_SEASON, CHARTING_FIRST_SEASON, PARTICIPATION_COLUMNS, CHARTING_COLUMNS, DEFENSE_ORDER,
-    parsePersonnel, offenseCode, defensePackage, coverageLabel, formationLabel, onFieldPlayers, attach, tags,
+    parsePersonnel, offenseCode, defensePackage, coverageLabel, formationLabel, onFieldPlayers, attach, tags, playerKey, inferPersonnel,
+    needsDepthPosition, attachDepthPositions, annotateEligible, displayPosition, playerPositionRank, orderedPlayers,
   };
 });

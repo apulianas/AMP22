@@ -36,7 +36,7 @@ const S = {
   filter: {
     type: 'all', text: '', offense: '', qtr: '', result: '',
     airMin: null, airMax: null, yardsMin: null, yardsMax: null, distMin: null, distMax: null,
-    choices: {}, // ADV_CHOICES key -> option value
+    choices: {}, // ADV_CHOICES key -> option value; player -> selected player IDs
   },
   visible: [], // play indices in list order
   progressFile: null,
@@ -199,6 +199,9 @@ async function loadGame(force) {
   const revision = S.filmRevision;
   S.game = S.games.find((g) => g.gameId === gameId) || null;
   S.plays = [];
+  S.participationNotice = '';
+  S.participationWarning = '';
+  renderParticipationStatus();
   S.mapping = [];
   S.curPlay = -1;
   S.selected.clear();
@@ -224,9 +227,11 @@ async function loadGame(force) {
       const r = await window.api.getPlays({ season: S.game.season, gameId, force });
       if (S.sel.gameId !== gameId || S.sel.team !== team || revision !== S.filmRevision) return;
       S.plays = r.plays;
+      S.participationWarning = r.warning || '';
       setStatus(r.warning || '', !!r.warning);
     } catch (e) {
       if (revision !== S.filmRevision) return;
+      S.participationWarning = e.message;
       setStatus(e.message, true);
     }
   }
@@ -275,7 +280,8 @@ function derivePlays() {
     p.key = P.keyReasons(p, S.settings.keyPlays);
     p.neg = P.negativeReasons(p, S.settings.keyPlays);
     p.box = P.boxScore(p);
-    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat} ${ADV.tags(p).join(' ')}`.toLowerCase();
+    const players = [...(p.onField?.offense || []), ...(p.onField?.defense || [])];
+    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat} ${ADV.tags(p).join(' ')} ${players.map((x) => `${x.name} ${x.position} ${x.number}`).join(' ')}`.toLowerCase();
   }
 }
 
@@ -502,6 +508,7 @@ const YES_NO = [['true', 'Yes'], ['false', 'No']];
  */
 const ADV_CHOICES = [
   { key: 'down', label: 'Down', get: (p) => p.down, options: [['1', '1st'], ['2', '2nd'], ['3', '3rd'], ['4', '4th']] },
+  { key: 'player', label: 'On-field player', get: (p) => [...(p.onField?.offense || []), ...(p.onField?.defense || [])].map(ADV.playerKey).filter(Boolean), options: 'players' },
   { key: 'offPersonnel', label: 'Off. personnel', get: (p) => p.personnel?.offense, options: 'values', title: 'RB count then TE count (11 = 1 RB, 1 TE, 3 WR)' },
   { key: 'defPackage', label: 'Def. package', get: (p) => p.personnel?.defense, options: 'values', order: ADV.DEFENSE_ORDER, title: '4 DBs: front (DL-LB); 5 DBs: Nickel; 6: Dime; 7+: Quarter; 3 or fewer: Goal line' },
   { key: 'qbLocation', label: 'QB alignment', get: (p) => p.charting?.qbLocation, options: 'values' },
@@ -520,19 +527,40 @@ const ADV_CHOICES = [
 ];
 
 function hasValue(v) {
+  if (Array.isArray(v)) return v.length > 0;
   return v != null && v !== '';
 }
 
 function choiceMatches(option, v) {
+  if (Array.isArray(option)) return option.every((selected) => choiceMatches(selected, v));
+  if (Array.isArray(v)) return v.includes(option);
   if (!hasValue(v)) return false;
   if (option.endsWith('+')) return Number(v) >= Number(option.slice(0, -1));
   if (option.startsWith('<=')) return Number(v) <= Number(option.slice(2));
   return String(v) === option;
 }
 
-function choiceOptions(spec) {
+function choiceOptions(spec, sourcePlays = S.plays) {
+  if (spec.options === 'players') {
+    const players = new Map();
+    for (const p of sourcePlays) {
+      for (const side of ['offense', 'defense']) {
+        for (const player of p.onField?.[side] || []) {
+          const key = ADV.playerKey(player);
+          const team = (side === 'offense' ? p.posteam : p.defteam) || '';
+          const listed = { position: player.position, positionInference: player.positionInference };
+          const position = player.position ? ADV.displayPosition(listed) + (player.positionInference ? '*' : '') : '';
+          if (key) players.set(key, {
+            name: player.name || key,
+            label: `${player.name || key} · ${team} ${position}`.trim(), team, positionRank: ADV.playerPositionRank(listed),
+          });
+        }
+      }
+    }
+    return [...players].map(([key, player]) => [key, player.label, player.name, player]).sort((a, b) => a[1].localeCompare(b[1]));
+  }
   if (spec.options !== 'values') return spec.options;
-  const values = [...new Set(S.plays.map(spec.get).filter(hasValue).map(String))];
+  const values = [...new Set(sourcePlays.map(spec.get).filter(hasValue).map(String))];
   const rank = (v) => (spec.order && spec.order.includes(v) ? spec.order.indexOf(v) : Infinity);
   values.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
   return values.map((v) => [v, v]);
@@ -541,7 +569,8 @@ function choiceOptions(spec) {
 function activeAdvancedCount() {
   const f = S.filter;
   const ranges = Object.keys(RANGE_FILTERS).filter((k) => f[`${k}Min`] != null || f[`${k}Max`] != null).length;
-  return ranges + Object.values(f.choices).filter(Boolean).length;
+  return ranges + Object.values(f.choices).reduce((count, value) =>
+    count + (Array.isArray(value) ? value.length : value ? 1 : 0), 0);
 }
 
 function updateAdvancedIndicator() {
@@ -549,6 +578,53 @@ function updateAdvancedIndicator() {
   const el = $('adv-filter-active');
   el.hidden = !n;
   el.textContent = `· ${n} active`;
+}
+
+function renderPlayerFilter() {
+  const el = $('player-choice');
+  if (!el) return;
+  const spec = ADV_CHOICES.find(({ key }) => key === 'player');
+  const all = choiceOptions(spec);
+  const selected = S.filter.choices.player || [];
+  const scoped = choiceOptions(spec, S.plays.filter(p => passesFilter(p, 'player')));
+  const remaining = scoped.filter(([id]) => !selected.includes(id));
+  const counts = new Map();
+  for (const play of S.plays) {
+    if (!passesFilter(play)) continue;
+    for (const id of new Set(spec.get(play))) counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  const available = remaining.filter(([id]) => (counts.get(id) || 0) > 0);
+  const mode = S.settings.playerFilterSort;
+  const analyzed = S.sel.team || S.settings.defaultTeam;
+  const groups = new Map();
+  for (const option of available) {
+    const team = option[3].team || '';
+    if (!groups.has(team)) groups.set(team, []);
+    groups.get(team).push(option);
+  }
+  const teamRank = team => team === analyzed ? 0 : team ? 1 : 2;
+  const groupHtml = [...groups].sort(([a], [b]) => teamRank(a) - teamRank(b) || a.localeCompare(b))
+    .map(([team, options]) => {
+      options.sort((a, b) => (mode === 'position' ? a[3].positionRank - b[3].positionRank : 0) ||
+        (mode === 'plays' || mode === 'position' ? (counts.get(b[0]) || 0) - (counts.get(a[0]) || 0) : 0) ||
+        a[2].localeCompare(b[2]) || a[0].localeCompare(b[0]));
+      return `<optgroup label="${esc(team ? `${team}${team === analyzed ? ' · Analyzed team' : ''}` : 'Unknown team')}">` +
+        options.map(([id, label]) => {
+          const count = counts.get(id) || 0;
+          return `<option value="${esc(id)}">${esc(label)} (${count} ${count === 1 ? 'play' : 'plays'})</option>`;
+        }).join('') + '</optgroup>';
+    }).join('');
+  const placeholder = available.length ? 'Add player…' : remaining.length || !scoped.length ? 'No players match these filters' : 'All players selected';
+  const html = `<label for="on-field-player">On-field players<select id="on-field-player" data-choice="player" aria-describedby="on-field-player-help"${available.length ? '' : ' disabled'}>` +
+    `<option value="">${placeholder}</option>` +
+    groupHtml +
+    `</select></label><ul class="player-filter-tags" aria-label="Selected on-field players">` +
+    selected.map((id) => {
+      const name = all.find(([v]) => v === id)?.[2] || id;
+      return `<li class="player-filter-tag"><span title="${esc(name)}">${esc(name)}</span>` +
+        `<button type="button" data-remove-player="${esc(id)}" aria-label="Remove ${esc(name)} from on-field filter" title="Remove ${esc(name)}">&times;</button></li>`;
+    }).join('') + `</ul><small id="on-field-player-help" class="muted">Match all selected players. Counts include other filters. Only matching players are listed.</small>`;
+  if (el.innerHTML !== html) el.innerHTML = html;
 }
 
 /** Builds the select filters available for the loaded game, dropping selections it can't satisfy. */
@@ -559,17 +635,44 @@ function renderAdvancedFilters() {
     if (!S.plays.some((p) => hasValue(spec.get(p)))) continue;
     const opts = choiceOptions(spec);
     const cur = S.filter.choices[spec.key];
+    if (spec.options === 'players') {
+      const selected = [...new Set(Array.isArray(cur) ? cur : cur ? [cur] : [])].filter((id) => opts.some(([v]) => v === id));
+      if (selected.length) choices[spec.key] = selected;
+      html.push('<div id="player-choice" class="player-choice"></div>');
+      continue;
+    }
     if (cur && opts.some(([v]) => v === cur)) choices[spec.key] = cur;
     html.push(`<label${spec.title ? ` title="${esc(spec.title)}"` : ''}>${esc(spec.label)}<select data-choice="${spec.key}">` +
       `<option value="">Any</option>${opts.map(([v, l]) => `<option value="${esc(v)}"${choices[spec.key] === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`);
   }
   S.filter.choices = choices;
   $('adv-choices').innerHTML = html.join('');
+  renderPlayerFilter();
   $('adv-note').hidden = !S.plays.length || S.plays.some((p) => p.personnel || p.charting);
   updateAdvancedIndicator();
 }
 
-function passesFilter(p) {
+function setAdvancedChoice(key, value) {
+  if (key === 'player') {
+    if (!value) return;
+    S.filter.choices.player = [...new Set([...(S.filter.choices.player || []), value])];
+    renderAdvancedFilters();
+    $('on-field-player').focus();
+  } else {
+    S.filter.choices[key] = value;
+  }
+  updateAdvancedIndicator();
+  renderList();
+}
+
+function removePlayerFilter(id) {
+  S.filter.choices.player = (S.filter.choices.player || []).filter((selected) => selected !== id);
+  renderAdvancedFilters();
+  renderList();
+  $('on-field-player').focus();
+}
+
+function passesFilter(p, excludedChoice) {
   const f = S.filter;
   if (['run', 'pass', 'special'].includes(f.type) && p.cat !== f.type) return false;
   if (f.offense && p.posteam !== f.offense) return false;
@@ -585,6 +688,7 @@ function passesFilter(p) {
     if (max != null && v > max) return false;
   }
   for (const spec of ADV_CHOICES) {
+    if (spec.key === excludedChoice) continue;
     const option = f.choices[spec.key];
     if (option && !choiceMatches(option, spec.get(p))) return false;
   }
@@ -599,6 +703,23 @@ function renderQuarters() {
   const opts = [{ value: '', label: 'All quarters' }].concat(qs.map((q) => ({ value: String(q), label: q >= 5 ? (q === 5 ? 'OT' : `OT${q - 4}`) : `Q${q}` })));
   if (!opts.some((o) => o.value === S.filter.qtr)) S.filter.qtr = '';
   fillSelect($('sel-qtr'), opts, S.filter.qtr);
+}
+
+function renderParticipationStatus() {
+  const imported = S.plays.filter((p) => p.participation?.source === 'NFL Pro');
+  const el = $('participation-status');
+  el.hidden = !S.game || (!S.settings.participationRoot && !imported.length);
+  if (el.hidden) return;
+  const complete = imported.filter((p) => p.participation.status === 'complete').length;
+  const summary = imported.length
+    ? `NFL Pro: ${imported.length} ${imported.length === 1 ? 'play' : 'plays'} imported · ${complete} complete, ${imported.length - complete} partial`
+    : 'NFL Pro: no matching plays imported yet';
+  const notice = S.participationWarning
+    ? `Data warning: ${S.participationWarning}`
+    : S.participationNotice || 'Watching the configured CSV folder. No manual refresh needed.';
+  if ($('participation-summary').textContent !== summary) $('participation-summary').textContent = summary;
+  if ($('participation-notice').textContent !== notice) $('participation-notice').textContent = notice;
+  el.classList.toggle('warning', !!S.participationWarning);
 }
 
 function renderList() {
@@ -634,6 +755,8 @@ function renderList() {
     : '';
   scrollToSelected();
   updateSelection();
+  renderParticipationStatus();
+  renderPlayerFilter();
 }
 
 function boxHtml(p) {
@@ -649,23 +772,32 @@ function personnelHtml(p) {
   const pers = p.personnel;
   if (!pers || (!pers.offense && !pers.defense)) return '';
   const text = [pers.offense, pers.defense].filter(Boolean).join(' v ');
-  return `<span class="pers" title="Offensive personnel v defensive package">${esc(text)}</span>`;
+  return `<span class="pers" title="${pers.inferred ? 'Inferred from listed player positions, not charted alignment' : 'Offensive personnel v defensive package'}">${esc(text)}${pers.inferred ? '*' : ''}</span>`;
 }
 
 function playerLine(pl) {
   const num = pl.number ? `#${pl.number} ` : '';
-  return `<li><span class="pos">${esc(pl.position || '?')}</span>${esc(num)}${esc(pl.name || `Unknown player${pl.id ? ` (${pl.id})` : ''}`)}</li>`;
+  const inferred = !pl.eligibleReceiver && pl.positionInference;
+  const title = pl.eligibleReceiver ? `Eligible lineman reported in play description; listed ${pl.position}` :
+    inferred ? `${inferred.source}, ${inferred.asOf}; inferred, not confirmed snap alignment; listed ${pl.position}` : `Listed position: ${pl.position || 'unknown'}`;
+  return `<li><span class="pos" title="${esc(title)}">${esc(ADV.displayPosition(pl))}${inferred ? '*' : ''}</span>${esc(num)}${esc(pl.name || `Unknown player${pl.id ? ` (${pl.id})` : ''}`)}</li>`;
 }
 
 function renderAdvancedInfo(p) {
   const tags = p ? ADV.tags(p) : [];
+  if (p?.personnel?.inferred) tags.push('Personnel inferred from positions');
+  if (p?.participation) tags.push(`${p.participation.source} participation · ${p.participation.status}`);
   $('play-adv').innerHTML = tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('');
   const onField = p && p.onField;
   const box = $('on-field');
   box.hidden = !onField;
   if (!onField) return;
-  const side = (title, list) => `<div><h4>${esc(title)}</h4><ul>${list.map(playerLine).join('')}</ul></div>`;
-  $('on-field-lists').innerHTML = side(`${p.posteam} offense`, onField.offense) + side(`${p.defteam} defense`, onField.defense);
+  const side = (title, key) => `<div><h4>${esc(title)}</h4><ul>${ADV.orderedPlayers(p, key).map(playerLine).join('')}</ul></div>`;
+  const notes = [];
+  if (onField.offense.some(player => player.positionInference)) notes.push('* Depth-chart inference, not confirmed snap alignment.');
+  if (onField.offense.some(player => player.eligibleReceiver)) notes.push('OL-E: extra lineman explicitly reported eligible in the play description.');
+  $('on-field-lists').innerHTML = side(`${p.posteam} offense`, 'offense') + side(`${p.defteam} defense`, 'defense') +
+    (notes.length ? `<p class="position-note muted">${esc(notes.join(' '))}</p>` : '');
 }
 
 function driveHeader(p) {
@@ -928,6 +1060,7 @@ function updateSelection() {
   $('btn-clear-selection').disabled = !S.selected.size;
   $('btn-multi-select').setAttribute('aria-pressed', String(multi));
   $('btn-share').disabled = S.exporting || !S.selected.size || !S.film || !S.pairs.length;
+  $('btn-export-data').disabled = !S.plays.length;
   $('play-list').querySelectorAll('li[data-i]').forEach((el) => {
     const selected = S.selected.has(Number(el.dataset.i));
     el.classList.toggle('export-selected', selected && multi);
@@ -1929,8 +2062,10 @@ function renderSettings() {
   $('set-jump').value = draft.jumpFrames;
   $('set-end').value = draft.endOfPlay;
   $('set-speeds').value = draft.speeds.join(', ');
+  $('set-player-sort').value = draft.playerFilterSort;
   fillSelect($('set-team'), Object.keys(A22.teams.TEAMS).filter((t) => !['OAK', 'SD', 'STL'].includes(t)).sort().map((t) => ({ value: t, label: `${t} – ${A22.teams.teamName(t)}` })), draft.defaultTeam);
   $('set-root').value = draft.filmRoot || '';
+  $('set-participation-root').value = draft.participationRoot || '';
   $('set-auto').checked = draft.autoAnalyze;
   $('set-skipnofilm').checked = draft.skipNoFilm;
   $('set-cut').value = draft.cutThreshold;
@@ -1969,7 +2104,9 @@ function readSettingsForm() {
   d.endOfPlay = $('set-end').value;
   d.speeds = $('set-speeds').value.split(/[,\s]+/).map(Number).filter((x) => x > 0 && x <= 4);
   d.defaultTeam = $('set-team').value;
+  d.playerFilterSort = $('set-player-sort').value;
   d.filmRoot = $('set-root').value;
+  d.participationRoot = $('set-participation-root').value;
   d.autoAnalyze = $('set-auto').checked;
   d.skipNoFilm = $('set-skipnofilm').checked;
   d.exportTrim = $('set-export-trim').valueAsNumber;
@@ -2104,6 +2241,30 @@ function wire() {
   $('btn-settings').addEventListener('click', () => { draft = null; toggleOverlay('settings', true); });
   $('btn-help').addEventListener('click', () => toggleOverlay('help'));
   $('btn-share').addEventListener('click', openShare);
+  $('btn-export-data').addEventListener('click', () => {
+    $('data-export-status').textContent = '';
+    toggleOverlay('analysis-export', true);
+  });
+  $('data-export-close').addEventListener('click', () => toggleOverlay('analysis-export', false));
+  $('data-export-save').addEventListener('click', async () => {
+    const scope = $('data-scope').value;
+    const indices = scope === 'all' ? S.plays.map((_p, i) => i) :
+      scope === 'selected' ? S.plays.map((_p, i) => i).filter((i) => S.selected.has(i)) : S.visible;
+    if (!indices.length) {
+      $('data-export-status').textContent = 'No plays in this selection.';
+      return;
+    }
+    $('data-export-save').disabled = true;
+    try {
+      const r = await window.api.exportData({
+        ...REPORT.mergeOptions(), format: 'csv', layout: $('data-layout').value,
+        matchup: `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}`,
+        team: S.sel.team, plays: indices.map((i) => S.plays[i]),
+      });
+      $('data-export-status').textContent = r.cancelled ? 'Export cancelled.' : `Saved ${indices.length} plays to ${r.path}`;
+    } catch (e) { $('data-export-status').textContent = `Export failed: ${e.message}`; }
+    finally { $('data-export-save').disabled = false; }
+  });
   $('film-setup-toggle').addEventListener('click', () => {
     pause();
     S.filmSetupOpen = true;
@@ -2312,10 +2473,12 @@ function wire() {
   $('adv-choices').addEventListener('change', (e) => {
     const key = e.target.dataset.choice;
     if (!key) return;
-    S.filter.choices[key] = e.target.value;
     e.target.blur();
-    updateAdvancedIndicator();
-    renderList();
+    setAdvancedChoice(key, e.target.value);
+  });
+  $('adv-choices').addEventListener('click', (e) => {
+    const button = e.target.closest('[data-remove-player]');
+    if (button) removePlayerFilter(button.dataset.removePlayer);
   });
 
   const scrub = $('scrub');
@@ -2361,6 +2524,11 @@ function wire() {
     if (f) $('set-root').value = f;
   });
   $('set-root-clear').addEventListener('click', () => { $('set-root').value = ''; });
+  $('set-participation-btn').addEventListener('click', async () => {
+    const folder = await window.api.chooseParticipationFolder();
+    if (folder) $('set-participation-root').value = folder;
+  });
+  $('set-participation-clear').addEventListener('click', () => { $('set-participation-root').value = ''; });
   $('shortcut-table').addEventListener('click', (e) => {
     const t = e.target;
     if (!t.dataset.id) return;
@@ -2378,7 +2546,9 @@ function wire() {
     renderShortcutTable();
   });
   $('set-reset').addEventListener('click', () => {
-    draft = JSON.parse(JSON.stringify(Object.assign({}, DEFAULT_SETTINGS, { filmRoot: $('set-root').value })));
+    draft = JSON.parse(JSON.stringify(Object.assign({}, DEFAULT_SETTINGS, {
+      filmRoot: $('set-root').value, participationRoot: $('set-participation-root').value,
+    })));
     capture = null;
     renderSettings();
   });
@@ -2396,9 +2566,44 @@ function wire() {
     draft = null;
     capture = null;
     toggleOverlay('settings', false);
+    if (prev.participationRoot !== S.settings.participationRoot) await refreshParticipation();
     if (prev.filmRoot !== S.settings.filmRoot && S.game && !S.gameData.filmPath) loadGame();
     if (prev.cutThreshold !== S.settings.cutThreshold && S.film && confirm('Cut sensitivity changed. Re-analyze this film now?')) analyze(true);
   });
+}
+
+let participationRevision = 0;
+async function refreshParticipation(automatic = false) {
+  if (!S.game) return;
+  const gameId = S.game.gameId;
+  const revision = ++participationRevision;
+  const filmRevision = S.filmRevision;
+  const before = JSON.stringify(S.plays.map((p) => [p.playId, p.participation, p.onField]));
+  S.participationNotice = automatic ? 'Checking imports automatically…' : 'Checking imports…';
+  renderParticipationStatus();
+  try {
+    const r = await window.api.getPlays({ season: S.game.season, gameId });
+    if (revision !== participationRevision || S.game?.gameId !== gameId || filmRevision !== S.filmRevision) return;
+    const current = S.plays[S.curPlay]?.playId;
+    const selected = new Set([...S.selected].map((i) => S.plays[i]?.playId));
+    S.plays = r.plays;
+    const changed = before !== JSON.stringify(S.plays.map((p) => [p.playId, p.participation, p.onField]));
+    S.participationWarning = r.warning || '';
+    S.participationNotice = `${automatic && changed ? 'Updated automatically' : automatic ? 'Checked automatically' : 'Imports checked'} at ${new Date().toLocaleTimeString()}.`;
+    S.curPlay = S.plays.findIndex((p) => p.playId === current);
+    S.selected = new Set(S.plays.map((_p, i) => i).filter((i) => selected.has(S.plays[i].playId)));
+    derivePlays();
+    realign();
+    renderAdvancedFilters();
+    renderList();
+    renderInfo();
+    setStatus(r.warning || 'Participation imports refreshed.', !!r.warning);
+  } catch (e) {
+    if (revision !== participationRevision || S.game?.gameId !== gameId || filmRevision !== S.filmRevision) return;
+    S.participationWarning = e.message;
+    renderParticipationStatus();
+    setStatus(`Participation import failed: ${e.message}`, true);
+  }
 }
 
 /* ---------------- boot ---------------- */
@@ -2409,6 +2614,7 @@ function wire() {
   $('app-version').textContent = `AMP22 ${init.version}`;
   $('share-reveal').textContent = init.platform === 'darwin' ? 'Show in Finder' : init.platform === 'win32' ? 'Show in File Explorer' : 'Show in folder';
   applySettings(init.settings);
+  window.api.onParticipationChanged(() => refreshParticipation(true));
   checkUpdates(true);
   if (await loadSchedule(false)) await loadGame(false);
 })();

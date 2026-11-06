@@ -19,6 +19,7 @@
     <span id="status" class="muted"></span>
     <button id="btn-update" class="primary" hidden>Update available</button>
     <button id="btn-share" disabled title="Export selected plays as a video clip">Share</button>
+    <button id="btn-export-data" disabled title="Export play statistics and participation without film">Export data</button>
     <button id="btn-refresh" title="Re-download schedule and play-by-play">⟳</button>
     <button id="btn-settings" title="Settings">⚙</button>
     <button id="btn-help" data-shortcut="help" title="Keyboard shortcuts">?</button>
@@ -89,6 +90,10 @@
           </div>
           <button id="btn-multi-select" aria-pressed="false" title="Toggle multi-select, or Shift-click a play to select a range">Multi-select</button>
         </div>
+      </div>
+      <div id="participation-status" hidden role="status" aria-live="polite" aria-atomic="true">
+        <strong id="participation-summary"></strong>
+        <span id="participation-notice"></span>
       </div>
       <div id="selection-bar" class="row" hidden>
         <span id="selection-count" class="muted" hidden>0 selected</span>
@@ -293,6 +298,18 @@
     </div>
   </div>
 
+  <div id="analysis-export" class="overlay" hidden>
+    <div class="panel">
+      <h2>Export analysis CSV</h2>
+      <p>Export game data without film. All available statistics and participation are included; missing values remain blank.</p>
+      <label>Plays <select id="data-scope"><option value="visible">Filtered plays</option><option value="all">Entire game</option><option value="selected">Selected plays</option></select></label>
+      <label>Rows <select id="data-layout"><option value="plays">One row per play</option><option value="players">One row per player per play</option></select></label>
+      <p class="muted small">Player rows repeat the play's statistics for joins and Excel analysis. Do not sum repeated play statistics without deduplicating by game and play ID.</p>
+      <p id="data-export-status" role="status"></p>
+      <div class="row"><button id="data-export-save" class="primary">Save CSV…</button><button id="data-export-close">Close</button></div>
+    </div>
+  </div>
+
   <div id="settings" class="overlay" hidden>
     <div class="panel wide">
       <h2>Settings</h2>
@@ -308,8 +325,19 @@
         </label>
         <label>Slow-motion speeds <input id="set-speeds" type="text" placeholder="1, 0.5, 0.25" /></label>
         <label>Default team <select id="set-team"></select></label>
+        <label id="player-filter-preference" class="span2">On-field player dropdown order
+          <select id="set-player-sort">
+            <option value="name">Alphabetical</option>
+            <option value="plays">Most matching plays first</option>
+            <option value="position">Position, then most matching plays</option>
+          </select>
+          <small class="muted">The team being analyzed is always listed first. Play counts follow the active filters and selected players.</small>
+        </label>
         <label class="span2">Film folder (used to auto-find A22 files)
           <span class="row"><input id="set-root" type="text" readonly /><button id="set-root-btn">Choose…</button><button id="set-root-clear">Clear</button></span>
+        </label>
+        <label class="span2">Participation CSV folder (automatically imports nflpro-*.csv)
+          <span class="row"><input id="set-participation-root" type="text" readonly /><button id="set-participation-btn">Choose…</button><button id="set-participation-clear">Disable</button></span>
         </label>
         <label><input id="set-auto" type="checkbox" /> Analyze film automatically when opened</label>
         <label><input id="set-skipnofilm" type="checkbox" /> Next/previous play skips plays without film</label>

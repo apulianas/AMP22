@@ -150,6 +150,7 @@ async function analyzeFilm(file, { onProgress = () => {}, signal, cutThreshold =
   const info = await probe(file);
   onProgress({ phase: 'scan', fraction: 0, message: 'Detecting camera cuts' });
   const candidates = await detectScenes(file, info.duration, {
+    candidateThreshold: Math.min(0.06, cutThreshold),
     signal,
     onProgress: (f) => onProgress({ phase: 'scan', fraction: f, message: 'Detecting camera cuts' }),
   });
