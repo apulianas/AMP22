@@ -6,7 +6,7 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
-const { DataService, PBP_URL, PLAYERS_URL, PARTICIPATION_URL, CHARTING_URL } = require('../src/main/data');
+const { DataService, PBP_URL, PLAYERS_URL, PARTICIPATION_URL, CHARTING_URL, DEPTH_CHARTS_URL } = require('../src/main/data');
 const { PBP_COLUMNS } = require('../src/shared/plays');
 
 test('old parsed caches rebuild air yards from downloaded play-by-play without a network request', async () => {
@@ -107,4 +107,62 @@ test('a missing advanced-data file for the current season leaves plays unchanged
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('depth charts enrich local imports after merging, reuse the season index and visibly handle offline or malformed data', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'amp22-depth-'));
+  const gameId = '2026_09_JAX_BAL';
+  const game = { gameId, season: 2026, gameType: 'REG', week: 9, gameday: '2026-11-05', homeTeam: 'BAL', awayTeam: 'JAX' };
+  const desc = '76-C.Vinson reported in as eligible. Run.';
+  const schema = require('../src/shared/participation');
+  const roster = ['T', 'T', 'G', 'G', 'C', 'T'].map((position, i) => ({
+    schema_version: '1', season: '2026', season_type: 'REG', week: '9', home_team: 'BAL', away_team: 'JAX',
+    source_game_id: 'source', source_play_id: '1', quarter: '1', clock: '10:00', down: '1', yards_to_go: '10',
+    description: desc, side: 'offense', team: 'BAL', source_player_id: `source-${i}`, gsis_id: `00-${i}`,
+    name: `Player ${i}`, jersey_number: String(i ? i : 76), position, captured_at: '2026-11-06T15:00:00Z',
+  }));
+  const text = 'dt,team,gsis_id,pos_abb,pos_rank\n2026-11-05T15:23:13Z,BAL,00-1,RT,1\n';
+  const requests = [];
+  let download = async () => new Response(zlib.gzipSync(text));
+  const service = new DataService(dir, async url => { requests.push(url); return download(); });
+  service.games = { list: [game] };
+  service.loadSeasonPbp = async () => ({ data: { games: { [gameId]: [
+    { game_id: gameId, play_id: '1', qtr: '1', time: '10:00', down: '1', ydstogo: '10',
+      posteam: 'BAL', defteam: 'JAX', play_type: 'run', rush: '1', desc },
+  ] } } });
+  service.attachAdvanced = async (_s, _g, list) => {
+    list[0].onField = { offense: [{ id: 'historical', position: 'C' }], defense: [] };
+    return [];
+  };
+  try {
+    await fs.writeFile(path.join(dir, 'nflpro-source.csv'), schema.csv(roster));
+    const options = { participationRoot: dir };
+    const first = await service.loadGamePlays(2026, gameId, options);
+    assert.equal(first.warning, undefined);
+    assert.equal(first.plays[0].onField.offense[0].eligibleReceiver, true);
+    assert.equal(first.plays[0].onField.offense[1].position, 'T');
+    assert.equal(first.plays[0].onField.offense[1].positionInference.position, 'RT');
+    assert.deepEqual(requests, [DEPTH_CHARTS_URL(2026)]);
+    const index = service.depthCharts.get(2026);
+    await service.loadGamePlays(2026, gameId, options);
+    assert.equal(service.depthCharts.get(2026), index);
+    assert.equal(requests.length, 1, 'automatic refresh uses the existing download and index');
+
+    const stale = new Date(Date.now() - 7 * 3600e3);
+    await fs.utimes(path.join(dir, 'depth_charts_2026.csv.gz'), stale, stale);
+    download = async () => { throw new Error('Network unavailable'); };
+    const offline = await service.loadGamePlays(2026, gameId, options);
+    assert.match(offline.warning, /Using cached data/);
+    assert.equal(offline.plays[0].onField.offense[1].positionInference.position, 'RT');
+
+    download = async () => new Response(zlib.gzipSync('wrong,header\nx,y\n'));
+    const malformed = await service.loadGamePlays(2026, gameId, { ...options, force: true });
+    assert.match(malformed.warning, /Unsupported depth-chart columns.*listed positions retained/);
+    assert.equal(malformed.plays[0].onField.offense[1].position, 'T');
+    assert.equal(malformed.plays[0].onField.offense[1].positionInference, undefined);
+    assert.equal(malformed.plays[0].onField.offense[0].eligibleReceiver, true);
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(service.loadGamePlays(2026, gameId, { ...options, signal: controller.signal }), /abort/i);
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });

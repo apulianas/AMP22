@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld('api', {
   saveGame: (gameId, patch) => ipcRenderer.invoke('game:save', gameId, patch),
   chooseFilm: (opts) => ipcRenderer.invoke('dialog:film', opts),
   chooseFolder: () => ipcRenderer.invoke('dialog:folder'),
+  chooseParticipationFolder: () => ipcRenderer.invoke('dialog:participation-folder'),
+  exportData: (request) => ipcRenderer.invoke('data:export', request),
+  onParticipationChanged: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('participation:changed', h);
+    return () => ipcRenderer.removeListener('participation:changed', h);
+  },
   suggestFilm: (game) => ipcRenderer.invoke('film:suggest', game),
   openFilm: (file) => ipcRenderer.invoke('film:open', file),
   analyzeFilm: (file, force) => ipcRenderer.invoke('film:analyze', { file, force }),

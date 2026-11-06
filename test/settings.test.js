@@ -5,6 +5,17 @@ const s = require('../src/shared/settings');
 
 const ev = (key, mods = {}) => Object.assign({ key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, mods);
 
+test('player dropdown ordering defaults to alphabetical and persists only supported preferences', () => {
+  assert.equal(s.mergeSettings({}).playerFilterSort, 'name');
+  for (const playerFilterSort of ['name', 'plays', 'position']) {
+    const settings = s.mergeSettings({ playerFilterSort, defaultTeam: 'JAX' });
+    assert.equal(s.mergeSettings(JSON.parse(JSON.stringify(settings))).playerFilterSort, playerFilterSort);
+    assert.equal(settings.defaultTeam, 'JAX');
+  }
+  for (const playerFilterSort of [null, '', 'invalid', 2, {}, ['plays']]) {
+    assert.equal(s.mergeSettings({ playerFilterSort }).playerFilterSort, 'name');
+  }
+});
 test('overlay defaults and named locations round-trip without accepting malformed positions', () => {
   const position = { preset: 'custom', x: 0.125, y: 0.75 };
   const saved = s.mergeSettings({

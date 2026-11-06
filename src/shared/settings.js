@@ -34,7 +34,9 @@
     endOfPlay: 'stop', // 'stop' | 'advance' | 'loop'
     speeds: [1, 0.5, 0.25],
     defaultTeam: 'BAL',
+    playerFilterSort: 'name',
     filmRoot: '',
+    participationRoot: '',
     autoAnalyze: true,
     cutThreshold: 0.1,
     skipNoFilm: true,
@@ -95,6 +97,7 @@
     const jf = Math.round(Number(out.jumpFrames));
     out.jumpFrames = jf >= 1 && jf <= 600 ? jf : DEFAULT_SETTINGS.jumpFrames;
     if (!['stop', 'advance', 'loop'].includes(out.endOfPlay)) out.endOfPlay = 'stop';
+    if (!['name', 'plays', 'position'].includes(out.playerFilterSort)) out.playerFilterSort = DEFAULT_SETTINGS.playerFilterSort;
     if (!Array.isArray(out.speeds) || !out.speeds.length || out.speeds.some((x) => !(x > 0 && x <= 4))) out.speeds = DEFAULT_SETTINGS.speeds.slice();
     return out;
   }

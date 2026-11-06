@@ -7,12 +7,15 @@ const { parseCSV } = require('../shared/csv');
 const schedule = require('../shared/schedule');
 const plays = require('../shared/plays');
 const advanced = require('../shared/advanced');
+const { attachImports } = require('./participation');
+const { indexDepthCharts, chartForGame } = require('./depthcharts');
 
 const GAMES_URL = 'https://github.com/nflverse/nfldata/raw/master/data/games.csv';
 const PBP_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_${y}.csv.gz`;
 const PLAYERS_URL = 'https://github.com/nflverse/nflverse-data/releases/download/players/players.csv';
 const PARTICIPATION_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/pbp_participation/pbp_participation_${y}.csv`;
 const CHARTING_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/ftn_charting/ftn_charting_${y}.csv`;
+const DEPTH_CHARTS_URL = (y) => `https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_${y}.csv.gz`;
 const HOUR = 3600e3;
 
 /** Downloads and caches nflverse schedule + play-by-play for offline use. */
@@ -25,6 +28,7 @@ class DataService {
     this.playerLoad = null;
     this.tables = new Map(); // `${kind}_${season}` -> {mtimeMs, columns, games: {gameId: {playId: row}}}
     this.tableFailures = new Map(); // `${kind}_${season}` -> time of last failed download
+    this.depthCharts = new Map();
     fs.mkdirSync(cacheDir, { recursive: true });
   }
 
@@ -204,9 +208,37 @@ class DataService {
     const rows = data.games[gameId];
     if (!rows) return { plays: [], warning: warning || `No play-by-play yet for ${gameId}` };
     const list = plays.gamePlays(rows);
-    const warnings = [warning, ...await this.attachAdvanced(season, gameId, list, opts)].filter(Boolean);
+    const game = this.games?.list.find((g) => g.gameId === gameId);
+    const warnings = [warning, ...await this.attachAdvanced(season, gameId, list, opts),
+      ...attachImports(opts.participationRoot, game, list)].filter(Boolean);
+    for (const play of list) advanced.annotateEligible(play);
+    const teams = new Set(list.filter(p => p.posteam &&
+      p.onField?.offense?.some(player => player.id && advanced.needsDepthPosition(player))).map(p => p.posteam));
+    if (game && teams.size) {
+      try {
+        const r = await this.cached(DEPTH_CHARTS_URL(season), `depth_charts_${season}.csv.gz`,
+          opts.current === false ? 30 * 24 * HOUR : 6 * HOUR, opts.force, { signal: opts.signal, timeoutMs: 30000 });
+        if (r.warning) warnings.push(r.warning);
+        const mtimeMs = fs.statSync(r.path).mtimeMs;
+        let cached = this.depthCharts.get(season);
+        if (!cached || cached.mtimeMs !== mtimeMs) {
+          cached = { mtimeMs, index: indexDepthCharts(zlib.gunzipSync(fs.readFileSync(r.path)).toString('utf8')) };
+          this.depthCharts.set(season, cached);
+        }
+        const charts = new Map();
+        for (const team of teams) {
+          const chart = chartForGame(cached.index, game, team);
+          if (chart) charts.set(team, chart);
+          else warnings.push(`No matching depth chart as of this game for ${team}; listed positions retained.`);
+        }
+        for (const play of list) advanced.attachDepthPositions(play, charts);
+      } catch (e) {
+        if (opts.signal?.aborted) throw e;
+        warnings.push(`Depth-chart position inference unavailable (${e.message}); listed positions retained.`);
+      }
+    }
     return { plays: list, warning: [...new Set(warnings)].join(' · ') || undefined };
   }
 }
 
-module.exports = { DataService, GAMES_URL, PBP_URL, PLAYERS_URL, PARTICIPATION_URL, CHARTING_URL };
+module.exports = { DataService, GAMES_URL, PBP_URL, PLAYERS_URL, PARTICIPATION_URL, CHARTING_URL, DEPTH_CHARTS_URL };

@@ -3,7 +3,7 @@
 /**
  * Minimal, fast RFC-4180 CSV parser.
  * @param {string} text
- * @param {{columns?: string[]}} [opts] Restrict output objects to these columns (missing -> '').
+ * @param {{columns?: string[], onRow?: function(object): void}} [opts] Restrict columns or visit rows without retaining them.
  * @returns {{header: string[], rows: object[]}}
  */
 function parseCSV(text, opts = {}) {
@@ -28,7 +28,8 @@ function parseCSV(text, opts = {}) {
       } else {
         for (let k = 0; k < header.length; k++) obj[header[k]] = k < row.length ? row[k] : '';
       }
-      rows.push(obj);
+      if (opts.onRow) opts.onRow(obj);
+      else rows.push(obj);
     }
     row = [];
   }

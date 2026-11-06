@@ -34,7 +34,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -49,6 +49,432 @@ function renderer() {
   api.derivePlays();
   return { ...api, elements, context, visible: () => Array.from(api.S.visible) };
 }
+
+test('on-field filter matches stable IDs instead of description mentions and composes with other filters', () => {
+  const r = renderer();
+  r.S.plays[0].onField = { offense: [{ id: '00-1', name: 'Blocking Receiver', position: 'WR', number: '11' }], defense: [] };
+  r.S.plays[2].onField = { offense: [], defense: [{ id: '00-1', name: 'Blocking Receiver', position: 'WR', number: '11' }] };
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  assert.match(r.elements.get('player-choice').innerHTML, /On-field player/);
+  assert.match(r.elements.get('player-choice').innerHTML, /Blocking Receiver/);
+  r.S.filter.choices.player = ['00-1'];
+  r.renderList();
+  assert.deepEqual(r.visible(), [0, 2]);
+  r.S.filter.offense = 'BAL';
+  r.renderList();
+  assert.deepEqual(r.visible(), [0]);
+  r.S.filter.text = 'blocking';
+  r.renderList();
+  assert.deepEqual(r.visible(), [0]);
+});
+
+function contextualPlayers() {
+  const r = renderer();
+  const player = (id, name, position) => ({ id, name, position });
+  const henry = player('henry', 'Derrick Henry', 'RB');
+  const jaguarDefender = player('jax-def', 'Jaguars Defender', 'CB');
+  const quarterback = player('lawrence', 'Trevor Lawrence', 'QB');
+  const ravenDefender = player('smith', 'Roquan Smith', 'ILB');
+  r.S.plays[0].onField = { offense: [henry], defense: [jaguarDefender] };
+  r.S.plays[1].onField = { offense: [henry], defense: [jaguarDefender] };
+  Object.assign(r.S.plays[2], {
+    posteam: 'JAX', defteam: 'BAL', qtr: 1, charting: { motion: true },
+    onField: { offense: [quarterback, player('hunter', 'Travis Hunter', 'WR')],
+      defense: [ravenDefender, { sourceId: '202', name: 'Actual Defending RB', position: 'RB' }] },
+  });
+  Object.assign(r.S.plays[3], {
+    posteam: 'JAX', defteam: 'BAL', qtr: 2, charting: { motion: false },
+    onField: { offense: [quarterback], defense: [ravenDefender, player('q2-only', 'Second Quarter Corner', 'CB')] },
+  });
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  return r;
+}
+
+function playerOptionIds(r) {
+  return [...r.elements.get('player-choice').innerHTML.matchAll(/<option value="([^"]+)"/g)]
+    .map(match => match[1]).sort();
+}
+
+function playerOptionCounts(r) {
+  return Object.fromEntries([...r.elements.get('player-choice').innerHTML
+    .matchAll(/<option value="([^"]+)">[^<]*\((\d+) plays?\)<\/option>/g)]
+    .map(match => [match[1], Number(match[2])]));
+}
+
+function playerOptionGroups(r) {
+  return [...r.elements.get('player-choice').innerHTML.matchAll(/<optgroup label="([^"]+)">([\s\S]*?)<\/optgroup>/g)]
+    .map(match => ({ label: match[1], ids: [...match[2].matchAll(/<option value="([^"]+)"/g)].map(option => option[1]) }));
+}
+
+function playerOrdering() {
+  const r = contextualPlayers();
+  const zebra = { id: 'zebra-cb', name: 'Zebra Corner', position: 'CB' };
+  r.S.plays[2].onField.defense.push(zebra,
+    { id: 'alpha-ilb', name: 'Alpha Linebacker', position: 'ILB' },
+    { id: 'alpha-cb', name: 'Alpha Corner', position: 'CB' });
+  r.S.plays[3].onField.defense.push(zebra);
+  r.S.sel.team = 'BAL';
+  r.S.settings.defaultTeam = 'JAX';
+  r.S.filter.offense = 'JAX';
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  r.renderList();
+  return r;
+}
+
+test('player dropdown groups the analyzed team first, not the filtered offense or default team, and defaults to alphabetical within teams', () => {
+  const r = playerOrdering();
+  assert.deepEqual(playerOptionGroups(r), [
+    { label: 'BAL · Analyzed team', ids: ['nflpro:202', 'alpha-cb', 'alpha-ilb', 'smith', 'q2-only', 'zebra-cb'] },
+    { label: 'JAX', ids: ['hunter', 'lawrence'] },
+  ]);
+  r.S.sel.team = 'JAX';
+  r.renderList();
+  assert.deepEqual(playerOptionGroups(r).map(group => group.label), ['JAX · Analyzed team', 'BAL']);
+  assert.deepEqual(playerOptionGroups(r)[0].ids, ['hunter', 'lawrence']);
+});
+
+test('play-count sorting is descending inside each team, breaks ties alphabetically and reorders as selected players change', () => {
+  const r = playerOrdering();
+  r.S.settings.playerFilterSort = 'plays';
+  r.renderList();
+  const initial = playerOptionGroups(r);
+  assert.deepEqual(initial, [
+    { label: 'BAL · Analyzed team', ids: ['smith', 'zebra-cb', 'nflpro:202', 'alpha-cb', 'alpha-ilb', 'q2-only'] },
+    { label: 'JAX', ids: ['lawrence', 'hunter'] },
+  ]);
+  const mapping = Array.from(r.S.mapping);
+  r.setAdvancedChoice('player', 'hunter');
+  assert.deepEqual(playerOptionGroups(r)[0].ids, ['nflpro:202', 'alpha-cb', 'alpha-ilb', 'smith', 'zebra-cb']);
+  assert.equal(playerOptionCounts(r)['q2-only'], undefined);
+  r.removePlayerFilter('hunter');
+  assert.deepEqual(playerOptionGroups(r), initial);
+  assert.deepEqual(Array.from(r.S.mapping), mapping);
+});
+
+test('position sorting uses the shared football order and sorts within each position by current play count then name', () => {
+  const r = playerOrdering();
+  r.S.settings.playerFilterSort = 'position';
+  r.renderList();
+  assert.deepEqual(playerOptionGroups(r), [
+    { label: 'BAL · Analyzed team', ids: ['nflpro:202', 'smith', 'alpha-ilb', 'zebra-cb', 'alpha-cb', 'q2-only'] },
+    { label: 'JAX', ids: ['hunter', 'lawrence'] },
+  ]);
+  r.setAdvancedChoice('player', 'hunter');
+  assert.deepEqual(playerOptionGroups(r)[0].ids, ['nflpro:202', 'alpha-ilb', 'smith', 'alpha-cb', 'zebra-cb']);
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['hunter']);
+  assert.deepEqual(r.visible(), [2]);
+});
+
+test('player dropdown position sorting marks inferred sides without assigning a snap-specific eligible role to a whole player', () => {
+  const r = renderer();
+  r.S.sel.team = 'BAL';
+  r.S.settings.playerFilterSort = 'position';
+  r.S.plays[0].onField = {
+    offense: [
+      { id: 'right', name: 'Right Tackle', position: 'T', positionInference: { position: 'RT' } },
+      { id: 'left', name: 'Left Tackle', position: 'T', positionInference: { position: 'LT' } },
+      { id: 'generic', name: 'Extra Tackle', position: 'T', eligibleReceiver: true },
+      { id: 'receiver', name: 'Receiver', position: 'WR' },
+    ], defense: [],
+  };
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  assert.deepEqual(playerOptionGroups(r)[0].ids, ['receiver', 'left', 'right', 'generic']);
+  assert.match(r.elements.get('player-choice').innerHTML, /Left Tackle · BAL LT\* \(1 play\)/);
+  assert.match(r.elements.get('player-choice').innerHTML, /Extra Tackle · BAL T \(1 play\)/);
+  assert.doesNotMatch(r.elements.get('player-choice').innerHTML, /OL-E/);
+});
+
+test('player option counts predict adding a candidate to every selected player and update on additions, removals and other filters', () => {
+  const r = contextualPlayers();
+  r.S.filter.offense = 'JAX';
+  r.renderList();
+  assert.deepEqual(playerOptionCounts(r), { hunter: 1, lawrence: 2, 'nflpro:202': 1, 'q2-only': 1, smith: 2 });
+  r.setAdvancedChoice('player', 'hunter');
+  assert.deepEqual(playerOptionCounts(r), { lawrence: 1, 'nflpro:202': 1, smith: 1 });
+  assert.doesNotMatch(r.elements.get('player-choice').innerHTML, /Second Quarter Corner|\(0 plays\)/);
+  assert.match(r.elements.get('player-choice').innerHTML, /Trevor Lawrence.*\(1 play\)/);
+  r.setAdvancedChoice('player', 'lawrence');
+  assert.deepEqual(playerOptionCounts(r), { 'nflpro:202': 1, smith: 1 });
+  r.removePlayerFilter('hunter');
+  assert.deepEqual(playerOptionCounts(r), { hunter: 1, 'nflpro:202': 1, 'q2-only': 1, smith: 2 });
+  r.S.filter.qtr = '2';
+  r.renderList();
+  assert.deepEqual(playerOptionCounts(r), { 'q2-only': 1, smith: 1 });
+  r.S.filter.qtr = '';
+  r.setAdvancedChoice('player', 'q2-only');
+  assert.equal(playerOptionCounts(r).hunter, undefined);
+  r.removePlayerFilter('q2-only');
+  assert.equal(playerOptionCounts(r).hunter, 1);
+  r.removePlayerFilter('lawrence');
+  assert.equal(playerOptionCounts(r).lawrence, 2);
+});
+
+test('player counts count each matching play once per identity and never invent participation on missing-data plays', () => {
+  const r = contextualPlayers();
+  r.S.plays[2].onField.defense.push(r.S.plays[2].onField.offense[0]);
+  r.S.plays[4].posteam = 'JAX';
+  r.S.filter.offense = 'JAX';
+  r.derivePlays();
+  r.renderList();
+  assert.deepEqual(r.visible(), [2, 3, 4]);
+  assert.equal(playerOptionCounts(r).lawrence, 2, 'duplicate appearances in a play count once');
+  assert.equal(playerOptionCounts(r).smith, 2, 'a play without participation does not inflate player counts');
+  assert.equal(playerOptionCounts(r).hunter, 1);
+});
+
+test('player options follow offense, quarter, type, ranges, charting and search using actual snap membership', () => {
+  const r = contextualPlayers();
+  const mapping = Array.from(r.S.mapping);
+  const weights = Array.from(r.S.plays, p => p.filmWeight);
+  r.S.filter.offense = 'JAX';
+  r.renderList();
+  assert.deepEqual(playerOptionIds(r), ['hunter', 'lawrence', 'nflpro:202', 'q2-only', 'smith']);
+  assert.doesNotMatch(r.elements.get('player-choice').innerHTML, /Derrick Henry|Jaguars Defender/);
+  assert.match(r.elements.get('player-choice').innerHTML, /Actual Defending RB/, 'membership, not listed position, determines availability');
+  r.S.filter.qtr = '1';
+  r.renderList();
+  assert.deepEqual(playerOptionIds(r), ['hunter', 'lawrence', 'nflpro:202', 'smith']);
+  r.S.filter.type = 'run';
+  r.renderList();
+  assert.deepEqual(playerOptionIds(r), []);
+  assert.match(r.elements.get('player-choice').innerHTML, /disabled.*No players match these filters/);
+  r.S.filter.type = '';
+  r.S.filter.qtr = '';
+  r.S.filter.airMin = 30;
+  r.renderList();
+  assert.deepEqual(playerOptionIds(r), ['hunter', 'lawrence', 'nflpro:202', 'smith']);
+  r.S.filter.airMin = null;
+  r.setAdvancedChoice('motion', 'false');
+  assert.deepEqual(playerOptionIds(r), ['lawrence', 'q2-only', 'smith']);
+  r.setAdvancedChoice('motion', '');
+  r.S.filter.text = 'Second Quarter Corner';
+  r.renderList();
+  assert.deepEqual(playerOptionIds(r), ['lawrence', 'q2-only', 'smith']);
+  r.S.filter.text = '';
+  r.S.filter.offense = '';
+  r.renderList();
+  assert.ok(playerOptionIds(r).includes('henry'), 'clearing context restores the wider roster');
+  assert.deepEqual(Array.from(r.S.mapping), mapping);
+  assert.deepEqual(Array.from(r.S.plays, p => p.filmWeight), weights);
+});
+
+test('context changes keep selected tags removable, hide incompatible candidates and never silently broaden results', () => {
+  const r = contextualPlayers();
+  r.setAdvancedChoice('player', 'henry');
+  assert.deepEqual(r.visible(), [0, 1]);
+  r.S.filter.offense = 'JAX';
+  r.renderList();
+  assert.deepEqual(r.visible(), []);
+  assert.deepEqual(playerOptionIds(r), []);
+  assert.deepEqual(playerOptionGroups(r), []);
+  assert.match(r.elements.get('player-choice').innerHTML, /disabled.*No players match these filters/);
+  assert.doesNotMatch(r.elements.get('player-choice').innerHTML, /All players selected/);
+  assert.match(r.elements.get('player-choice').innerHTML, /data-remove-player="henry"/);
+  r.renderAdvancedFilters();
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['henry']);
+  r.removePlayerFilter('henry');
+  assert.deepEqual(r.visible(), [2, 3]);
+  r.setAdvancedChoice('player', 'hunter');
+  assert.deepEqual(r.visible(), [2]);
+  assert.ok(!playerOptionIds(r).includes('q2-only'), 'incompatible players are hidden after a selection');
+  r.setAdvancedChoice('player', 'q2-only');
+  assert.deepEqual(r.visible(), [], 'AND matching remains strict even for an impossible combination');
+  r.removePlayerFilter('q2-only');
+  assert.deepEqual(r.visible(), [2]);
+  r.removePlayerFilter('hunter');
+  assert.ok(playerOptionIds(r).includes('q2-only'), 'removing selections restores newly compatible players');
+});
+
+test('the player picker distinguishes all selected from no compatible candidates', () => {
+  const r = contextualPlayers();
+  r.S.filter.offense = 'JAX';
+  for (const id of ['hunter', 'lawrence', 'nflpro:202', 'smith']) r.setAdvancedChoice('player', id);
+  assert.deepEqual(r.visible(), [2]);
+  assert.deepEqual(playerOptionIds(r), []);
+  assert.match(r.elements.get('player-choice').innerHTML, /disabled.*No players match these filters/);
+  r.S.filter.qtr = '1';
+  r.renderList();
+  assert.match(r.elements.get('player-choice').innerHTML, /disabled.*All players selected/);
+  r.removePlayerFilter('hunter');
+  assert.deepEqual(playerOptionIds(r), ['hunter']);
+  r.S.filter.qtr = '2';
+  r.renderList();
+  assert.deepEqual(r.visible(), []);
+  assert.deepEqual(playerOptionIds(r), []);
+  assert.match(r.elements.get('player-choice').innerHTML, /disabled.*No players match these filters/);
+  assert.match(r.elements.get('player-choice').innerHTML, /data-remove-player="nflpro:202"/);
+});
+
+test('automatic participation refresh updates scoped player options without clearing context or valid selected tags', async () => {
+  const r = contextualPlayers();
+  vm.runInContext('realign = renderInfo = setStatus = () => {};', r.context);
+  r.S.game = { gameId: 'test', season: 2026 };
+  r.S.filter.offense = 'JAX';
+  r.setAdvancedChoice('player', 'smith');
+  const incoming = structuredClone(r.S.plays);
+  incoming[2].onField.defense.push({ sourceId: 'new-defender', name: 'New Ravens Defender', position: 'CB' });
+  r.context.window.api = { getPlays: async () => ({ plays: incoming }) };
+  await r.refreshParticipation(true);
+  assert.ok(playerOptionIds(r).includes('nflpro:new-defender'));
+  assert.equal(playerOptionCounts(r)['nflpro:new-defender'], 1);
+  assert.equal(playerOptionCounts(r).lawrence, 2);
+  assert.ok(!playerOptionIds(r).includes('henry'));
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['smith']);
+  assert.equal(r.S.filter.offense, 'JAX');
+  assert.deepEqual(r.visible(), [2, 3]);
+});
+
+test('on-field details order both sides and clearly distinguish depth-chart inference and reported eligibility', () => {
+  const r = renderer();
+  const play = r.S.plays[0];
+  play.onField = {
+    offense: [
+      { id: '00-1', position: 'T', number: '76', name: 'Eligible OL', eligibleReceiver: true },
+      { id: '00-2', position: 'G', name: 'Left Guard', positionInference: { position: 'LG', source: '<Chart & source>', asOf: '2026-11-05' } },
+      { id: '00-3', position: 'QB', name: 'Quarterback' },
+      { id: '00-4', position: 'WR', name: 'Receiver' }, { id: '00-5', position: 'TE', name: 'Tight End' },
+    ],
+    defense: [{ position: 'SS', name: 'Safety' }, { position: 'DE', name: 'End' }, { position: 'CB', name: 'Corner' }],
+  };
+  r.S.curPlay = 0;
+  r.renderInfo();
+  const html = r.elements.get('on-field-lists').innerHTML;
+  const names = ['Receiver', 'Tight End', 'Eligible OL', 'Quarterback', 'Left Guard'];
+  for (let i = 1; i < names.length; i++) assert.ok(html.indexOf(`${names[i - 1]}</li>`) < html.indexOf(`${names[i]}</li>`));
+  assert.ok(html.indexOf('</span>End') < html.indexOf('</span>Corner'));
+  assert.ok(html.indexOf('</span>Corner') < html.indexOf('</span>Safety'));
+  assert.match(html, />LG\*<\/span>/);
+  assert.match(html, /&lt;Chart &amp; source&gt;, 2026-11-05/);
+  assert.match(html, /listed G/);
+  assert.match(html, /not confirmed snap alignment/);
+  assert.match(html, />OL-E<\/span>#76 Eligible OL/);
+  assert.match(html, /extra lineman explicitly reported eligible/);
+  assert.equal(play.onField.offense[1].position, 'G');
+});
+
+test('player tags require all selected IDs across either side, deduplicate picks, and remove only the chosen player', () => {
+  const r = renderer();
+  const first = { id: '00-1', name: 'First Player', position: 'WR' };
+  const second = { sourceId: '202', name: 'Second Player', position: 'CB' };
+  r.S.plays[0].onField = { offense: [first], defense: [second] };
+  r.S.plays[2].onField = { offense: [first], defense: [] };
+  r.S.plays[3].onField = { offense: [], defense: [second] };
+  r.derivePlays();
+  const mapping = Array.from(r.S.mapping);
+  const weights = Array.from(r.S.plays, (p) => p.filmWeight);
+  r.renderAdvancedFilters();
+  r.setAdvancedChoice('player', '00-1');
+  r.setAdvancedChoice('player', 'nflpro:202');
+  r.setAdvancedChoice('player', '00-1');
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['00-1', 'nflpro:202']);
+  assert.deepEqual(r.visible(), [0]);
+  assert.match(r.elements.get('adv-filter-active').textContent, /2 active/);
+  const html = r.elements.get('player-choice').innerHTML;
+  assert.match(html, /Match all selected players/);
+  assert.match(html, /data-remove-player="00-1"/);
+  assert.match(html, /aria-label="Remove Second Player from on-field filter"/);
+  assert.doesNotMatch(html, /<option value="00-1"/);
+  assert.match(html, /All players selected/);
+  r.S.filter.type = 'pass';
+  r.S.filter.offense = 'BAL';
+  r.renderList();
+  assert.deepEqual(r.visible(), [0]);
+  r.removePlayerFilter('00-1');
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['nflpro:202']);
+  assert.deepEqual(r.visible(), [0, 3]);
+  assert.match(r.elements.get('player-choice').innerHTML, /<option value="00-1"/);
+  r.removePlayerFilter('nflpro:202');
+  assert.equal(r.S.filter.choices.player, undefined);
+  assert.deepEqual(r.visible(), [0, 3, 4]);
+  assert.equal(r.elements.get('adv-filter-active').hidden, true);
+  assert.deepEqual(Array.from(r.S.mapping), mapping);
+  assert.deepEqual(Array.from(r.S.plays, (p) => p.filmWeight), weights);
+});
+
+test('player tags retain available selections across rerenders and discard unavailable players without clearing other filters', () => {
+  const r = renderer();
+  const first = { id: '00-1', name: '<First & Player>', position: 'WR' };
+  const second = { id: '00-2', name: 'Second Player', position: 'TE' };
+  r.S.plays[0].onField = { offense: [first, second], defense: [] };
+  r.S.filter.choices = { player: ['00-1', '00-2'], down: '2' };
+  r.S.plays[0].down = 2;
+  r.renderAdvancedFilters();
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['00-1', '00-2']);
+  assert.equal(r.S.filter.choices.down, '2');
+  assert.match(r.elements.get('player-choice').innerHTML, /&lt;First &amp; Player&gt;/);
+  assert.doesNotMatch(r.elements.get('player-choice').innerHTML, /<First & Player>/);
+  r.S.plays[0].onField.offense = [first];
+  r.renderAdvancedFilters();
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['00-1']);
+  assert.equal(r.S.filter.choices.down, '2');
+  delete r.S.plays[0].onField;
+  r.renderAdvancedFilters();
+  assert.equal(r.S.filter.choices.player, undefined);
+  assert.equal(r.S.filter.choices.down, '2');
+  assert.doesNotMatch(r.elements.get('player-choice').innerHTML, /data-remove-player/);
+});
+
+test('persistent participation indicator shows watching, imported counts, automatic updates, and warnings', () => {
+  const r = renderer();
+  r.S.game = { gameId: 'test' };
+  r.S.settings.participationRoot = '/configured-import-folder';
+  r.renderList();
+  assert.equal(r.elements.get('participation-status').hidden, false);
+  assert.match(r.elements.get('participation-summary').textContent, /no matching plays/);
+  assert.match(r.elements.get('participation-notice').textContent, /No manual refresh needed/);
+  r.S.plays[0].participation = { source: 'NFL Pro', status: 'complete' };
+  r.S.plays[1].participation = { source: 'NFL Pro', status: 'partial' };
+  r.S.participationNotice = 'Updated automatically at 11:03 AM.';
+  r.renderList();
+  assert.match(r.elements.get('participation-summary').textContent, /2 plays imported.*1 complete, 1 partial/);
+  assert.match(r.elements.get('participation-notice').textContent, /Updated automatically/);
+  r.S.filter.offense = 'BUF';
+  r.renderList();
+  assert.deepEqual(r.visible(), [2]);
+  assert.match(r.elements.get('participation-summary').textContent, /2 plays imported/);
+  r.S.participationWarning = 'One source play could not be matched.';
+  r.renderList();
+  assert.match(r.elements.get('participation-notice').textContent, /Data warning: One source play/);
+  r.S.game = null;
+  r.renderList();
+  assert.equal(r.elements.get('participation-status').hidden, true);
+  r.S.game = { gameId: 'another-game' };
+  r.S.settings.participationRoot = '';
+  r.S.plays.forEach((p) => { delete p.participation; });
+  r.renderList();
+  assert.equal(r.elements.get('participation-status').hidden, true);
+});
+
+test('automatic refresh distinguishes participation changes from unrelated folder events and preserves selection', async () => {
+  const r = renderer();
+  vm.runInContext('realign = renderInfo = setStatus = () => {};', r.context);
+  r.S.game = { gameId: 'test', season: 2024 };
+  r.S.settings.participationRoot = '/configured-import-folder';
+  r.S.curPlay = 2;
+  r.S.selected = new Set([1, 2]);
+  const incoming = r.S.plays.map((p, i) => ({
+    ...p, ...(i === 0 ? { participation: { source: 'NFL Pro', status: 'complete' } } : {}),
+  })).reverse();
+  r.context.window.api = { getPlays: async () => ({ plays: incoming }) };
+  await r.refreshParticipation(true);
+  assert.match(r.elements.get('participation-summary').textContent, /1 play imported/);
+  assert.match(r.elements.get('participation-notice').textContent, /Updated automatically at/);
+  assert.equal(r.S.plays[r.S.curPlay].playId, 3);
+  assert.deepEqual(Array.from(r.S.selected, (i) => r.S.plays[i].playId).sort(), [2, 3]);
+  await r.refreshParticipation(true);
+  assert.match(r.elements.get('participation-notice').textContent, /Checked automatically at/);
+  r.context.window.api.getPlays = async () => ({ plays: incoming.map(({ participation, ...p }) => p) });
+  await r.refreshParticipation(true);
+  assert.match(r.elements.get('participation-summary').textContent, /no matching plays/);
+  assert.match(r.elements.get('participation-notice').textContent, /Updated automatically at/);
+  r.context.window.api.getPlays = async () => { throw new Error('Import folder unreadable'); };
+  await r.refreshParticipation(true);
+  assert.match(r.elements.get('participation-notice').textContent, /Data warning: Import folder unreadable/);
+});
 
 test('single-play export names retain game numbering and selected-team possession through Share', async () => {
   const r = renderer();

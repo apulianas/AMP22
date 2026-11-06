@@ -9,6 +9,7 @@
   const FORMATS = ['none', 'csv', 'txt', 'pdf'];
   const ADVANCED_FIELDS = [
     { key: 'airYards', label: 'Air yards', get: (p) => p.airYards },
+    { key: 'epa', label: 'EPA', get: (p) => p.epa },
     { key: 'personnel', label: 'Offensive personnel', get: (p) => p.personnel?.offense },
     { key: 'defense', label: 'Defensive package', get: (p) => [p.personnel?.defense, p.personnel?.front].filter(Boolean).join(' ') },
     { key: 'formation', label: 'Formation', get: (p) => p.charting?.formation },
@@ -24,6 +25,28 @@
     { key: 'blitzers', label: 'Blitzers', get: (p) => p.charting?.blitzers },
     { key: 'coverage', label: 'Coverage', get: (p) => p.charting?.coverage },
     { key: 'manZone', label: 'Man / zone', get: (p) => p.charting?.manZone },
+    ...['offense', 'defense'].flatMap((side) => [
+      { key: `${side}PlayerIds`, label: `${side === 'offense' ? 'Offense' : 'Defense'} player IDs`, get: (p) => p.onField?.[side]?.map((x) => x.id || (x.sourceId ? `nflpro:${x.sourceId}` : '')).join(';') },
+      { key: `${side}PlayerNames`, label: `${side === 'offense' ? 'Offense' : 'Defense'} player names`, get: (p) => p.onField?.[side]?.map((x) => x.name).join(';') },
+      { key: `${side}PlayerPositions`, label: `${side === 'offense' ? 'Offense' : 'Defense'} player positions`, get: (p) => p.onField?.[side]?.map((x) => x.position).join(';') },
+      ...(side === 'offense' ? [
+        { key: 'offenseInferredPlayerPositions', label: 'Offense inferred player positions', get: (p) => p.onField?.offense?.map((x) => x.positionInference?.position || '').join(';') },
+        { key: 'offensePositionInferenceSources', label: 'Offense position inference sources', get: (p) => p.onField?.offense?.map((x) => x.positionInference?.source || '').join(';') },
+        { key: 'offensePositionInferenceDates', label: 'Offense position inference as of', get: (p) => p.onField?.offense?.map((x) => x.positionInference?.asOf || '').join(';') },
+        { key: 'offenseEligiblePlayerIds', label: 'Offense reported eligible player IDs', get: (p) => p.onField?.offense?.filter(x => x.eligibleReceiver).map(x => x.id || (x.sourceId ? `nflpro:${x.sourceId}` : '')).join(';') },
+      ] : []),
+      { key: `${side}PlayerNumbers`, label: `${side === 'offense' ? 'Offense' : 'Defense'} jersey numbers`, get: (p) => p.onField?.[side]?.map((x) => x.number).join(';') },
+    ]),
+    { key: 'participationSource', label: 'Participation source', get: (p) => p.participation?.source || (p.onField ? 'nflverse' : '') },
+    { key: 'participationStatus', label: 'Participation status', get: (p) => p.participation?.status || (p.onField ? 'historical' : '') },
+    { key: 'sourceGameId', label: 'Participation source game ID', get: (p) => p.participation?.sourceGameId },
+    { key: 'sourcePlayId', label: 'Participation source play ID', get: (p) => p.participation?.sourcePlayId },
+    { key: 'capturedAt', label: 'Participation captured at', get: (p) => p.participation?.capturedAt },
+    { key: 'offenseParticipationSource', label: 'Offense participation source', get: (p) => p.participation?.offenseSource || (p.onField?.offense?.length ? 'nflverse' : '') },
+    { key: 'defenseParticipationSource', label: 'Defense participation source', get: (p) => p.participation?.defenseSource || (p.onField?.defense?.length ? 'nflverse' : '') },
+    { key: 'inferredOffense', label: 'Inferred offensive personnel', get: (p) => p.inferredPersonnel?.offense },
+    { key: 'inferredDefense', label: 'Inferred defensive package', get: (p) => [p.inferredPersonnel?.defense, p.inferredPersonnel?.front].filter(Boolean).join(' ') },
+    { key: 'personnelInferred', label: 'Personnel inferred from positions', get: (p) => p.personnel ? !!p.personnel.inferred : null },
   ];
   const DEFAULT_OPTIONS = { format: 'csv', includeAdvanced: false, fields: ADVANCED_FIELDS.map((f) => f.key) };
 
@@ -76,6 +99,7 @@
     return [
       { key: 'order', label: 'Clip number', get: (_p, i) => i + 1 },
       { key: 'game', label: 'Game', get: () => report.matchup },
+      { key: 'gameId', label: 'nflverse game ID', get: (p) => p.gameId },
       { key: 'playId', label: 'Game play ID', get: (p) => p.playId },
       { key: 'quarter', label: 'Quarter', get: (p) => p.qtr },
       { key: 'clock', label: 'Game clock', get: (p) => p.time },
@@ -105,6 +129,33 @@
       fields.map((f) => csvCell(f.label)).join(','),
       ...report.plays.map((p, i) => fields.map((f) => csvCell(f.get(p, i))).join(',')),
     ].join('\r\n') + '\r\n';
+  }
+
+  function analysisCsv(report, layout = 'plays') {
+    if (!['plays', 'players'].includes(layout)) throw new Error('Invalid analysis CSV layout.');
+    const all = { ...report, includeAdvanced: true, fields: ADVANCED_FIELDS.map((f) => f.key) };
+    if (layout === 'plays') {
+      return csv(all).replace('"Clip number"', '"Play number"');
+    }
+    const fields = columns(all).map((f) => f.key === 'order' ? { ...f, label: 'Play number' } : f);
+    const playerFields = [
+      ['side', 'Player side'], ['team', 'Player team'], ['id', 'GSIS player ID'], ['sourceId', 'Source player ID'],
+      ['name', 'Player name'], ['position', 'Player position'], ['number', 'Jersey number'],
+      ['inferredPosition', 'Inferred player position'], ['positionSource', 'Position inference source'],
+      ['positionAsOf', 'Position inference as of'], ['reportedEligible', 'Reported eligible'],
+    ];
+    const lines = [fields.map((f) => csvCell(f.label)).concat(playerFields.map(([, label]) => csvCell(label))).join(',')];
+    report.plays.forEach((p, i) => {
+      const players = ['offense', 'defense'].flatMap((side) => (p.onField?.[side] || [])
+        .map((x) => ({ ...x, side, team: side === 'offense' ? p.posteam : p.defteam,
+          inferredPosition: x.positionInference?.position, positionSource: x.positionInference?.source,
+          positionAsOf: x.positionInference?.asOf, reportedEligible: x.eligibleReceiver ? true : '' })));
+      // Keep a blank-player row so plays without participation remain analyzable.
+      for (const player of players.length ? players : [{}]) {
+        lines.push(fields.map((f) => csvCell(f.get(p, i))).concat(playerFields.map(([key]) => csvCell(player[key]))).join(','));
+      }
+    });
+    return '\ufeff' + lines.join('\r\n') + '\r\n';
   }
 
   function text(report) {
@@ -169,5 +220,5 @@
       ${cards}</body></html>`;
   }
 
-  return { FORMATS, ADVANCED_FIELDS, DEFAULT_OPTIONS, mergeOptions, validateReport, columns, csv, text, html };
+  return { FORMATS, ADVANCED_FIELDS, DEFAULT_OPTIONS, mergeOptions, validateReport, columns, csv, analysisCsv, text, html };
 });

@@ -107,9 +107,27 @@ jobs:
             dist/*.dmg
             dist/*.exe
 
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test participation collector and CSV schema
+        run: node --test test/participation.test.js test/extension.test.js
+      - run: npm run build:extension
+      - name: Package shared browser extension
+        run: cd out/nflpro-extension && zip -q -r ../AMP22-NFL-Pro-Extension.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amp22-nflpro-extension
+          if-no-files-found: error
+          path: out/AMP22-NFL-Pro-Extension.zip
+
   release:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-    needs: [version, build]
+    needs: [version, build, extension]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -119,7 +137,7 @@ jobs:
           pattern: amp22-*
           merge-multiple: true
           path: release
-      - name: Publish installers
+      - name: Publish installers and optional browser extension
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
