@@ -34,7 +34,11 @@ Choose **Split offense / defense / ST** in the viewer's setup panel to assign th
 
 ![AMP22 viewer-hosted split-film setup with separate Ravens offense, Ravens defense, and special-teams file pickers](docs/screenshots/split-film-setup.png)
 
-The setup captures above show file selection, not the new background-analysis progress strip. A refreshed in-progress game-film capture is pending: representative game film is not available in the development checkout. Synthetic clips are used only for automated workflow checks, not as screenshots of working game alignment.
+### Single-file analysis progress
+
+The progress strip stays below the viewer and offers cancellation without a blocking dialog. This running-app capture shows an actual scan of the supplied 83-minute Bengals at Ravens A22 file, with **Single file** selected. The underlying raw film is open, but no play links are available until the entire file finishes; this is not progressive single-file alignment or a three-file import. Separate unit recordings were not supplied, so this capture does not demonstrate split-file readiness.
+
+![Actual AMP22 single-file game analysis, showing Film progress, cancellation, real Bengals at Ravens film, and no analyzed play links yet](docs/screenshots/film-analysis-progress.png)
 
 ### Filters and charting
 
@@ -145,7 +149,7 @@ npm 11 blocks install scripts unless they are approved. The `allowScripts` entry
 2. In the empty video area, leave **Single file** selected and click **Choose film…** for full-game A22. For separate units, select **Split offense / defense / ST**, then use **Choose [team] offense…**, **Choose [team] defense…**, and **Choose special teams…** in the same panel. Each file must contain both angles, not one camera per file. Select the team whose offense/defense the files describe before assigning them. The app streams files from where they are and never copies or changes them. After loading analyzed film, use **Film setup** in the viewer's lower-right corner to change files or formats; close the panel to return to the footage. Selecting a play whose split-film source is missing reopens setup so you can assign it.
    In single-file mode, you can also set a **film folder** in Settings (⚙), for example `~/Movies/2026 Ravens Games`. The app then finds the A22 file automatically by matching week folders such as `w7vBengals` or `w1@Colts` and preferring files with `a22` in the name. Split files are assigned explicitly, not guessed from filenames.
    The app remembers the format and file choices. Switching formats preserves both sets of choices and their corrections.
-3. The first time you open film, the app analyzes each selected file. Processing time depends on the footage and computer; full-game film previously took about 3–5 minutes, and the new bounded workers and batched sampling still need real-game benchmarks. Split files process concurrently, with each unit's progress shown below the viewer. Start watching a completed unit immediately while other units finish. Setup can be reopened and dismissed without stopping analysis. **Cancel** stops all unfinished files; completed film stays available, and **Analyze film** retries unfinished files. Single-file film becomes usable after that whole file finishes. Results are cached by file path, size, and modified time.
+3. The first time you open film, the app analyzes each selected file. Processing time depends on the footage and computer; the experimental worker/thread limits currently regress single-file performance in the [home-machine profile](#home-machine-profile), so do not assume faster processing or a fixed completion time. Split files process concurrently, with each unit's progress shown below the viewer. Start watching a completed unit immediately while other units finish. Setup can be reopened and dismissed without stopping analysis. **Cancel** stops all unfinished files; completed film stays available, and **Analyze film** retries unfinished files. Single-file play links become usable after that whole file finishes. Results are cached by file path, size, and modified time.
 4. Click a play, or use ↓/↑, to watch it.
 5. To save a clip, click **Share**, choose an angle, and click **Export…** to pick an MP4 destination. Single-play filenames use `TEAM-POSSESSION-PLAY NUMBER-DOWN-DISTANCE.mp4` (for example `BAL-O-12-2-7.mp4`). Team is the selected analysis team; possession is `O` (offense), `D` (defense), or `ST` (special teams) relative to that team. The play number is its one-based position in the game's play list, unaffected by filtering or film links, not the data provider's play ID. Unavailable possession, down, or distance uses `NA`. Multiple plays still use only the game-clock range (`Q2-08m34s-to-Q3-04m12s.mp4`). Single-angle results use a compact card sized to its text rather than a full-width banner, positioned in the lower left by default. Shift-click to select a range, or use **Multi-select** and checkboxes for individual plays. Selected plays remain selected when filtering; the selection count includes hidden plays. A normal row click outside explicit multi-select mode, or navigating to another play, returns to a single selection and hides the checkboxes. Turn **Multi-select** off to return to a single selection. Plays without linked film must be deselected or linked before export. Export progress and cancellation are available in the Share dialog. After export, **Show in Finder** (macOS) or **Show in File Explorer** (Windows) opens the containing folder with the exported file selected.
 
@@ -336,7 +340,25 @@ The core logic is in `src/shared/` and has unit tests. You can also run the anal
 npm run analyze -- "/path/to/TeamA22.mp4" --out analysis-out/team --frames 6
 ```
 
-New analyses print probe, scan, classification, pairing, and total elapsed times, plus the worker limit. `analysis.json` includes the same `timings` in milliseconds and any sampling `warnings`. Times include worker-queue waits. For home-machine comparisons, run this command on the same film before and after the change with the same options and no competing exports; compare both total time and phase times. Previously cached analyses have no timing fields; the CLI performs fresh analysis unless `--from-json` is supplied. No real-game speedup is claimed yet.
+New analyses print probe, scan, classification, pairing, and total elapsed times, plus the worker limit. `analysis.json` includes the same `timings` in milliseconds and any sampling `warnings`. Times include worker-queue waits. For home-machine comparisons, run this command on the same film before and after the change with the same options and no competing exports; compare both total time and phase times. Previously cached analyses have no timing fields; the CLI performs fresh analysis unless `--from-json` is supplied.
+
+### Home-machine profile
+
+On November 6, 2026, the 0.5.0 baseline (`6bec5f3`, PR #14) and this experimental branch were profiled on the **same single** Bengals at Ravens full-game file: 4.75 GiB, 83:23.48, H.264, 1920×1080 at 59.94 fps. The machine was a 10-core Apple M1 Pro with 32 GiB RAM. Both runs performed fresh analysis at cut threshold `0.1`; there were no concurrent exports. The baseline's unchanged probe/scan/classify/pair functions were timed individually; the experimental run used the CLI above with its built-in timings.
+
+| Phase | 0.5.0 baseline | Experimental branch |
+|---|---:|---:|
+| Probe | 0.11 s | 5.95 s |
+| Scene scan | 225.76 s | 673.92 s |
+| Orientation classification | 45.47 s | 70.79 s |
+| Camera pairing | 0.002 s | 0.002 s |
+| Total | **271.34 s (4m 31s)** | **750.66 s (12m 31s)** |
+
+**No throughput improvement is demonstrated: this experimental run was 2.77× slower.** Its two-thread scene-scan cap is the leading suspect for the scan regression; batching also did not improve classification on this machine. These are exploratory single-pass measurements, not controlled repeated trials: native checks overlapped the experimental run's opening scan, the baseline ran afterward, and helper startup and OS-cache state were not controlled. Those differences should be controlled in follow-up measurements, but these results do not support claiming a speedup or promoting the processing changes as a performance improvement.
+
+Both versions produced **identical 302 clips, orientation scores, and 150 camera pairs**, with zero experimental sampling warnings. The app linked 150 of 151 play-by-play entries automatically. Counts alone do not prove correct alignment: spot checks across all four quarters found an existing sequence-alignment mismatch near the Q1/Q2 boundary (the Q2 15:00 run at CIN 49 initially links to a BAL 36 formation). The shared pairing/alignment algorithms are unchanged from 0.5.0; use the existing **Link clip ↔ play** and **No film** corrections rather than treating every automatic link as verified.
+
+In the running app, 12 play selections spread across the four quarters settled in **24–181 ms** (median **116 ms**). Warmed three-second playback samples at 1× and 0.25× reported no dropped frames in either viewer; maximum measured inter-angle clock difference was below 12 ms across the warmed samples. **0.5× was not consistently drop-free**: sideline dropped 4/94 and 12/93 frames in two samples, and end zone dropped 0/93 and 7/92. These short measurements do not certify every play or display configuration. Single-file progressive loading remains deferred; the complete file still finishes before automatic play links are published.
 
 ## Data sources
 
@@ -377,7 +399,7 @@ Pull requests build and test all three targets and upload workflow artifacts, bu
 
 To publish a testing build without promoting it to stable, run **Actions → build → Run workflow**, select the feature branch, and enable **experimental**. The workflow definition with this input must first be available on the default branch for GitHub to expose the dispatch form. All three native builds must pass before publishing. The version is suffixed with `-experimental.RUN_ID.RUN_ATTEMPT`; installers and the app are named **AMP22 Experimental**, use a separate application identifier, and save settings, film links, and caches in a separate **AMP22 Experimental** profile. Stable settings are not copied automatically. `A22_USER_DATA`, when explicitly set, overrides either profile.
 
-Experimental releases are marked **Prerelease**, never **Latest**, and are not offered to stable users by the app's update checker. Download and install them manually from Releases; experimental builds still check only for stable updates, not newer experiments. Normal pushes to `master` still publish stable releases, so keep unapproved experimental code on its feature branch. This provides a release path, not an already-published testing build.
+Experimental releases are marked **Prerelease**, never **Latest**, and are not offered to stable users by the app's update checker. Download and install them manually from Releases; experimental builds still check only for stable updates, not newer experiments. Normal pushes to `master` still publish stable releases, so keep unapproved experimental code on its feature branch. An older experimental prerelease does not contain this rebased branch's profiling/documentation updates; the home-machine profile above is not a release or a claim that the performance regression has been fixed.
 
 ### Download counts
 

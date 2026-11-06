@@ -420,7 +420,7 @@ async function openFilm(file) {
     setAnalysis(f.analysis);
     if (!f.analysis) {
       $('btn-analyze').hidden = false;
-      showMessage('This film has not been analyzed yet. Analysis finds each play\'s sideline and end zone clips (about 3–5 minutes per game, done once).');
+      showMessage('This film has not been analyzed yet. Analysis finds each play\'s sideline and end zone clips. Processing time depends on the footage and computer; results are cached when complete.');
       if (S.settings.autoAnalyze) analyze(false);
     }
   } catch (e) {
