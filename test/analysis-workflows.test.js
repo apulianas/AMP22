@@ -33,7 +33,9 @@ async function exerciseAnalysis({ app, win }) {
       yards_gained: i % 2 ? 10 : 4, epa: i % 2 ? 0.5 : -0.5, desc: `Analysis fixture ${i + 1}`,
     }),
     onField: { offense: [], defense: players.map((p, index) => game.week === 5 && index === 0 ? { ...p, id: 'range-only', name: 'Range Only Defender' } : p) }, personnel: { offense: '11' },
-    participation: { source: 'NFL Pro', status: 'complete' }, charting: { motion: i % 2 === 0 },
+    participation: { source: 'NFL Pro', status: 'complete' },
+    charting: { motion: i % 2 === 0, ...(game.week === 5 ? { pressure: i % 2 === 1 } : {}) },
+    chartingSources: { motion: 'FTN', ...(game.week === 5 ? { pressure: 'NFL Pro / NGS' } : {}) },
   }));
   let failRange = false;
   let failGame = false;
@@ -93,6 +95,17 @@ async function exerciseAnalysis({ app, win }) {
   await waitUntil(`$('lab-summary').textContent.includes('24BAL defense scored snaps')`);
   assert.match(await js(`$('player-choice').textContent`), /Range Only Defender.*12 plays/);
   assert.match(await js(`$('sel-offense').textContent`), /CIN offense/);
+  assert.match(await js(`$('lab-coverage').textContent`), /NFL Pro \/ NGS: 12 snaps/);
+  await js(`S.settings.filterPresets = [PRESETS.capture('Range pressure', {
+    ...PRESETS.emptyFilter(), choices: {player: ['range-only'], pressure: 'false'}
+  }, 'BAL', 'BUF', {'range-only': 'Range Only Defender'})];
+  chooseFilterPreset('Range pressure');`);
+  assert.match(await js(`$('lab-summary').textContent`), /6BAL defense scored snaps/);
+  assert.doesNotMatch(await js(`$('filter-data-warning').textContent`), /No matching data/);
+  await js(`setWorkspaceMode('analysis')`);
+  await waitUntil(`$('lab-summary').textContent.includes('6BAL defense scored snaps')`);
+  assert.equal(await js(`S.appliedPreset.name`), 'Range pressure', 'workspace reload retains applied presets');
+  await js(`S.appliedPreset = null; S.filter = PRESETS.emptyFilter(); syncFilterControls(); renderAdvancedFilters(); renderList()`);
   await js(`document.querySelector('#lab-chart-preview [data-bucket]').dispatchEvent(new MouseEvent('click', {bubbles: true}))`);
   assert.equal(await js(`$('lab-evidence').hidden`), false);
   await js(`setAdvancedChoice('player', 'range-only')`);
@@ -109,7 +122,10 @@ async function exerciseAnalysis({ app, win }) {
     const output = fs.readFileSync(destination);
     if (format === 'svg') assert.match(output.toString(), /^<svg/);
     if (format === 'png') assert.equal(output.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
-    if (format === 'csv') assert.match(output.toString(), /Shared filters/);
+    if (format === 'csv') {
+      assert.match(output.toString(), /Shared filters/);
+      assert.match(output.toString(), /NFL Pro \/ NGS: 12 snaps/);
+    }
   }
   destination = path.join(folder, 'evidence.csv');
   await js(`document.querySelector('#lab-rows button').click(); $('lab-evidence-csv').click()`);

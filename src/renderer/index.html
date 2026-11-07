@@ -57,6 +57,26 @@
         </div>
         <details class="advanced-filters">
           <summary>More filters <span id="adv-filter-active" class="muted" hidden></span></summary>
+          <div class="filter-presets">
+            <label for="filter-preset">Filter preset</label>
+            <div class="row">
+              <select id="filter-preset"><option value="">Choose a preset…</option></select>
+              <button id="filter-preset-delete" disabled>Delete</button>
+            </div>
+            <div class="row">
+              <input id="filter-preset-name" aria-label="New filter preset name" placeholder="New preset name" maxlength="60" />
+              <button id="filter-preset-save">Save current</button>
+            </div>
+            <p id="filter-preset-status" class="small" role="status" aria-live="polite"></p>
+            <div id="filter-preset-team" hidden>
+              <p id="filter-preset-team-message" class="small"></p>
+              <div class="row">
+                <button id="filter-preset-without-players">Apply without players</button>
+                <button id="filter-preset-cancel">Cancel</button>
+              </div>
+            </div>
+            <p id="filter-data-warning" class="small" role="status" aria-live="polite" hidden></p>
+          </div>
           <div class="row range-bounds">
             <label>Yards gained &ge;
               <input id="yards-min" type="number" step="1" placeholder="No minimum" title="Minimum yards gained on runs and passes, inclusive; negative values allowed" />
@@ -417,6 +437,7 @@
   <script src="../shared/reports.js"></script>
   <script src="../shared/export.js"></script>
   <script src="../shared/overlay.js"></script>
+  <script src="../shared/filter-presets.js"></script>
   <script src="../shared/settings.js"></script>
   <script src="../shared/align.js"></script>
   <script src="../shared/analysis.js"></script>

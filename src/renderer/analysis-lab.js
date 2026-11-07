@@ -193,7 +193,15 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       [`${result.knownEpa}/${result.n}`, 'known EPA'],
     ].map(([n, l]) => `<div><strong>${esc(n)}</strong><span>${esc(l)}</span></div>`).join('');
     const sourceText = Object.entries(result.sources).map(([s, n]) => `${s}: ${n} snaps`).join('; ') || 'No eligible snaps';
-    const coverage = `${sourceText}. Known yards: ${result.knownYards}/${result.n}; complete defensive position lists: ${result.completeDefense}/${result.n}. PBP/EPA: nflverse/nflfastR; charting where available: nflverse FTN/participation.`;
+    const chartingSources = new Map();
+    for (const play of result.plays) {
+      for (const source of new Set(Object.values(play.chartingSources || {}))) {
+        chartingSources.set(source, (chartingSources.get(source) || 0) + 1);
+      }
+    }
+    const chartingText = [...chartingSources].map(([source, n]) => `${source}: ${n} snaps`).join('; ') || 'No source-labelled charting';
+    const disagreements = result.plays.filter((play) => Object.keys(play.chartingConflicts || {}).length).length;
+    const coverage = `${sourceText}. Known yards: ${result.knownYards}/${result.n}; complete defensive position lists: ${result.completeDefense}/${result.n}. PBP/EPA: nflverse/nflfastR. Charting sources (may overlap): ${chartingText}. Source disagreements: ${disagreements} snaps; retained source values are used.`;
     $('coverage').textContent = `${coverage} Shared filters: ${shared}.`;
     $('yards-heading').textContent = side === 'defense' ? 'Yards allowed' : 'Yards gained';
     $('group').disabled = chart === 'heatmap';

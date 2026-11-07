@@ -1,9 +1,9 @@
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport, node ? require('./overlay') : root.A22.overlay);
+  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport, node ? require('./overlay') : root.A22.overlay, node ? require('./filter-presets') : root.A22.filterPresets);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).settings = mod;
-})(typeof self !== 'undefined' ? self : this, function (reports, clipExport, overlay) {
+})(typeof self !== 'undefined' ? self : this, function (reports, clipExport, overlay, filterPresets) {
   'use strict';
 
   const ACTIONS = [
@@ -35,6 +35,7 @@
     speeds: [1, 0.5, 0.25],
     defaultTeam: 'BAL',
     playerFilterSort: 'name',
+    filterPresets: [],
     filmRoot: '',
     participationRoot: '',
     autoAnalyze: true,
@@ -65,6 +66,7 @@
     const out = Object.assign({}, DEFAULT_SETTINGS, s);
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
     out.playReport = reports.mergeOptions(s.playReport);
+    out.filterPresets = filterPresets.savedPresets(s.filterPresets);
     try { out.overlayTheme = s.overlayTheme == null ? null : overlay.theme(s.overlayTheme); }
     catch { out.overlayTheme = null; }
     try { out.overlayOpacity = overlay.opacity(out.overlayOpacity); }

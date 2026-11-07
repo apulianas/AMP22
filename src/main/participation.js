@@ -40,11 +40,23 @@ function attachImports(folder, game, plays) {
         if (prior && prior.rows[0].source_play_id !== group[0].source_play_id) {
           throw new Error(`Multiple source plays (${prior.rows[0].source_play_id}, ${group[0].source_play_id}) match nflverse play ${p.playId}.`);
         }
+        // Charting and participation have independent completeness and freshness.
+        const charting = { ...prior?.charting };
+        for (const [key, field] of Object.entries(schema.charting(group[0]))) {
+          const previous = charting[key];
+          const at = Date.parse(field.capturedAt);
+          if (previous && at === Date.parse(previous.capturedAt) && previous.value !== field.value) {
+            throw new Error(`Conflicting NFL Pro charting for ${key} at the same capture time.`);
+          }
+          if (!previous || at > Date.parse(previous.capturedAt)) charting[key] = field;
+        }
+        let selected = prior;
         if (!prior || completeSides > prior.completeSides ||
             (completeSides === prior.completeSides && (group.length > prior.rows.length ||
               (group.length === prior.rows.length && time > prior.time)))) {
-          staged.set(p.playId, { rows: group, time, completeSides, source: r.source_game_id });
+          selected = { rows: group, time, completeSides, source: r.source_game_id };
         }
+        staged.set(p.playId, { ...selected, charting });
       }
       for (const [key, record] of staged) imported.set(key, record);
       if (unmatched) warnings.push(`${file}: ${unmatched} source plays could not be matched unambiguously.`);
@@ -79,7 +91,10 @@ function attachImports(folder, game, plays) {
       status: record.completeSides === 2 ? 'complete' : 'partial',
     };
     advanced.inferPersonnel(p);
+    advanced.attachNFLProCharting(p, record.charting);
   }
+  const conflicts = plays.filter(play => play.chartingConflicts && Object.keys(play.chartingConflicts).length);
+  if (conflicts.length) warnings.push(`NFL Pro charting differs from existing data on ${conflicts.length} plays. Existing values retained; both sources are available in play details and data exports.`);
   return warnings;
 }
 

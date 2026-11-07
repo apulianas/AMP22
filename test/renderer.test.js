@@ -10,13 +10,15 @@ const settings = require('../src/shared/settings');
 const clipExport = require('../src/shared/export');
 const advanced = require('../src/shared/advanced');
 const reports = require('../src/shared/reports');
+const filterPresets = require('../src/shared/filter-presets');
 
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
-    A22: { plays, settings, clipExport, advanced, reports, align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
+    A22: { plays, settings, clipExport, advanced, reports, filterPresets, align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {
+      querySelectorAll: () => [],
       getElementById(id) {
         if (!elements.has(id)) elements.set(id, {
           innerHTML: '', textContent: '', querySelector: () => null,
@@ -34,7 +36,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -91,6 +93,136 @@ function contextualPlayers() {
   r.renderAdvancedFilters();
   return r;
 }
+
+test('preset application replaces all controls and keeps unavailable choices explicit until data arrives', async () => {
+  const r = renderer();
+  r.S.game = { homeTeam: 'BAL', awayTeam: 'BUF' };
+  r.S.sel = { team: 'BAL', gameId: 'game' };
+  const saved = filterPresets.capture('Missing participation', {
+    ...filterPresets.emptyFilter(), offense: 'BAL', type: 'pass', airMin: 0, airMax: 0, qtr: '5',
+    choices: { player: ['missing'], offPersonnel: '11', motion: 'true' },
+  }, 'BAL', 'BUF', { missing: 'Saved Player' });
+  r.S.settings.filterPresets = [saved];
+  r.S.filter.text = 'old search';
+  r.chooseFilterPreset(saved.name);
+  assert.equal(r.elements.get('search').value, '');
+  assert.equal(r.elements.get('sel-offense').value, 'BAL');
+  assert.equal(r.elements.get('air-yards-min').value, 0);
+  assert.equal(r.elements.get('air-yards-max').value, 0);
+  assert.equal(r.elements.get('sel-qtr').value, '5');
+  assert.match(r.elements.get('sel-qtr').innerHTML, /unavailable/);
+  assert.deepEqual(r.visible(), []);
+  assert.equal(r.S.filter.choices.offPersonnel, '11');
+  assert.match(r.elements.get('adv-choices').innerHTML, /11 \(unavailable this game\)/);
+  assert.match(r.elements.get('player-choice').innerHTML, /Saved Player/);
+  assert.match(r.elements.get('filter-data-warning').textContent, /NFL Pro extension \(subscription required\)/);
+  assert.match(r.elements.get('filter-data-warning').textContent, /filters remain applied/);
+  Object.assign(r.S.plays[4], {
+    qtr: 5, charting: { motion: true }, personnel: { offense: '11' },
+    onField: { offense: [{ id: 'missing', name: 'Saved Player' }], defense: [] },
+  });
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  r.renderList();
+  assert.deepEqual(r.visible(), [4]);
+  assert.doesNotMatch(r.elements.get('filter-data-warning').textContent, /No matching data/);
+  r.removePlayerFilter('missing');
+  assert.equal(r.S.filter.choices.player, undefined);
+  assert.equal(saved.filter.choices.player[0], 'missing', 'saved snapshots never change when current tags are removed');
+});
+
+test('cross-team presets do not alter current filters until the user applies without players', () => {
+  const r = contextualPlayers();
+  r.S.game = { homeTeam: 'KC', awayTeam: 'JAX' };
+  r.S.sel.team = 'KC';
+  const preset = filterPresets.capture('Team players', {
+    ...filterPresets.emptyFilter(), offense: 'JAX', choices: { player: ['smith', 'hunter'], down: '2' },
+  }, 'BAL', 'JAX');
+  r.S.settings.filterPresets = [preset];
+  r.S.filter.text = 'keep this';
+  const before = JSON.stringify(r.S.filter);
+  r.chooseFilterPreset(preset.name);
+  assert.equal(JSON.stringify(r.S.filter), before);
+  assert.equal(r.S.pendingPreset, preset.name);
+  assert.equal(r.elements.get('filter-preset-team').hidden, false);
+  assert.match(r.elements.get('filter-preset-team-message').textContent, /BAL, not KC/);
+  r.chooseFilterPreset(r.S.pendingPreset, true);
+  assert.equal(r.S.filter.offense, 'JAX');
+  assert.equal(r.S.filter.choices.player, undefined);
+  assert.equal(r.S.filter.choices.down, '2');
+  assert.equal(r.elements.get('filter-preset-team').hidden, true);
+  assert.equal(preset.filter.choices.player.length, 2);
+});
+
+test('complete participation does not prompt another NFL Pro capture for a player who never appeared', () => {
+  const r = renderer();
+  for (const p of r.S.plays) {
+    p.personnel = { offense: '11', defense: 'Nickel' };
+    p.onField = Object.fromEntries(['offense', 'defense'].map(side => [side,
+      Array.from({ length: 11 }, (_, i) => ({ id: `${side}-${i}`, name: `${side} ${i}` })),
+    ]));
+  }
+  r.S.filter.choices.player = ['offense-0'];
+  r.renderList();
+  assert.equal(r.elements.get('filter-data-warning').hidden, true);
+  r.S.filter.choices.player = ['benched'];
+  r.renderList();
+  assert.match(r.elements.get('filter-data-warning').textContent, /No matching data/);
+  assert.doesNotMatch(r.elements.get('filter-data-warning').textContent, /NFL Pro extension/);
+});
+
+test('NGS-only filters and disagreement details keep flags separate from numeric FTN counts', () => {
+  const r = renderer();
+  r.S.plays[0].charting = { blitzers: 0, blitz: true, pressure: false, box: 6, boxCategory: 'Stacked (8+)', defPersonnelGroup: 'Nickel', motion: false };
+  r.S.plays[0].chartingSources = { motion: 'FTN', blitz: 'NFL Pro / NGS' };
+  r.S.plays[0].chartingConflicts = { motion: { source: 'FTN', value: false, nflPro: true } };
+  r.derivePlays();
+  r.renderAdvancedFilters();
+  r.setAdvancedChoice('blitz', 'true');
+  r.setAdvancedChoice('pressure', 'false');
+  r.setAdvancedChoice('boxCategory', 'Stacked (8+)');
+  assert.deepEqual(r.visible(), [0]);
+  assert.equal(r.S.plays[0].charting.blitzers, 0);
+  assert.equal(r.S.plays[0].charting.box, 6);
+  r.S.curPlay = 0;
+  r.renderInfo();
+  assert.match(r.elements.get('play-adv').innerHTML, /NFL Pro \/ NGS: NGS blitz/);
+  assert.match(r.elements.get('play-adv').innerHTML, /class="tag warning">Data disagreement: Motion · FTN No retained; NFL Pro Yes/);
+});
+
+test('saving presets persists a deep snapshot, rejects duplicate names, reports failures and deletes without clearing filters', async () => {
+  const r = contextualPlayers();
+  r.S.sel = { team: 'BAL', gameId: 'game' };
+  r.S.game = { homeTeam: 'BAL', awayTeam: 'JAX' };
+  r.S.settings = settings.mergeSettings({});
+  r.S.filter.offense = 'JAX';
+  r.S.filter.choices.player = ['smith'];
+  r.context.document.getElementById('filter-preset-name').value = ' My players ';
+  let written;
+  r.context.window.api = { saveSettings: async value => {
+    written = JSON.parse(JSON.stringify(value));
+    return written;
+  } };
+  await r.saveFilterPreset();
+  assert.equal(written.filterPresets[0].filter.offense, 'opponent');
+  assert.equal(written.filterPresets[0].playerTeam, 'BAL');
+  assert.equal(written.filterPresets[0].playerNames.smith, 'Roquan Smith');
+  assert.equal(r.S.appliedPreset.name, 'My players');
+  r.S.filter.choices.player.push('hunter');
+  assert.deepEqual(Array.from(r.S.settings.filterPresets[0].filter.choices.player), ['smith']);
+  r.elements.get('filter-preset-name').value = 'my PLAYERS';
+  await r.saveFilterPreset();
+  assert.match(r.elements.get('filter-preset-status').textContent, /already exists/);
+  r.elements.get('filter-preset-name').value = 'New';
+  r.context.window.api.saveSettings = async () => { throw new Error('Disk full'); };
+  await r.saveFilterPreset();
+  assert.match(r.elements.get('filter-preset-status').textContent, /Disk full/);
+  assert.equal(r.S.settings.filterPresets.length, 1);
+  r.context.window.api.saveSettings = async value => value;
+  await r.saveFilterPreset(true);
+  assert.equal(r.S.settings.filterPresets.length, 0);
+  assert.deepEqual(Array.from(r.S.filter.choices.player), ['smith', 'hunter']);
+});
 
 function playerOptionIds(r) {
   return [...r.elements.get('player-choice').innerHTML.matchAll(/<option value="([^"]+)"/g)]
@@ -474,6 +606,27 @@ test('automatic refresh distinguishes participation changes from unrelated folde
   r.context.window.api.getPlays = async () => { throw new Error('Import folder unreadable'); };
   await r.refreshParticipation(true);
   assert.match(r.elements.get('participation-notice').textContent, /Data warning: Import folder unreadable/);
+});
+
+test('a charting-only automatic import is reported as an update while participation and selected play remain unchanged', async () => {
+  const r = renderer();
+  vm.runInContext('realign = renderInfo = setStatus = () => {};', r.context);
+  r.S.game = { gameId: 'test', season: 2026 };
+  r.S.settings.participationRoot = '/configured-import-folder';
+  r.S.curPlay = 2;
+  r.S.selected = new Set([1, 2]);
+  const incoming = r.S.plays.map((p, i) => i === 0 ? {
+    ...p, charting: { pressure: false }, chartingSources: { pressure: 'NFL Pro / NGS' },
+    nflProCharting: { values: { pressure: false }, provenance: {} },
+  } : p);
+  r.context.window.api = { getPlays: async () => ({ plays: incoming }) };
+  await r.refreshParticipation(true);
+  assert.match(r.elements.get('participation-notice').textContent, /Updated automatically at/);
+  assert.equal(r.S.plays[0].charting.pressure, false);
+  assert.equal(r.S.plays[r.S.curPlay].playId, 3);
+  assert.deepEqual(Array.from(r.S.selected), [1, 2]);
+  await r.refreshParticipation(true);
+  assert.match(r.elements.get('participation-notice').textContent, /Checked automatically at/);
 });
 
 test('single-play export names retain game numbering and selected-team possession through Share', async () => {

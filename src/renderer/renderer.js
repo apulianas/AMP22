@@ -4,6 +4,7 @@
 const { ACTIONS, mergeSettings, comboFromEvent, keyLabel, buildKeymap, DEFAULT_SETTINGS } = A22.settings;
 const P = A22.plays;
 const ADV = A22.advanced;
+const PRESETS = A22.filterPresets;
 const REPORT = A22.reports;
 const $ = (id) => document.getElementById(id);
 
@@ -34,11 +35,10 @@ const S = {
   range: null, // {aStart, bStart, len}
   playing: false,
   speedIdx: 0,
-  filter: {
-    type: 'all', text: '', offense: '', qtr: '', result: '',
-    airMin: null, airMax: null, yardsMin: null, yardsMax: null, distMin: null, distMax: null,
-    choices: {}, // ADV_CHOICES key -> option value; player -> selected player IDs
-  },
+  filter: PRESETS.emptyFilter(),
+  appliedPreset: null,
+  pendingPreset: null,
+  savingPreset: false,
   visible: [], // play indices in list order
   progressFile: null,
   selected: new Set(),
@@ -65,7 +65,7 @@ async function setWorkspaceMode(mode, reload = true) {
   $('analysis-sidebar-note').hidden = mode !== 'analysis';
   try { localStorage.setItem('amp22.workspace', mode); }
   catch (error) { setStatus(`Workspace preference could not be saved: ${error.message}`, true); }
-  if (reload && S.sel.gameId) await loadGame();
+  if (reload && S.sel.gameId) await loadGame(undefined, { preserveFilters: true });
 }
 
 function analysisFilterDescription() {
@@ -149,6 +149,7 @@ function applySettings(s) {
   updateEndLabel();
   renderHelp();
   updateTooltips();
+  renderPresetOptions();
   if (S.plays.length) {
     derivePlays();
     renderList();
@@ -230,14 +231,23 @@ async function loadSchedule(force) {
 
 /* ---------------- game loading ---------------- */
 
-async function loadGame(force) {
+async function loadGame(force, { preserveFilters = false } = {}) {
   analysisLab?.invalidate();
   const gameId = S.sel.gameId;
   const team = S.sel.team;
+  // A new game starts a fresh preset application, including its team/data checks.
+  if (!preserveFilters) {
+    if (S.appliedPreset) S.filter = PRESETS.emptyFilter();
+    S.appliedPreset = null;
+  }
+  S.pendingPreset = null;
+  $('filter-preset-team').hidden = true;
+  $('filter-preset-status').textContent = '';
   closeFilm();
   const revision = S.filmRevision;
   S.game = S.games.find((g) => g.gameId === gameId) || null;
   S.plays = [];
+  renderPresetOptions();
   S.participationNotice = '';
   S.participationWarning = '';
   renderParticipationStatus();
@@ -254,10 +264,11 @@ async function loadGame(force) {
   const opp = S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
   fillSelect($('sel-offense'), [
     { value: '', label: 'Both offenses' },
-    { value: S.sel.team, label: `${S.sel.team} offense` },
-    ...(opp ? [{ value: opp, label: `${opp} offense` }] : []),
-  ], S.mode === 'analysis' ? S.filter.offense : '');
-  if (S.mode !== 'analysis') S.filter.offense = '';
+    { value: S.sel.team, label: 'Analyzed team' },
+    ...(opp ? [{ value: opp, label: 'Opponent' }] : []),
+  ], S.mode === 'analysis' || preserveFilters ? S.filter.offense : '');
+  $('sel-offense').title = `Filter by offense: analyzed team ${S.sel.team}; opponent ${opp || 'unavailable'}`;
+  if (S.mode !== 'analysis' && !preserveFilters) S.filter.offense = '';
   renderQuarters();
 
   if (S.game) {
@@ -277,6 +288,7 @@ async function loadGame(force) {
   derivePlays();
   renderQuarters();
   renderAdvancedFilters();
+  syncFilterControls();
 
   if (S.mode === 'analysis') {
     realign();
@@ -545,6 +557,129 @@ const RANGE_FILTERS = {
   dist: (p) => p.ydstogo,
 };
 
+/* ---------------- filter presets ---------------- */
+
+function filterOpponent() {
+  return S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
+}
+
+function renderPresetOptions() {
+  fillSelect($('filter-preset'), [
+    { value: '', label: 'Choose a preset…' },
+    ...(S.settings?.filterPresets || []).map(preset => ({
+      value: preset.name, label: `${preset.name}${preset.playerTeam ? ` · ${preset.playerTeam} players` : ''}`,
+    })),
+  ], S.appliedPreset?.name || '');
+  $('filter-preset-delete').disabled = S.savingPreset || !(S.settings?.filterPresets || []).some(p => p.name === S.appliedPreset?.name);
+  $('filter-preset-save').disabled = S.savingPreset || !S.game || !S.plays.length;
+}
+
+function syncFilterControls() {
+  $('search').value = S.filter.text;
+  $('sel-offense').value = S.filter.offense;
+  $('sel-result').value = S.filter.result;
+  renderQuarters();
+  document.querySelectorAll('#type-chips button').forEach(button => button.classList.toggle('on', button.dataset.type === S.filter.type));
+  for (const [prefix, key] of [['air-yards', 'air'], ['yards', 'yards'], ['dist', 'dist']]) {
+    for (const bound of ['min', 'max']) $(`${prefix}-${bound}`).value = S.filter[`${key}${bound === 'min' ? 'Min' : 'Max'}`] ?? '';
+  }
+}
+
+function chooseFilterPreset(name, withoutPlayers = false) {
+  const preset = (S.settings.filterPresets || []).find(p => p.name === name);
+  S.pendingPreset = null;
+  $('filter-preset-team').hidden = true;
+  if (!preset) { renderPresetOptions(); return; }
+  if (!S.game || !S.plays.length) {
+    $('filter-preset-status').textContent = 'Load a game with play-by-play before applying a preset.';
+    renderPresetOptions();
+    return;
+  }
+  if (preset.playerTeam && preset.playerTeam !== S.sel.team && !withoutPlayers) {
+    S.pendingPreset = preset.name;
+    $('filter-preset-team-message').textContent =
+      `“${preset.name}” uses specific players and is tied to analyzed team ${preset.playerTeam}, not ${S.sel.team}. Apply all other filters without any players selected?`;
+    $('filter-preset-team').hidden = false;
+    renderPresetOptions();
+    return;
+  }
+  try {
+    S.filter = PRESETS.restore(preset, S.sel.team, filterOpponent(), withoutPlayers);
+    S.appliedPreset = preset;
+    syncFilterControls();
+    renderAdvancedFilters();
+    renderList();
+    renderPresetOptions();
+    $('filter-preset-status').textContent = `Applied “${preset.name}”${withoutPlayers ? ' without players' : ''}.`;
+  } catch (e) {
+    $('filter-preset-status').textContent = `Could not apply preset: ${e.message}`;
+  }
+}
+
+async function saveFilterPreset(remove = false) {
+  if (S.savingPreset) return;
+  S.savingPreset = true;
+  $('filter-preset-save').disabled = $('filter-preset-delete').disabled = true;
+  try {
+    const presets = S.settings.filterPresets || [];
+    const filterBefore = JSON.stringify(S.filter);
+    const teamBefore = S.sel.team;
+    const gameBefore = S.sel.gameId;
+    let captured;
+    let next;
+    if (remove) {
+      next = presets.filter(p => p.name !== S.appliedPreset?.name);
+    } else {
+      if (!S.game || !S.plays.length) throw new Error('Load a game with play-by-play first.');
+      const names = Object.fromEntries(choiceOptions(ADV_CHOICES.find(spec => spec.key === 'player')).map(([id, , name]) => [id, name]));
+      const preset = PRESETS.capture($('filter-preset-name').value, S.filter, S.sel.team, filterOpponent(),
+        { ...S.appliedPreset?.playerNames, ...names });
+      if (presets.some(p => p.name.toLowerCase() === preset.name.toLowerCase())) throw new Error('That preset name already exists. Choose a new name.');
+      next = [...presets, preset];
+      captured = preset;
+    }
+    S.settings = mergeSettings(await window.api.saveSettings({ ...S.settings, filterPresets: next }));
+    if (captured && S.sel.team === teamBefore && S.sel.gameId === gameBefore && JSON.stringify(S.filter) === filterBefore) {
+      S.appliedPreset = captured;
+    }
+    $('filter-preset-status').textContent = remove ? 'Preset deleted. Current filters are unchanged.' : 'Current filters saved as a new preset.';
+    if (!remove) $('filter-preset-name').value = '';
+  } catch (e) {
+    $('filter-preset-status').textContent = `Could not ${remove ? 'delete' : 'save'} preset: ${e.message}`;
+  } finally {
+    S.savingPreset = false;
+    renderPresetOptions();
+  }
+}
+
+function renderFilterDataWarning() {
+  const source = filterSource();
+  const messages = [];
+  const participationChoices = ADV_CHOICES.filter(spec => ['player', 'offPersonnel', 'defPackage'].includes(spec.key) &&
+    hasValue(S.filter.choices[spec.key]));
+  const incomplete = participationChoices.some(spec => source.some(p => (p.cat === 'run' || p.cat === 'pass') &&
+    (spec.key === 'player' ? spec.get(p).length < 22 : !hasValue(spec.get(p)))));
+  const missing = ADV_CHOICES.filter(spec => hasValue(S.filter.choices[spec.key]) &&
+    (spec.key === 'player'
+      ? S.filter.choices.player.some(id => !source.some(p => spec.get(p).includes(id)))
+      : !source.some(p => choiceMatches(S.filter.choices[spec.key], spec.get(p)))));
+  if (missing.length) messages.push(`No matching data for: ${missing.map(spec => spec.label).join(', ')}. These filters remain applied; clear them to broaden results.`);
+  const noPlayers = !source.some(p => p.onField?.offense?.length || p.onField?.defense?.length);
+  const noPersonnel = !source.some(p => p.personnel?.offense) || !source.some(p => p.personnel?.defense);
+  if (source.length && (noPlayers || noPersonnel || incomplete)) {
+    messages.push('Player/personnel filtering needs participation data. If historical data is unavailable, capture this game with the optional NFL Pro extension (subscription required) and import its CSV. Personnel inference needs complete, supported player positions.');
+  }
+  if (missing.some(spec => ['qbLocation', 'motion', 'playAction', 'blitz', 'pressure', 'boxCategory', 'defPersonnelGroup'].includes(spec.key))) {
+    messages.push('The updated NFL Pro extension can capture available NGS alignment, motion, play action, blitz/pressure flags, box categories, and personnel groups. Recapture the game to import them. Exact rush/blitz counts, RPO, screen, no-huddle, and coverage still need other data.');
+  }
+  if (incomplete) {
+    messages.push('Only plays with the selected participation data match; missing or partial imports can omit matches.');
+  }
+  const el = $('filter-data-warning');
+  el.hidden = !messages.length;
+  el.textContent = messages.join(' ');
+}
+
 const YES_NO = [['true', 'Yes'], ['false', 'No']];
 /**
  * Advanced select filters. Each is shown only when the loaded game has data for it. Option
@@ -562,6 +697,10 @@ const ADV_CHOICES = [
   { key: 'box', label: 'Box count', get: (p) => p.charting?.box, options: [['<=5', '5 or fewer'], ['6', '6'], ['7', '7'], ['8+', '8+']], title: 'Defenders in the box at the snap' },
   { key: 'rushers', label: 'Pass rushers', get: (p) => p.charting?.rushers, options: [['<=3', '3 or fewer'], ['4', '4'], ['5+', '5+'], ['6+', '6+']] },
   { key: 'blitzers', label: 'Blitzers', get: (p) => p.charting?.blitzers, options: [['0', 'No blitz'], ['1+', 'Blitz (1+)'], ['2+', '2+']] },
+  { key: 'blitz', label: 'NGS blitz', get: (p) => p.charting?.blitz, options: YES_NO, title: 'NFL Pro / Next Gen Stats flag, not an FTN blitzer count' },
+  { key: 'pressure', label: 'NGS pressure', get: (p) => p.charting?.pressure, options: YES_NO },
+  { key: 'boxCategory', label: 'NGS box', get: (p) => p.charting?.boxCategory, options: 'values', title: 'NFL Pro categories: Light (<7), Neutral (7), Stacked (8+). Does not supply an exact FTN box count.' },
+  { key: 'defPersonnelGroup', label: 'NGS personnel', get: (p) => p.charting?.defPersonnelGroup, options: 'values', title: 'NFL Pro Base/Nickel/Dime group, not a confirmed defensive front or inferred player-position package' },
   { key: 'motion', label: 'Motion', get: (p) => p.charting?.motion, options: YES_NO },
   { key: 'playAction', label: 'Play action', get: (p) => p.charting?.playAction, options: YES_NO },
   { key: 'rpo', label: 'RPO', get: (p) => p.charting?.rpo, options: YES_NO },
@@ -665,22 +804,22 @@ function renderPlayerFilter() {
     groupHtml +
     `</select></label><ul class="player-filter-tags" aria-label="Selected on-field players">` +
     selected.map((id) => {
-      const name = all.find(([v]) => v === id)?.[2] || id;
+      const name = all.find(([v]) => v === id)?.[2] || S.appliedPreset?.playerNames?.[id] || id;
       return `<li class="player-filter-tag"><span title="${esc(name)}">${esc(name)}</span>` +
         `<button type="button" data-remove-player="${esc(id)}" aria-label="Remove ${esc(name)} from on-field filter" title="Remove ${esc(name)}">&times;</button></li>`;
     }).join('') + `</ul><small id="on-field-player-help" class="muted">Match all selected players. Counts include other filters. Only matching players are listed.</small>`;
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 
-/** Builds the select filters available for the loaded game, dropping selections it can't satisfy. */
+/** Preset selections stay explicit even when the game cannot satisfy them. */
 function renderAdvancedFilters() {
   const html = [];
   const choices = {};
   const source = filterSource();
-  const preserve = S.mode === 'analysis';
+  const preserve = S.mode === 'analysis' || !!S.appliedPreset;
   for (const spec of ADV_CHOICES) {
     const cur = S.filter.choices[spec.key];
-    if (!source.some((p) => hasValue(spec.get(p))) && !(preserve && cur)) continue;
+    if (!source.some((p) => hasValue(spec.get(p))) && !(preserve && hasValue(cur))) continue;
     const opts = choiceOptions(spec).slice();
     if (spec.options === 'players') {
       const selected = [...new Set(Array.isArray(cur) ? cur : cur ? [cur] : [])].filter((id) => preserve || opts.some(([v]) => v === id));
@@ -689,7 +828,9 @@ function renderAdvancedFilters() {
       continue;
     }
     if (cur && (preserve || opts.some(([v]) => v === cur))) choices[spec.key] = cur;
-    if (preserve && cur && !opts.some(([v]) => v === cur)) opts.push([cur, `${cur} (not in scope)`]);
+    if (preserve && cur && !opts.some(([v]) => v === cur)) {
+      opts.push([cur, `${cur} (${S.mode === 'analysis' ? 'not in scope' : 'unavailable this game'})`]);
+    }
     html.push(`<label${spec.title ? ` title="${esc(spec.title)}"` : ''}>${esc(spec.label)}<select data-choice="${spec.key}">` +
       `<option value="">Any</option>${opts.map(([v, l]) => `<option value="${esc(v)}"${choices[spec.key] === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`);
   }
@@ -698,6 +839,8 @@ function renderAdvancedFilters() {
   renderPlayerFilter();
   $('adv-note').hidden = !source.length || source.some((p) => p.personnel || p.charting);
   updateAdvancedIndicator();
+  renderFilterDataWarning();
+  renderPresetOptions();
 }
 
 function setAdvancedChoice(key, value) {
@@ -750,6 +893,9 @@ function renderQuarters() {
   const qs = [...new Set(filterSource().map((p) => p.qtr).filter((q) => q != null))].sort((a, b) => a - b);
   if (S.mode === 'analysis' && S.filter.qtr && !qs.includes(Number(S.filter.qtr))) qs.push(Number(S.filter.qtr));
   const opts = [{ value: '', label: 'All quarters' }].concat(qs.map((q) => ({ value: String(q), label: q >= 5 ? (q === 5 ? 'OT' : `OT${q - 4}`) : `Q${q}` })));
+  if (S.appliedPreset && S.filter.qtr && !opts.some(o => o.value === S.filter.qtr)) {
+    opts.push({ value: S.filter.qtr, label: `Q${S.filter.qtr} (unavailable)` });
+  }
   if (!opts.some((o) => o.value === S.filter.qtr)) S.filter.qtr = '';
   fillSelect($('sel-qtr'), opts, S.filter.qtr);
 }
@@ -760,9 +906,10 @@ function renderParticipationStatus() {
   el.hidden = !S.game || (!S.settings.participationRoot && !imported.length);
   if (el.hidden) return;
   const complete = imported.filter((p) => p.participation.status === 'complete').length;
-  const summary = imported.length
+  const charted = S.plays.filter(p => p.nflProCharting).length;
+  const summary = (imported.length
     ? `NFL Pro: ${imported.length} ${imported.length === 1 ? 'play' : 'plays'} imported · ${complete} complete, ${imported.length - complete} partial`
-    : 'NFL Pro: no matching plays imported yet';
+    : 'NFL Pro: no matching plays imported yet') + (charted ? ` · ${charted} with NGS charting` : '');
   const notice = S.participationWarning
     ? `Data warning: ${S.participationWarning}`
     : S.participationNotice || 'Watching the configured CSV folder. No manual refresh needed.';
@@ -806,6 +953,7 @@ function renderList() {
   updateSelection();
   renderParticipationStatus();
   renderPlayerFilter();
+  renderFilterDataWarning();
   analysisLab?.refresh();
 }
 
@@ -837,7 +985,14 @@ function renderAdvancedInfo(p) {
   const tags = p ? ADV.tags(p) : [];
   if (p?.personnel?.inferred) tags.push('Personnel inferred from positions');
   if (p?.participation) tags.push(`${p.participation.source} participation · ${p.participation.status}`);
-  $('play-adv').innerHTML = tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('');
+  const supplied = Object.keys(p?.chartingSources || {}).filter(key => p.chartingSources[key] === 'NFL Pro / NGS');
+  if (supplied.length) tags.push(`NFL Pro / NGS: ${supplied.map(key => ADV_CHOICES.find(spec => spec.key === key)?.label || key).join(', ')}`);
+  for (const [key, conflict] of Object.entries(p?.chartingConflicts || {})) {
+    const label = ADV_CHOICES.find(spec => spec.key === key)?.label || key;
+    const display = value => typeof value === 'boolean' ? value ? 'Yes' : 'No' : String(value);
+    tags.push(`Data disagreement: ${label} · ${conflict.source} ${display(conflict.value)} retained; NFL Pro ${display(conflict.nflPro)}`);
+  }
+  $('play-adv').innerHTML = tags.map((t) => `<span class="tag${t.startsWith('Data disagreement:') ? ' warning' : ''}">${esc(t)}</span>`).join('');
   const onField = p && p.onField;
   const box = $('on-field');
   box.hidden = !onField;
@@ -2537,6 +2692,15 @@ function wire() {
   $('sel-offense').addEventListener('change', (e) => { S.filter.offense = e.target.value; e.target.blur(); renderList(); });
   $('sel-qtr').addEventListener('change', (e) => { S.filter.qtr = e.target.value; e.target.blur(); renderList(); });
   $('sel-result').addEventListener('change', (e) => { S.filter.result = e.target.value; e.target.blur(); renderList(); });
+  $('filter-preset').addEventListener('change', (e) => chooseFilterPreset(e.target.value));
+  $('filter-preset-save').addEventListener('click', () => saveFilterPreset());
+  $('filter-preset-delete').addEventListener('click', () => saveFilterPreset(true));
+  $('filter-preset-without-players').addEventListener('click', () => chooseFilterPreset(S.pendingPreset, true));
+  $('filter-preset-cancel').addEventListener('click', () => {
+    S.pendingPreset = null;
+    $('filter-preset-team').hidden = true;
+    renderPresetOptions();
+  });
   for (const [id, field] of [
     ['air-yards-min', 'airMin'], ['air-yards-max', 'airMax'],
     ['yards-min', 'yardsMin'], ['yards-max', 'yardsMax'],
@@ -2627,6 +2791,7 @@ function wire() {
   $('set-reset').addEventListener('click', () => {
     draft = JSON.parse(JSON.stringify(Object.assign({}, DEFAULT_SETTINGS, {
       filmRoot: $('set-root').value, participationRoot: $('set-participation-root').value,
+      filterPresets: S.settings.filterPresets,
     })));
     capture = null;
     renderSettings();
@@ -2657,7 +2822,7 @@ async function refreshParticipation(automatic = false) {
   const gameId = S.game.gameId;
   const revision = ++participationRevision;
   const filmRevision = S.filmRevision;
-  const before = JSON.stringify(S.plays.map((p) => [p.playId, p.participation, p.onField]));
+  const before = JSON.stringify(S.plays.map((p) => [p.playId, p.participation, p.onField, p.charting, p.nflProCharting]));
   S.participationNotice = automatic ? 'Checking imports automatically…' : 'Checking imports…';
   renderParticipationStatus();
   try {
@@ -2666,7 +2831,7 @@ async function refreshParticipation(automatic = false) {
     const current = S.plays[S.curPlay]?.playId;
     const selected = new Set([...S.selected].map((i) => S.plays[i]?.playId));
     S.plays = r.plays;
-    const changed = before !== JSON.stringify(S.plays.map((p) => [p.playId, p.participation, p.onField]));
+    const changed = before !== JSON.stringify(S.plays.map((p) => [p.playId, p.participation, p.onField, p.charting, p.nflProCharting]));
     S.participationWarning = r.warning || '';
     S.participationNotice = `${automatic && changed ? 'Updated automatically' : automatic ? 'Checked automatically' : 'Imports checked'} at ${new Date().toLocaleTimeString()}.`;
     S.curPlay = S.plays.findIndex((p) => p.playId === current);
