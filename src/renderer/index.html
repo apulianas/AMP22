@@ -33,14 +33,23 @@
   <main>
     <aside id="sidebar">
       <div class="filters">
-        <input id="search" type="search" placeholder="Search plays  ( / )" data-shortcut="search" title="Search plays" />
+        <label id="analysis-perspective" hidden>Analysis side
+          <select id="lab-side">
+            <option value="defense">Defense</option>
+            <option value="offense">Offense</option>
+          </select>
+        </label>
+        <div class="row filter-search-row">
+          <input id="search" type="search" placeholder="Search plays  ( / )" data-shortcut="search" title="Search plays" />
+          <button id="clear-filters" hidden title="Clear search and all play filters without deleting saved presets">Clear all filters</button>
+        </div>
         <div id="type-chips" class="chips">
           <button data-type="all" class="on">All</button>
           <button data-type="run">Run</button>
           <button data-type="pass">Pass</button>
           <button data-type="special">ST</button>
         </div>
-        <div class="row">
+        <div class="row primary-filter-choices">
           <select id="sel-offense"><option value="">Both offenses</option></select>
           <select id="sel-qtr"><option value="">All quarters</option></select>
           <select id="sel-result" title="Filter by result">
@@ -55,6 +64,7 @@
             <option value="penalty">Penalties</option>
           </select>
         </div>
+        <small class="muted">Counts show matching plays with other filters applied.</small>
         <details class="advanced-filters">
           <summary>More filters <span id="adv-filter-active" class="muted" hidden></span></summary>
           <div class="filter-presets">
@@ -125,7 +135,7 @@
         <span class="spacer"></span>
         <button id="btn-clear-selection" hidden disabled>Clear selection</button>
       </div>
-      <p id="analysis-sidebar-note" class="muted small" hidden>Filters and player counts use the analysis scope. This play list shows the selected game; use table evidence for plays across a range.</p>
+      <p id="analysis-sidebar-note" class="muted small" hidden>This list shows the selected game's scored snaps for the chosen analysis side and scope. Filters apply here too. Use the analysis play picker or table evidence for plays across a range.</p>
       <ol id="play-list"></ol>
       <div id="list-footer" class="muted"></div>
     </aside>

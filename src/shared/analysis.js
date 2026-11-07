@@ -202,6 +202,11 @@
           ['share', 'totalYards', 'yardsN', 'epaN', 'conversionN', ...Object.keys(METRICS)].some((k) => r[k] !== null && !known(r[k])))) {
       throw new Error('Invalid Analysis Lab report.');
     }
+    if (report.selection && (!['include', 'exclude'].includes(report.selection.mode) ||
+        !Array.isArray(report.selection.playIds) || report.selection.playIds.length > 20000 ||
+        report.selection.playIds.some(id => typeof id !== 'string' || !id || id.length > 100))) {
+      throw new Error('Invalid Analysis Lab play selection.');
+    }
     return report;
   }
 
@@ -213,6 +218,10 @@
       ['AMP22 Analysis Lab', report.title], ['Scope', report.subtitle],
       ['Definitions and sources', `${report.notes} ${EXCLUSIONS} ${DEFINITIONS} Rates are fractions (0-1). * = listed-position estimate, not alignment.`],
       header, ...report.rows.map((r) => columns.map((k) => r[k])),
+      ...(report.selection ? [
+        ['Play selection mode', report.selection.mode],
+        ...report.selection.playIds.map(id => ['Selected game/play ID', id]),
+      ] : []),
     ].map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
   }
 

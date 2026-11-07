@@ -26,7 +26,8 @@ async function exerciseAnalysis({ app, win }) {
   const A = require('../src/shared/analysis');
   const players = Object.entries(A.DEFAULT_PACKAGES[0].counts).flatMap(([position, count]) =>
     Array.from({ length: count }, (_n, i) => ({ id: `${position}-${i}`, position, name: `${position} ${i}` })));
-  const makePlays = (game) => Array.from({ length: 12 }, (_n, i) => ({
+  let fixtureSize = 12;
+  const makePlays = (game) => Array.from({ length: fixtureSize }, (_n, i) => ({
     ...P.normalizePlay({
       game_id: game.gameId, play_id: i + 1, posteam: game.awayTeam === 'BAL' ? 'CIN' : 'BUF', defteam: 'BAL',
       play_type: i % 2 ? 'pass' : 'run', qtr: i < 6 ? 1 : 3, time: '10:00', down: 3, ydstogo: 7,
@@ -36,7 +37,14 @@ async function exerciseAnalysis({ app, win }) {
     participation: { source: 'NFL Pro', status: 'complete' },
     charting: { motion: i % 2 === 0, ...(game.week === 5 ? { pressure: i % 2 === 1 } : {}) },
     chartingSources: { motion: 'FTN', ...(game.week === 5 ? { pressure: 'NFL Pro / NGS' } : {}) },
-  }));
+  })).concat(Array.from({ length: 4 }, (_n, i) => ({
+    ...P.normalizePlay({
+      game_id: game.gameId, play_id: fixtureSize + i + 1, posteam: 'BAL', defteam: game.homeTeam === 'BAL' ? game.awayTeam : game.homeTeam,
+      play_type: i % 2 ? 'pass' : 'run', qtr: 2, time: '10:00', down: 1, ydstogo: 10,
+      yards_gained: i % 2 ? 12 : 6, epa: 0.25, desc: `Baltimore offense fixture ${i + 1}`,
+    }),
+    personnel: { offense: '11' },
+  })));
   let failRange = false;
   let failGame = false;
   const requests = [];
@@ -68,6 +76,29 @@ async function exerciseAnalysis({ app, win }) {
   await waitUntil(`document.querySelector('#lab-rows button') !== null`);
   assert.equal(filmCalls, 0);
   assert.equal(await js(`$('viewer').hidden && !$('analysis-lab').hidden`), true);
+  assert.equal(await js(`$('lab-side').closest('#sidebar') !== null`), true, 'analysis side belongs beside the Film Room filters');
+  assert.equal(await js(`document.querySelectorAll('#lab-side').length`), 1);
+  assert.deepEqual(await js(`[...$('lab-side').options].map(option => option.textContent)`), ['Baltimore Ravens defense', 'Baltimore Ravens offense']);
+  assert.deepEqual(await js(`S.visible.map(index => S.plays[index].posteam)`), Array(12).fill('BUF'));
+  assert.equal(await js(`$('play-list').querySelectorAll('li[data-i]').length`), 12);
+  await js(`setWorkspaceMode('film', false)`);
+  assert.equal(await js(`$('analysis-perspective').hidden`), true, 'analysis-only control stays hidden in Film Room');
+  await js(`setWorkspaceMode('analysis', false)`);
+  assert.equal(await js(`$('analysis-perspective').hidden`), false);
+  await js(`$('lab-side').value = 'offense'; $('lab-side').dispatchEvent(new Event('change'))`);
+  assert.match(await js(`$('lab-summary').textContent`), /4BAL offense scored snaps/);
+  assert.deepEqual(await js(`S.visible.map(index => S.plays[index].posteam)`), Array(4).fill('BAL'));
+  assert.deepEqual(await js(`S.visible`), [12, 13, 14, 15], 'sidebar indices stay aligned with the loaded game');
+  assert.match(await js(`$('sel-offense').textContent`), /Baltimore Ravens offense/);
+  assert.equal(await js(`$('lab-yards-heading').textContent`), 'Yards gained');
+  await js(`$('type-chips').querySelector('[data-type="pass"]').click()`);
+  assert.equal(await js(`S.visible.length`), 2);
+  await js(`$('clear-filters').click()`);
+  assert.equal(await js(`$('lab-side').value`), 'offense');
+  assert.deepEqual(await js(`S.visible`), [12, 13, 14, 15], 'clearing filters does not broaden the list to the other side');
+  await js(`$('lab-side').value = 'defense'; $('lab-side').dispatchEvent(new Event('change'))`);
+  assert.deepEqual(await js(`S.visible.map(index => S.plays[index].defteam)`), Array(12).fill('BAL'));
+  assert.equal(await js(`$('lab-yards-heading').textContent`), 'Yards allowed');
   assert.match(await js(`$('lab-summary').textContent`), /12/);
   assert.match(await js(`$('lab-rows').textContent`), /Big nickel/);
   assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows tr')].map(row => row.querySelector('small').textContent)`),
@@ -83,6 +114,48 @@ async function exerciseAnalysis({ app, win }) {
   assert.notEqual(await js(`getComputedStyle(document.querySelector('#lab-rows .lab-row-run')).backgroundColor`),
     await js(`getComputedStyle(document.querySelector('#lab-rows .lab-row-pass')).backgroundColor`));
   assert.equal(await js(`localStorage.getItem('amp22.workspace')`), 'analysis');
+  assert.equal(await js(`$('clear-filters').hidden`), true);
+  assert.equal(await js(`$('type-chips').querySelector('[data-type="run"]').textContent`), 'Run (6)');
+  await js(`setAdvancedChoice('motion', 'true')`);
+  assert.equal(await js(`$('clear-filters').hidden`), false);
+  assert.equal(await js(`document.querySelector('[data-choice="motion"] option[value="false"]').textContent`), 'No (6)');
+  assert.equal(await js(`$('type-chips').querySelector('[data-type="pass"]').textContent`), 'Pass (0)');
+  await js(`$('clear-filters').click()`);
+  assert.equal(await js(`$('clear-filters').hidden`), true);
+  assert.equal(await js(`document.activeElement.id`), 'search');
+  assert.equal(await js(`$('type-chips').querySelector('[data-type="pass"]').textContent`), 'Pass (6)');
+  await js(`$('lab-play-selection').open = true;
+    document.querySelector('#lab-selection-plays [data-selection="0"]').click();
+    document.querySelector('#lab-selection-plays [data-selection="2"]').dispatchEvent(new MouseEvent('click', {bubbles: true, shiftKey: true}));
+    $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
+  assert.match(await js(`$('lab-summary').textContent`), /3BAL defense scored snaps/);
+  assert.equal(await js(`S.selected.size`), 3, 'range selection synchronizes sidebar selection');
+  assert.equal(await js(`$('type-chips').querySelector('[data-type="all"]').textContent`), 'All (3)');
+  assert.match(await js(`$('lab-coverage').textContent`), /Only selected plays; 3 selected/);
+  await js(`document.querySelector('#lab-selection-plays [data-selection="1"]').click()`);
+  assert.match(await js(`$('lab-summary').textContent`), /2BAL defense scored snaps/);
+  assert.equal(await js(`document.querySelector('#lab-rows td:nth-child(4)').textContent`), '8n=2');
+  await js(`$('lab-selection-mode').value = 'exclude'; $('lab-selection-mode').dispatchEvent(new Event('change'))`);
+  assert.match(await js(`$('lab-summary').textContent`), /10BAL defense scored snaps/);
+  assert.equal(await js(`$('lab-selection-plays').children.length`), 12, 'excluded plays remain in the picker');
+  await js(`document.querySelector('#lab-selection-plays [data-selection="0"]').click()`);
+  assert.match(await js(`$('lab-summary').textContent`), /11BAL defense scored snaps/);
+  await js(`$('lab-clear-selection').click(); $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'))`);
+  assert.match(await js(`$('lab-summary').textContent`), /0BAL defense scored snaps/);
+  assert.equal(await js(`$('lab-csv').disabled`), true, 'empty selection never falls back to all plays');
+  assert.equal(await js(`$('clear-filters').hidden`), false, 'selection mode alone is an active filter');
+  await js(`$('clear-filters').click()`);
+  assert.equal(await js(`$('lab-selection-mode').value`), 'all');
+  await js(`$('btn-multi-select').click();
+    document.querySelector('#play-list li[data-i="0"] .play-check').click();
+    document.querySelector('#play-list li[data-i="1"] .play-check').click();
+    $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
+  assert.match(await js(`$('lab-summary').textContent`), /2BAL defense scored snaps/);
+  await js(`document.querySelector('#play-list li[data-i="0"] .play-check').click()`);
+  assert.match(await js(`$('lab-summary').textContent`), /1BAL defense scored snaps/);
+  await js(`$('btn-clear-selection').click()`);
+  assert.match(await js(`$('lab-summary').textContent`), /0BAL defense scored snaps/);
+  await js(`$('clear-filters').click()`);
   await js(`document.querySelector('#lab-packages [data-remove="0"]').click();
     $('lab-package-name').value = 'My nickel';
     for (const [position, count] of Object.entries(${JSON.stringify(A.DEFAULT_PACKAGES[0].counts)})) $('lab-count-' + position).value = count;
@@ -107,9 +180,28 @@ async function exerciseAnalysis({ app, win }) {
   assert.equal(await js(`$('lab-evidence-plays').children.length`), 6);
   await js(`$('lab-scope').value = 'range'; $('lab-from').value = '4'; $('lab-to').value = '5'; $('lab-scope').dispatchEvent(new Event('change'));`);
   await waitUntil(`$('lab-summary').textContent.includes('24BAL defense scored snaps')`);
+  assert.equal(await js(`$('type-chips').querySelector('[data-type="all"]').textContent`), 'All (24)');
+  assert.equal(await js(`S.visible.length`), 12, 'range counts span all games while the sidebar stays on the selected game');
   assert.match(await js(`$('player-choice').textContent`), /Range Only Defender.*12 plays/);
-  assert.match(await js(`$('sel-offense').textContent`), /CIN offense/);
+  assert.match(await js(`$('sel-offense').textContent`), /Cincinnati Bengals offense/);
   assert.match(await js(`$('lab-coverage').textContent`), /NFL Pro \/ NGS: 12 snaps/);
+  await js(`document.querySelector('#lab-selection-plays [data-selection="0"]').click();
+    document.querySelector('#lab-selection-plays [data-selection="12"]').click();
+    $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
+  assert.match(await js(`$('lab-summary').textContent`), /2BAL defense scored snaps/);
+  assert.equal(await js(`S.selected.size`), 1, 'same play ID from another game is not confused with selected-game indices');
+  await js(`$('lab-reload').click()`);
+  await waitUntil(`$('lab-summary').textContent.includes('2BAL defense scored snaps') && !$('lab-content').hidden`);
+  assert.match(await js(`$('lab-selection-count').textContent`), /2 selected/);
+  await js(`setAdvancedChoice('motion', 'false')`);
+  assert.match(await js(`$('lab-summary').textContent`), /0BAL defense scored snaps/);
+  await js(`$('lab-selection-show').value = 'selected'; $('lab-selection-show').dispatchEvent(new Event('change'))`);
+  assert.equal(await js(`$('lab-selection-plays').children.length`), 2, 'hidden selected plays can still be removed');
+  await js(`document.querySelector('#lab-selection-plays [data-selection="1"]').click()`);
+  assert.match(await js(`$('lab-selection-count').textContent`), /1 selected/);
+  await js(`$('clear-filters').click(); $('lab-clear-selection').click();
+    $('lab-selection-show').value = 'filtered'; $('lab-selection-show').dispatchEvent(new Event('change'));`);
+  assert.match(await js(`$('lab-summary').textContent`), /24BAL defense scored snaps/);
   await js(`S.settings.filterPresets = [PRESETS.capture('Range pressure', {
     ...PRESETS.emptyFilter(), choices: {player: ['range-only'], pressure: 'false'}
   }, 'BAL', 'BUF', {'range-only': 'Range Only Defender'})];
@@ -140,6 +232,22 @@ async function exerciseAnalysis({ app, win }) {
       assert.match(output.toString(), /Shared filters/);
       assert.match(output.toString(), /NFL Pro \/ NGS: 12 snaps/);
     }
+    await js(`document.querySelector('#lab-selection-plays [data-selection="0"]').click();
+      document.querySelector('#lab-selection-plays [data-selection="12"]').click();
+      $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
+    destination = path.join(folder, 'selected-summary.csv');
+    await js(`$('lab-csv').click()`);
+    await waitUntil(`$('lab-status').textContent.includes('Saved CSV')`);
+    const selectedCsv = fs.readFileSync(destination, 'utf8');
+    assert.match(selectedCsv, /Only selected plays; 2 selected/);
+    assert.match(selectedCsv, /2024_04_BUF_BAL\/1/);
+    assert.match(selectedCsv, /2024_05_BAL_CIN\/1/);
+    assert.match(selectedCsv, /Cohort: 2 scored snaps/);
+    destination = path.join(folder, 'selected.svg');
+    await js(`$('lab-svg').click()`);
+    await waitUntil(`$('lab-status').textContent.includes('Saved SVG')`);
+    assert.match(fs.readFileSync(destination, 'utf8'), /Only selected plays; 2 selected/);
+    await js(`$('clear-filters').click(); $('lab-clear-selection').click()`);
   }
   destination = path.join(folder, 'evidence.csv');
   await js(`document.querySelector('#lab-rows button').click(); $('lab-evidence-csv').click()`);
@@ -161,6 +269,23 @@ async function exerciseAnalysis({ app, win }) {
   assert.ok(requests.some((r) => r.force === true));
   win.setSize(1100, 800);
   assert.equal(await js(`$('topbar').scrollWidth <= $('topbar').clientWidth`), true, 'workspace toolbar fits the minimum supported window size');
+  failGame = false;
+  fixtureSize = 240;
+  await js(`$('clear-filters').click(); $('lab-reload').click()`);
+  await waitUntil(`$('lab-summary').textContent.includes('240BAL defense scored snaps') && !$('lab-content').hidden`);
+  assert.equal(await js(`$('lab-selection-plays').children.length`), 200);
+  assert.equal(await js(`$('lab-selection-more').hidden`), false);
+  await js(`$('lab-select-filtered').click();
+    $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
+  assert.match(await js(`$('lab-summary').textContent`), /240BAL defense scored snaps/);
+  await js(`$('lab-selection-more').click()`);
+  assert.equal(await js(`$('lab-selection-plays').children.length`), 240);
+  await js(`document.querySelector('#lab-selection-plays [data-selection="230"]').click()`);
+  assert.match(await js(`$('lab-summary').textContent`), /239BAL defense scored snaps/);
+  await js(`$('lab-scope').value = 'range'; $('lab-scope').dispatchEvent(new Event('change'))`);
+  await waitUntil(`$('lab-summary').textContent.includes('480BAL defense scored snaps') && !$('lab-content').hidden`);
+  assert.equal(await js(`$('lab-selection-mode').value`), 'all');
+  assert.match(await js(`$('lab-selection-count').textContent`), /0 selected/);
   console.log('ANALYSIS WORKFLOWS PASSED (NO FILM ACCESS)');
   app.exit(0);
 }
