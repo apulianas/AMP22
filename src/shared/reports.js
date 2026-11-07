@@ -25,6 +25,13 @@
     { key: 'blitzers', label: 'Blitzers', get: (p) => p.charting?.blitzers },
     { key: 'coverage', label: 'Coverage', get: (p) => p.charting?.coverage },
     { key: 'manZone', label: 'Man / zone', get: (p) => p.charting?.manZone },
+    { key: 'blitz', label: 'NGS blitz', get: (p) => p.charting?.blitz },
+    { key: 'pressure', label: 'NGS pressure', get: (p) => p.charting?.pressure },
+    { key: 'boxCategory', label: 'NGS box category', get: (p) => p.charting?.boxCategory },
+    { key: 'defPersonnelGroup', label: 'NGS defensive personnel group', get: (p) => p.charting?.defPersonnelGroup },
+    { key: 'chartingSources', label: 'Charting sources', get: (p) => p.chartingSources ? JSON.stringify(p.chartingSources) : '' },
+    { key: 'nflProCharting', label: 'NFL Pro charting and provenance', get: (p) => p.nflProCharting ? JSON.stringify(p.nflProCharting) : '' },
+    { key: 'chartingConflicts', label: 'Charting disagreements (existing value retained)', get: (p) => p.chartingConflicts ? JSON.stringify(p.chartingConflicts) : '' },
     ...['offense', 'defense'].flatMap((side) => [
       { key: `${side}PlayerIds`, label: `${side === 'offense' ? 'Offense' : 'Defense'} player IDs`, get: (p) => p.onField?.[side]?.map((x) => x.id || (x.sourceId ? `nflpro:${x.sourceId}` : '')).join(';') },
       { key: `${side}PlayerNames`, label: `${side === 'offense' ? 'Offense' : 'Defense'} player names`, get: (p) => p.onField?.[side]?.map((x) => x.name).join(';') },

@@ -18,12 +18,14 @@ const expanded = () => ({
   home: Array.from({ length: 11 }, (_, i) => ({ gsisId: `00-${i + 1}`, playerName: `Fixture ${i}`, uniformNumber: i + 1, position: 'CB' })),
   away: Array.from({ length: 11 }, (_, i) => ({ gsisId: `00-${i + 12}`, playerName: `Fixture ${i}`, uniformNumber: i + 12, position: 'WR' })),
 });
-function page(get) {
+const chartingRequests = schema.CHARTING_FIELDS.reduce((count, field) => count + field.options.length, 0);
+function page(get, chartingGet = async () => ({ count: 0, plays: [] })) {
   const messages = [], calls = [], delays = [];
   const window = {
     AMP22NFLCollector: collector, AMP22Participation: schema, addEventListener() {},
     $nuxt: { $store: { state: { film: { selectedPlay: play(99), plays: [play(99)] } } }, $api: { async $get(endpoint, options) {
       calls.push({ endpoint, options });
+      if (schema.CHARTING_FIELDS.some(field => Object.hasOwn(options.params, field.query))) return chartingGet(endpoint, options);
       return get ? get(endpoint, options) : endpoint.endsWith('/plays') ? { count: 2, plays: [play(17), play(18)] } : expanded();
     } } },
     postMessage: (packet) => messages.push(packet),
@@ -85,10 +87,10 @@ test('one-click sweep uses the unfiltered game endpoint, captures every unvisite
   const r = page();
   const selected = r.window.$nuxt.$store.state.film.selectedPlay;
   await r.window.AMP22Capture.start('job-id');
-  assert.equal(r.calls.length, 3);
+  assert.equal(r.calls.length, 3 + chartingRequests);
   assert.equal(r.calls[0].endpoint, '/api/secured/videos/filmroom/plays');
   assert.deepEqual(Object.keys(r.calls[0].options.params).sort(), ['gameId', 'season', 'seasonType', 'weekSlug']);
-  assert.deepEqual(r.calls.slice(1).map((call) => call.options.params.playId), ['17', '18']);
+  assert.deepEqual(r.calls.filter(call => call.endpoint.endsWith('/summaryPlay')).map((call) => call.options.params.playId), ['17', '18']);
   assert.ok(r.calls.every((call) => !call.endpoint.includes('/coaches')));
   assert.equal(r.window.$nuxt.$store.state.film.selectedPlay, selected);
   const result = r.messages.find((message) => message.kind === 'complete');
@@ -96,6 +98,51 @@ test('one-click sweep uses the unfiltered game endpoint, captures every unvisite
   assert.equal(result.rows.length, 44);
   assert.equal(schema.validate(result.rows).length, 2);
   assert.ok(r.delays.includes(500));
+});
+
+test('capture queries each verified charting partition separately and exports explicit negative values with provenance', async () => {
+  const r = page(undefined, async (_endpoint, options) => {
+    const field = schema.CHARTING_FIELDS.find(field => Object.hasOwn(options.params, field.query));
+    const parameter = options.params[field.query];
+    assert.deepEqual(Object.keys(options.params).sort(), ['gameId', 'season', 'seasonType', 'weekSlug', field.query].sort());
+    if (['1', 'SHOTGUN', 'LIGHT', 'BASE'].includes(parameter)) return { count: 1, plays: [play(17)] };
+    if (['0', 'PISTOL', 'STACKED', 'DIME'].includes(parameter)) return { count: 1, plays: [play(18)] };
+    return { count: 0, plays: [] };
+  });
+  await r.window.AMP22Capture.start('job-id');
+  const complete = r.messages.find(message => message.kind === 'complete');
+  assert.ok(complete);
+  assert.equal(complete.chartedPlays, 2);
+  const first = complete.rows.find(row => row.source_play_id === '17');
+  const second = complete.rows.find(row => row.source_play_id === '18');
+  assert.equal(first.qb_alignment, 'Shotgun');
+  assert.equal(first.motion, 'true');
+  assert.equal(second.qb_alignment, 'Pistol');
+  assert.equal(second.motion, 'false');
+  assert.equal(second.blitz, 'false');
+  assert.equal(second.box_category, 'Stacked (8+)');
+  assert.equal(second.defensive_personnel_group, 'Dime');
+  assert.equal(second.charting_method, 'filtered-playlists');
+  assert.ok(Number.isFinite(Date.parse(second.charting_captured_at)));
+  assert.equal(r.location.href, url);
+  const c = content();
+  await c.command('prepare-game');
+  for (const packet of r.messages) c.send(packet);
+  assert.match((await c.command('capture-status')).status.message, /charting available for 2/);
+  assert.equal(c.downloads[0].rows.find(row => row.source_play_id === '18').pressure, 'false');
+});
+
+test('ignored or truncated charting filters stop capture explicitly instead of inventing charting', async () => {
+  for (const charted of [
+    { count: 2, plays: [play(17), play(18)] },
+    { count: 2, plays: [play(17)] },
+  ]) {
+    const r = page(undefined, async () => charted);
+    await r.window.AMP22Capture.start('job-id');
+    assert.equal(r.messages.at(-1).kind, 'error');
+    assert.equal(r.messages.at(-1).diagnostics.failure.stage, 'charting');
+    assert.ok(!r.messages.some(message => message.kind === 'complete'));
+  }
 });
 
 test('whole-game capture rejects truncated, duplicated and mixed-game playlists instead of exporting partial data', async () => {
@@ -180,7 +227,7 @@ test('a 148-play sweep continues past the reported third-play zero-down failure 
   ];
   const r = page(async (endpoint) => endpoint.endsWith('/plays') ? { count: 148, plays } : expanded());
   await r.window.AMP22Capture.start('job-id');
-  assert.equal(r.calls.length, 149);
+  assert.equal(r.calls.length, 149 + chartingRequests);
   const result = r.messages.at(-1);
   assert.equal(result.kind, 'complete');
   assert.equal(result.playIds.length, 148);

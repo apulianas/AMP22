@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AMP22 NFL Pro Participation",
-  "version": "0.2.2",
-  "description": "Capture every NFL Pro game play automatically and download player participation as an AMP22 CSV.",
+  "version": "0.3.0",
+  "description": "Capture NFL Pro game participation and available NGS charting as an AMP22 CSV.",
   "permissions": ["activeTab", "scripting", "storage", "downloads"],
   "background": { "service_worker": "background.js" },
   "icons": {

@@ -53,6 +53,7 @@
             new Set(packet.playIds).size !== job.total) throw new Error('Game capture is incomplete. No CSV will be downloaded.');
         const rows = packet.rows.map((row) => Object.fromEntries(AMP22Participation.COLUMNS.map((column) => [column, row[column]])));
         const groups = AMP22Participation.validate(rows);
+        const charted = groups.filter(group => Object.keys(AMP22Participation.charting(group[0])).length).length;
         if (groups.length !== job.total || groups.some((group) =>
           group[0].source_game_id !== job.game || !packet.playIds.includes(group[0].source_play_id))) {
           throw new Error('CSV does not contain participation for every game play.');
@@ -68,7 +69,7 @@
         } else if (!Number.isSafeInteger(result?.downloadId)) {
           throw new Error('The browser did not accept the CSV download.');
         }
-        await status(job, 'complete', `Captured all ${job.total} game plays. CSV download ${result.supported === false ? 'requested' : 'started'}: ${filename}. Check your browser’s Downloads; approve its save prompt if shown.`);
+        await status(job, 'complete', `Captured all ${job.total} game plays; NFL Pro charting available for ${charted}. CSV download ${result.supported === false ? 'requested' : 'started'}: ${filename}. Check your browser’s Downloads; approve its save prompt if shown.`);
         active = null;
       }
     }).catch(async (error) => {

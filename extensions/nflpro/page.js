@@ -1,7 +1,7 @@
 /* Runs in NFL Pro's page world; its API client retains all authentication. */
 (() => {
   'use strict';
-  if (window.AMP22Capture?.version === 3) return;
+  if (window.AMP22Capture?.version === 4) return;
   window.AMP22Capture?.stop();
   let current = null;
   const channel = 'amp22-participation-v1';
@@ -28,7 +28,7 @@
   async function request(job, endpoint, params) {
     for (let attempt = 0; ; attempt++) {
       check(job);
-      const context = { endpoint: endpoint.endsWith('/plays') ? 'playlist' : 'participation',
+      const context = { endpoint: job.stage === 'charting' ? 'charting' : endpoint.endsWith('/plays') ? 'playlist' : 'participation',
         source_play_id: params.playId, attempt: attempt + 1 };
       record(job, 'request', context);
       try {
@@ -61,6 +61,20 @@
     const plays = window.AMP22NFLCollector.gamePlays(response, job.url);
     job.total = plays.length;
     send(job, 'progress', { completed: 0, total: job.total });
+    const charting = new Map(plays.map(play => [String(play.playId), {}]));
+    job.stage = 'charting';
+    for (const field of window.AMP22Participation.CHARTING_FIELDS) {
+      send(job, 'progress', { completed: 0, total: job.total, message: `Capturing NFL Pro charting: ${field.query}…` });
+      const responses = new Map();
+      for (const [parameter] of field.options) {
+        await delay(500);
+        responses.set(parameter, await request(job, '/api/secured/videos/filmroom/plays', { ...job.params, [field.query]: parameter }));
+      }
+      const values = window.AMP22NFLCollector.chartingField(plays, responses, job.url, field);
+      for (const [id, value] of values) charting.get(id)[field.column] = value;
+    }
+    const chartingTime = new Date().toISOString();
+    const chartedPlays = [...charting.values()].filter(values => Object.keys(values).length).length;
     const rows = [];
     for (const play of plays) {
       if (job.completed) await delay(500);
@@ -70,7 +84,8 @@
         { gameId: String(play.fapiGameId), playId: String(play.playId) });
       if (expanded?.code) throw new Error(`NFL Pro did not return participation for play ${play.playId}.`);
       job.stage = 'validation';
-      const captured = window.AMP22NFLCollector.participation(play, expanded, job.url);
+      const captured = window.AMP22NFLCollector.participation(play, expanded, job.url, new Date().toISOString(),
+        { ...charting.get(String(play.playId)), charting_method: 'filtered-playlists', charting_captured_at: chartingTime });
       if (window.AMP22Participation.validate(captured).length !== 1) throw new Error('Expected participation for one play.');
       rows.push(...captured);
       job.completed++;
@@ -80,10 +95,10 @@
     check(job);
     window.AMP22Participation.validate(rows);
     record(job, 'finished');
-    send(job, 'complete', { rows, playIds: plays.map((play) => String(play.playId)), diagnostics: diagnostics(job) });
+    send(job, 'complete', { rows, playIds: plays.map((play) => String(play.playId)), chartedPlays, diagnostics: diagnostics(job) });
   }
   window.AMP22Capture = {
-    version: 3,
+    version: 4,
     start(id) {
       if (!/^[a-zA-Z0-9-]{1,80}$/.test(id)) throw new Error('Invalid capture request.');
       if (current && !current.cancelled) throw new Error('This tab is already capturing a game.');

@@ -5,12 +5,27 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const COLUMNS = [
+  const LEGACY_COLUMNS = [
     'schema_version', 'season', 'season_type', 'week', 'away_team', 'home_team',
     'source_game_id', 'source_play_id', 'quarter', 'clock', 'down', 'yards_to_go',
     'description', 'side', 'team', 'source_player_id', 'gsis_id', 'name',
     'jersey_number', 'position', 'captured_at',
   ];
+  // Only game/play-level filters verified in NFL Pro's Film Room client are queried.
+  const CHARTING_FIELDS = [
+    { key: 'qbLocation', column: 'qb_alignment', query: 'qbAlignment',
+      options: [['SHOTGUN', 'Shotgun'], ['UNDER_CENTER', 'Under center'], ['PISTOL', 'Pistol']] },
+    { key: 'motion', column: 'motion', query: 'motion', options: [['1', 'true'], ['0', 'false']] },
+    { key: 'playAction', column: 'play_action', query: 'playAction', options: [['1', 'true'], ['0', 'false']] },
+    { key: 'blitz', column: 'blitz', query: 'blitz', options: [['1', 'true'], ['0', 'false']] },
+    { key: 'pressure', column: 'pressure', query: 'pressure', options: [['1', 'true'], ['0', 'false']] },
+    { key: 'boxCategory', column: 'box_category', query: 'defendersInTheBoxType',
+      options: [['LIGHT', 'Light (<7)'], ['NEUTRAL', 'Neutral (7)'], ['STACKED', 'Stacked (8+)']] },
+    { key: 'defPersonnelGroup', column: 'defensive_personnel_group', query: 'personnel',
+      options: [['BASE', 'Base'], ['NICKEL', 'Nickel'], ['DIME', 'Dime']] },
+  ];
+  const CHARTING_COLUMNS = [...CHARTING_FIELDS.map(field => field.column), 'charting_method', 'charting_captured_at'];
+  const COLUMNS = [...LEGACY_COLUMNS, ...CHARTING_COLUMNS];
   const ID = /^[a-zA-Z0-9-]{1,80}$/;
   const TEAM = /^[A-Z]{2,3}$/;
   const DIAGNOSTIC_FIELDS = [
@@ -48,7 +63,7 @@
   }
 
   function validate(rows, header = COLUMNS) {
-    if (COLUMNS.some((c) => !header.includes(c)) || new Set(header).size !== header.length) {
+    if (LEGACY_COLUMNS.some((c) => !header.includes(c)) || new Set(header).size !== header.length) {
       throw new Error('Unsupported participation CSV columns.');
     }
     if (!rows.length || rows.length > 30000) throw new Error('Participation CSV must contain 1–30000 player rows.');
@@ -56,13 +71,15 @@
     let gameKey;
     for (const [index, r] of rows.entries()) {
       if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(`Invalid participation row ${index + 1}.`);
-      for (const field of COLUMNS) {
+      const version2 = r.schema_version === '2';
+      if (version2 && CHARTING_COLUMNS.some(column => !header.includes(column))) throw new Error('Unsupported charting CSV columns.');
+      for (const field of version2 ? COLUMNS : LEGACY_COLUMNS) {
         if (typeof r[field] !== 'string' || r[field].length > (field === 'description' ? 3000 : 200)) {
           throw invalidField(field, r[field], r, index);
         }
       }
       const checks = [
-        ['schema_version', r.schema_version === '1'],
+        ['schema_version', ['1', '2'].includes(r.schema_version)],
         ['season', /^\d{4}$/.test(r.season)],
         ['season_type', ['REG', 'POST', 'PRE'].includes(r.season_type)],
         ['week', /^\d{1,2}$/.test(r.week) && Number(r.week) >= 1 && Number(r.week) <= 30],
@@ -85,10 +102,24 @@
       for (const [field, valid] of checks) {
         if (!valid) throw invalidField(field, r[field], r, index);
       }
+      if (version2) {
+        for (const field of CHARTING_FIELDS) {
+          if (r[field.column] && !field.options.some(([, value]) => value === r[field.column])) {
+            throw invalidField(field.column, r[field.column], r, index);
+          }
+        }
+        const charted = CHARTING_FIELDS.some(field => r[field.column] !== '');
+        if ((charted || r.charting_method) && r.charting_method !== 'filtered-playlists') {
+          throw invalidField('charting_method', r.charting_method, r, index);
+        }
+        if ((charted || r.charting_captured_at) && !Number.isFinite(Date.parse(r.charting_captured_at))) {
+          throw invalidField('charting_captured_at', r.charting_captured_at, r, index);
+        }
+      }
       const key = JSON.stringify(COLUMNS.slice(1, 7).map((c) => r[c]));
       if (gameKey && gameKey !== key) throw new Error('Participation CSV contains more than one game.');
       gameKey = key;
-      const metadata = JSON.stringify(COLUMNS.slice(0, 13).map((c) => r[c]));
+      const metadata = JSON.stringify([...LEGACY_COLUMNS.slice(0, 13), ...(version2 ? CHARTING_COLUMNS : [])].map((c) => r[c]));
       let play = plays.get(r.source_play_id);
       if (!play) plays.set(r.source_play_id, play = { metadata, rows: [], ids: new Set(), gsis: new Set(), teams: new Map() });
       if (play.metadata !== metadata) throw new Error('Conflicting situation data for one source play.');
@@ -118,6 +149,17 @@
     return ['offense', 'defense'].filter((side) => rows.filter((row) => row.side === side).length === 11).length;
   }
 
+  function charting(row) {
+    if (row.schema_version !== '2') return {};
+    return Object.fromEntries(CHARTING_FIELDS.filter(field => row[field.column] !== '').map(field => [
+      field.key, {
+        value: ['true', 'false'].includes(row[field.column]) ? row[field.column] === 'true' : row[field.column],
+        capturedAt: row.charting_captured_at, method: row.charting_method,
+        sourceGameId: row.source_game_id, sourcePlayId: row.source_play_id,
+      },
+    ]));
+  }
+
   function match(rows, plays) {
     const r = rows[0];
     const offense = rows.find((x) => x.side === 'offense')?.team;
@@ -142,5 +184,5 @@
     return described.length === 1 ? described[0] : null;
   }
 
-  return { COLUMNS, csv, validate, match, completeSides, validationValue };
+  return { COLUMNS, LEGACY_COLUMNS, CHARTING_FIELDS, CHARTING_COLUMNS, csv, validate, match, completeSides, validationValue, charting };
 });
