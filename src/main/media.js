@@ -70,7 +70,10 @@ function detectScenes(file, duration, { candidateThreshold = 0.06, onProgress, s
     if (m && onProgress && duration > 0) onProgress(Math.min(1, Number(m[1]) / 1e6 / duration));
   });
   const vf = `scale=64:36,select='gt(scene\\,${candidateThreshold})',metadata=print:key=lavfi.scene_score`;
-  const args = ['-hide_banner', '-nostats', '-v', 'info', '-progress', 'pipe:1', '-skip_frame', 'noref', '-i', file, '-an', '-sn', '-dn', '-vf', vf, '-f', 'null', '-'];
+  // Limit only the tiny scan filter graph; H.264 decoding still chooses its own thread count.
+  const filterArgs = process.platform === 'darwin' && process.arch === 'arm64' ? ['-filter_threads', '2'] : [];
+  const args = ['-hide_banner', '-nostats', '-v', 'info', '-progress', 'pipe:1',
+    '-skip_frame', 'noref', '-i', file, '-an', '-sn', '-dn', ...filterArgs, '-vf', vf, '-f', 'null', '-'];
   return run(ffmpegPath(), args, {
     signal,
     onStdout: (d) => progLines.push(d.toString()),

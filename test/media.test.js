@@ -5,8 +5,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { run, analyzeFilm } = require('../src/main/media');
+const { run, analyzeFilm, detectScenes } = require('../src/main/media');
 const { ffmpegPath } = require('../src/main/ffpaths');
+const scenes = require('../src/shared/scenes');
 
 test('film analysis honors a cut threshold below the usual candidate floor', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-weak-cuts-'));
@@ -28,5 +29,16 @@ test('film analysis honors a cut threshold below the usual candidate floor', asy
     const normal = await analyzeFilm(file, { cutThreshold: 0.1 });
     assert.equal(normal.clips.length, 1);
     assert.equal(normal.candidates.length, 0);
+
+    const vf = "scale=64:36,select='gt(scene\\,0.03)',metadata=print:key=lavfi.scene_score";
+    const { stderr } = await run(ffmpegPath(), [
+      '-hide_banner', '-nostats', '-v', 'info', '-skip_frame', 'noref', '-i', file,
+      '-an', '-sn', '-dn', '-vf', vf, '-f', 'null', '-',
+    ]);
+    assert.deepEqual(await detectScenes(file, 6, { candidateThreshold: 0.03 }), scenes.parseMetadataLog(stderr));
+
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(detectScenes(file, 6, { signal: controller.signal }), { cancelled: true });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
