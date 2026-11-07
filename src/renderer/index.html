@@ -5,12 +5,17 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; media-src file: 'self'; img-src 'self' file: data:" />
   <title>AMP22</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="analysis-lab.css" />
 </head>
 <body>
   <header id="topbar">
     <div class="brand" role="img" aria-label="AMP22">
       <span class="brand-amp" aria-hidden="true"></span>
       <span class="brand-number" aria-hidden="true">22</span>
+    </div>
+    <div id="workspace-mode" role="group" aria-label="Workspace">
+      <button id="mode-film" aria-pressed="true">Film Room</button>
+      <button id="mode-analysis" aria-pressed="false">Analysis Lab</button>
     </div>
     <select id="sel-season" title="Season"></select>
     <select id="sel-team" title="Team"></select>
@@ -120,6 +125,7 @@
         <span class="spacer"></span>
         <button id="btn-clear-selection" hidden disabled>Clear selection</button>
       </div>
+      <p id="analysis-sidebar-note" class="muted small" hidden>Filters and player counts use the analysis scope. This play list shows the selected game; use table evidence for plays across a range.</p>
       <ol id="play-list"></ol>
       <div id="list-footer" class="muted"></div>
     </aside>
@@ -215,6 +221,7 @@
         </div>
       </div>
     </section>
+    <section id="analysis-lab" hidden aria-label="Analysis Lab"></section>
   </main>
 
   <div id="share" class="overlay" hidden>
@@ -433,6 +440,8 @@
   <script src="../shared/filter-presets.js"></script>
   <script src="../shared/settings.js"></script>
   <script src="../shared/align.js"></script>
+  <script src="../shared/analysis.js"></script>
+  <script src="analysis-lab.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

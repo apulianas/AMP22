@@ -4,11 +4,13 @@
   <img src="src/renderer/assets/icon.png" width="220" height="220" alt="AMP22: orange AMP signature and purple 22 over a charcoal football field" />
 </p>
 <p align="center">
-  <strong>Synced All-22 film study for macOS and Windows.</strong><br />
+  <strong>Synced All-22 film study and football analysis for macOS and Windows.</strong><br />
   <a href="https://github.com/apulianas/AMP22/releases/latest">Download the latest release</a>
 </p>
 
 AMP22 is a desktop app for macOS and Windows for studying NFL All-22 (A22) film. It plays the sideline and end zone angles of each play side by side, kept in sync. You can jump to any play from the nflverse (nflfastR) play-by-play and step through the film frame by frame.
+
+Switch between **Film Room** and **Analysis Lab** in the toolbar. Analysis Lab works without film: compare personnel efficiency over a game or team week range, inspect contributing plays, and export show-ready graphics and summary CSVs. The app remembers your workspace; Analysis Lab never opens or analyzes saved film automatically.
 
 **Study the players, not just the play result.** Capture a whole game's on-field participation and available NFL Pro/Next Gen Stats charting with the optional browser extension, then let AMP22 import the CSV automatically while you study. Find plays featuring combinations of players with live matching-play counts, team-grouped filters, and ordered on-field rosters. Supplement missing charting without overwriting FTN, retain source disagreements for review, and export participation alongside box counts, pass rushers, EPA, and other available play data for analysis in Excel—even without loading film.
 
@@ -78,6 +80,20 @@ An eligible extra lineman appears as **OL-E** between TE and QB only when the pl
 
 <img src="docs/screenshots/analysis-csv-export.png" width="820" alt="Running AMP22 analysis CSV dialog with play scope, play or player row layout, and Save CSV controls" />
 
+### Analysis Lab
+
+Introduced in **0.6.0**, Analysis Lab compares defensive packages with run/pass efficiency, EPA, success, explosives, and conversion rates. Packages are ordered by their combined snap counts, with run and pass rows adjacent (run first). Base packages use the short names **3-4** and **4-3**, without redundant personnel counts; other broad package labels retain their composition details. Switch to a personnel matchup heatmap or half comparison, then click a graphic or table row to inspect the actual plays. This running-app capture uses real 2024 Bills at Ravens play-by-play, historical participation, and FTN charting: **57 Baltimore defensive scored snaps**, with all 57 having known personnel and EPA. **Big nickel*** is a listed-position composition estimate, not verified defensive alignment. No game film was loaded.
+
+![Running AMP22 Analysis Lab with actual Bills at Ravens personnel efficiency, data-coverage counts, and SVG, PNG and summary CSV export controls](docs/screenshots/analysis-lab.png)
+
+Run/pass results use bold green **RUN** and blue **PASS** badges, matching the charts, with subtle row tints and colored edges. Scramble and sack inclusion remains explicit. This detail of the same Bills–Ravens results table shows the adjacent comparisons.
+
+![Actual Bills at Ravens results table with green RUN and blue PASS badges, row tints, and adjacent package comparisons](docs/screenshots/analysis-lab-table.png)
+
+The matchup heatmap compares defensive packages against offensive personnel for the same 57-snap cohort. Each populated cell shows yards per play and its sample size; click it to inspect the contributing plays. Empty cells are unavailable, not zero.
+
+![Actual Bills at Ravens personnel matchup heatmap with yards per play, sample sizes, missing combinations, and source notes](docs/screenshots/analysis-lab-heatmap.png)
+
 ### Multi-play clip export
 
 Export selected plays as sideline, end zone, stacked portrait, or all sideline followed by all end zone (and the reverse) in one video. Trim clip starts with per-play first-frame previews, set an overlay duration, or choose a clean export. Choose a team theme, customize its colors and background opacity, and save named themes or a new default. Position the overlay with corner presets, drag it on the export preview, and save named locations. Share also offers a CSV, plain-text, or team-colored PDF play breakdown, with optional advanced statistics. This running-app capture shows the theme and position controls with a top-right Ravens card. It uses a simulated field and illustrative play because game film was unavailable; it does not demonstrate real game alignment or a completed export.
@@ -114,6 +130,7 @@ See the latest published release notes before opening the download page. This is
 
 ## Features
 
+- **Analysis Lab.** A film-independent workspace for one game or a completed-game week range for the selected team and season. Choose offense or defense; group by defensive package, offensive personnel, personnel matchup, half, pass-rusher count, or exact defensive lineup. Split by run/pass, half, offensive personnel, motion, or play action. Tables show snaps, cohort usage, yards, YPP, offensive EPA/play, offensive success rate, explosive rate, and third/fourth-down conversion rate with each metric's sample size. Efficiency bars, a defensive-package/offensive-personnel heatmap, and half comparisons export as PNG/SVG; Summary CSV includes every group and definitions. Click bars, cells, or table rows for play evidence and a full-field play CSV. Custom eleven-player package rules distinguish big nickel, standard nickel, standard dime, and rush dime when listed positions support them; ambiguous or partial lists retain broad supplied packages or Unknown. Rules and the workspace preference are saved locally.
 - **Two synced angles.** Each A22 file contains sideline followed by end zone for each play. The app finds the cuts, pairs the angles, and plays them together on one clock. Use **Single file** for continuous full-game film, or **Split offense / defense / ST** for separate offense, defense, and special-teams files. In split mode, offense means the selected team's offense and defense means that team defending; the special-teams file covers kicks and returns by either team. Each file aligns independently, and selecting a play switches both viewers to the appropriate source. You can load only the files you have; the other plays remain unlinked. File choices and corrections are remembered per game and team perspective, separately from single-file film. The layout switches between side-by-side and stacked depending on the window shape.
 - **Multi-monitor viewing.** After film analysis, click **Pop out** on either angle to open it in a separate window. Drag that window to another display and maximize it or click **Fullscreen**. The remaining angle fills the main viewer. Playback, seeking, frame stepping, speed changes, sync offsets, and play navigation still use the same controls and clock; keyboard shortcuts also work in the pop-out. Click **Return angle** in either window, or close the pop-out, to restore the two-angle layout. One angle can be detached at a time.
 - **Play-by-play navigation.** Pick the season, team, and week from the drop-downs. The default is the current season, the Ravens, and the most recently completed week. Plays come from [nflverse](https://github.com/nflverse/nflverse-data) and are color-coded:
@@ -159,6 +176,8 @@ npm 11 blocks install scripts unless they are approved. The `allowScripts` entry
 
 ### Using it
 
+For statistics and graphics without video, select **Analysis Lab** and follow [Using Analysis Lab](#using-analysis-lab). The following workflow describes **Film Room**.
+
 1. Choose the season, team, and week. The schedule and play-by-play are downloaded and cached, so games you've opened before also work offline.
 2. In the empty video area, leave **Single file** selected and click **Choose film…** for full-game A22. For separate units, select **Split offense / defense / ST**, then use **Choose [team] offense…**, **Choose [team] defense…**, and **Choose special teams…** in the same panel. Each file must contain both angles, not one camera per file. Select the team whose offense/defense the files describe before assigning them. The app streams files from where they are and never copies or changes them. After loading analyzed film, use **Film setup** in the viewer's lower-right corner to change files or formats; close the panel to return to the footage. Selecting a play whose split-film source is missing reopens setup so you can assign it.
    In single-file mode, you can also set a **film folder** in Settings (⚙), for example `~/Movies/2026 Ravens Games`. The app then finds the A22 file automatically by matching week folders such as `w7vBengals` or `w1@Colts` and preferring files with `a22` in the name. Split files are assigned explicitly, not guessed from filenames.
@@ -194,6 +213,19 @@ Overlays and PDF writeups include a headshot matched by the play-by-play's GSIS 
 Export overlays describe rushing and receiving yardage as `12 yard rush` or `48 yard reception`, without a plus sign; losses retain a minus sign (for example `-3 yard rush`). Touchdown rushes and receptions still include `TD`. The compact box-score wording in the play list is unchanged.
 
 Player participation lists, source metadata, inferred personnel, depth-chart position estimates and their provenance, and reported eligible player IDs are also selectable under **Settings → Play breakdown defaults** for Share's CSV/text/PDF reports. These additions do not change the default of CSV without advanced statistics. **Export data** always includes supported advanced fields, including EPA, independently of those preferences.
+
+### Using Analysis Lab
+
+1. Select the season, team, and game in the toolbar, then click **Analysis Lab**. The **Defense** perspective starts with defensive packages split by run/pass. Switching workspaces unloads the current viewer; saved film assignments and corrections are retained.
+2. Leave **Scope → Selected game**, or select **Team week range** and inclusive week bounds (1–22). Ranges include completed scheduled regular-season/postseason games in those weeks, not future games. Data loads sequentially without probing, opening, or analyzing video. **Reload data** refreshes the scoped play data. A failed or empty source game blocks the aggregate rather than displaying an unmarked partial result.
+3. Use the existing sidebar filters and saved filter presets, including player combinations and available NFL Pro/NGS charting. Filter options, matching-player counts, and missing-data warnings use the selected analysis scope and perspective. Switching between Film Room and Analysis Lab retains current filters and the applied preset; loading a different game starts a fresh preset application. Existing advanced selections remain removable even when a new scope has no matches. The sidebar play list and NFL Pro import indicator still describe the toolbar's selected game; use **Play evidence** for the complete multi-game subset. Filters apply to every scoped game, so an offense filter for one opponent intentionally excludes other opponents.
+4. Choose **Group by**, **Split by**, and a metric. Groups are ordered by combined snaps (most-used first, alphabetical ties), with their split rows kept together: run before pass, or first half before second half and overtime. Charts, tables, and Summary CSV use that same order. **Matchup heatmap** fixes the dimensions to defensive package by offensive personnel; **Half comparison** fixes the split to half while retaining your grouping. Graphic controls disable the dimension selectors they override. Tables and Summary CSV retain all groups; graphics are limited to 30 rows, or 12 packages by 8 offensive groupings, with an explicit truncation notice when needed.
+5. Expand **Definitions, data coverage & package rules** to inspect sources, known-field coverage, and the default package definitions. Add a named package using DL/OLB/ILB/LB/CB/S/DB counts totaling 11, remove a rule, or restore defaults. Names and compositions must be unique. DL includes DE/DT/NT; ILB includes MLB; S includes FS/SS. Generic LB/DB values are not guessed into more specific positions. A complete, uniquely identified eleven-player defense must match a rule exactly. A `*` marks a composition/position estimate, never confirmed alignment; these rules do not change Film Room's package labels.
+6. Click a chart bar, heatmap cell, or table row to open **Play evidence**. The first 200 plays are displayed; **Export these plays** includes the entire subset with available statistics and participation (up to 20,000 plays). Clicking an evidence play locates it in the selected-game sidebar without opening film. Use **Save SVG**, **Save PNG**, or **Summary CSV** for presentation graphics or aggregated data. Exports retain scope, active filters, sources, sample sizes, and definitions.
+
+**Metric conventions:** scored snaps are runs and passes including sacks and scrambles, excluding no-play penalties, kneels, spikes, special teams, and two-point attempts. Run/pass follows official play type, so scrambles are runs and sacks are passes; passing yardage includes sack losses. YPP uses known yardage; EPA and offensive success rate use known EPA, with success defined as EPA greater than zero. Explosives are runs of 10+ or passes of 20+ yards. Third/fourth-down conversions use first-down/TD credit or yards reaching the sticks, among snaps with known distance and yardage. Usage is share of the entire filtered cohort, not within a split. Rates in Summary CSV are fractions (0–1).
+
+Missing fields remain **Unknown** or **N/A**, not zero or No; every metric displays its denominator. Groups with fewer than ten snaps are flagged, but this is not a statistical significance test. All comparisons are descriptive, not causal player grades. NFL Pro supplies imported participation and available NGS charting; FTN values remain authoritative where present. Analysis coverage and exports count source-labelled charting and plays with source disagreements. NGS pressure/blitz flags and box/personnel categories are not converted into exact counts or individual responsibility. Missed tackles and Ken-specific ATS/BOQ labels are not inferred.
 
 ### Optional NFL Pro browser extension
 
@@ -330,6 +362,8 @@ Settings include:
 
 Data is stored in Electron's `userData` folder. AMP22 retains the original `A22 Film Tool` profile directory so existing settings, film links, fixes, and cached analysis remain available after upgrading. The application identifier is also unchanged for installer continuity.
 
+The Film Room/Analysis Lab workspace preference and Analysis Lab package rules are stored in the renderer's local storage in that profile. They are separate from film-analysis caches and do not modify imported CSVs.
+
 | File or folder | Contents |
 | --- | --- |
 | `settings.json` | Settings |
@@ -346,7 +380,7 @@ Open **Settings → Check for updates…** to see whether a newer stable version
 
 The download button opens the release page, not an unattended installer. After downloading, quit AMP22 before replacing the app on macOS or running the installer on Windows. Existing installations without this update checker need one manual upgrade to gain notifications. In-place automatic download/install is not enabled on either platform; the current macOS releases are unsigned, and reliable macOS auto-updates require Developer ID signing.
 
-## How analysis works
+## How film analysis works
 
 1. `ffprobe` reads the frame rate (59.94 fps for A22) and duration.
 2. `ffmpeg` scene detection runs on a 64×36 downscale to find hard cuts (default scene score ≥ 0.1). On Apple Silicon Macs, this small filter graph uses two threads; **decoding still uses FFmpeg's automatic thread selection**, without hardware decoding. Other platforms retain their previous settings. **Settings → Cut sensitivity** accepts thresholds down to `0.03`; lower values recover subtler angle changes but may also detect extra cuts. The initial scan respects the selected threshold rather than discarding weak candidates before pairing. If film clips are missing and the log drifts, lower the threshold and accept the re-analysis prompt. Existing cached analyses of other files remain unchanged.
@@ -382,6 +416,7 @@ npm run build:extension # shared unpacked Chrome/Edge/temporary macOS Safari ext
 A22_TEST_EXPORT=1 npm test # also encode and inspect synthetic clips (macOS / Linux)
 A22_TEST_WINDOWS=1 node --test test/angle-window.test.js # exercise native pop-outs (requires a desktop)
 A22_TEST_WORKFLOWS=1 node --test test/film-workflows.test.js # native split playback and CSV/text/PDF exports (requires a desktop)
+A22_TEST_ANALYSIS=1 node --test test/analysis-workflows.test.js # native Analysis Lab filters, ranges, evidence and PNG/SVG/CSV exports; no film access
 npm run dist:mac   # macOS .dmg   (run on macOS)
 npm run dist:win   # Windows NSIS installer (run on Windows)
 ```
