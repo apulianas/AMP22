@@ -10,7 +10,7 @@
     'play_id', 'game_id', 'season', 'week', 'season_type', 'home_team', 'away_team', 'posteam', 'defteam',
     'qtr', 'time', 'down', 'ydstogo', 'yrdln', 'desc', 'play_type', 'yards_gained', 'air_yards', 'drive',
     'touchdown', 'pass_touchdown', 'rush_touchdown', 'return_touchdown', 'td_team', 'interception', 'fumble_lost',
-    'sack', 'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'timeout', 'two_point_attempt',
+    'sack', 'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'qb_spike', 'special_teams_play', 'timeout', 'two_point_attempt',
     'fourth_down_converted', 'fourth_down_failed', 'field_goal_result', 'extra_point_result', 'two_point_conv_result',
     'total_home_score', 'total_away_score', 'epa',
     'passer_player_name', 'receiver_player_name', 'rusher_player_name', 'sack_player_name', 'half_sack_1_player_name',
@@ -26,7 +26,7 @@
 
   const FLAG_COLUMNS = [
     'touchdown', 'pass_touchdown', 'rush_touchdown', 'return_touchdown', 'interception', 'fumble_lost', 'sack',
-    'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'timeout', 'two_point_attempt', 'fourth_down_converted',
+    'penalty', 'safety', 'pass', 'rush', 'qb_scramble', 'qb_spike', 'special_teams_play', 'timeout', 'two_point_attempt', 'fourth_down_converted',
     'fourth_down_failed', 'complete_pass', 'incomplete_pass', 'touchback', 'punt_blocked', 'first_down', 'qb_kneel',
   ];
 

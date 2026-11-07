@@ -17,6 +17,7 @@ const settingsMod = require('../shared/settings');
 const schedule = require('../shared/schedule');
 const films = require('../shared/films');
 const teams = require('../shared/teams');
+const { registerAnalysisExport } = require('./analysis');
 
 let win = null;
 let data;
@@ -146,6 +147,7 @@ function listVideos(root, maxDepth = 4) {
 }
 
 function registerIpc() {
+  registerAnalysisExport({ ipcMain, dialog, app, getWindow: () => win, participationRoot: () => getSettings().participationRoot });
   ipcMain.handle('app:init', () => ({ settings: getSettings(), platform: process.platform, version: app.getVersion(), teams: teams.TEAMS }));
   ipcMain.handle('updates:check', (_e, automatic) => updates.check({ automatic: automatic === true }));
   ipcMain.handle('updates:dismiss', () => updates.dismiss());
@@ -230,7 +232,7 @@ function registerIpc() {
 
   ipcMain.handle('data:export', async (_e, request) => {
     reportOptions.validateReport(request, request?.plays?.length);
-    if (request.format !== 'csv' || !request.plays.length || request.plays.length > 1000) throw new Error('Invalid analysis export.');
+    if (request.format !== 'csv' || !request.plays.length || request.plays.length > 20000) throw new Error('Invalid analysis export (1-20,000 plays required).');
     const content = reportOptions.analysisCsv(request, request.layout);
     const r = await dialog.showSaveDialog(win, {
       title: 'Export play analysis CSV',

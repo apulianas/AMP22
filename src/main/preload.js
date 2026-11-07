@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   chooseFolder: () => ipcRenderer.invoke('dialog:folder'),
   chooseParticipationFolder: () => ipcRenderer.invoke('dialog:participation-folder'),
   exportData: (request) => ipcRenderer.invoke('data:export', request),
+  exportAnalysis: (request) => ipcRenderer.invoke('analysis:export', request),
   onParticipationChanged: (cb) => {
     const h = () => cb();
     ipcRenderer.on('participation:changed', h);

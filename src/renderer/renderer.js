@@ -13,6 +13,7 @@ const $ = (id) => document.getElementById(id);
 const { START_PAD, END_TRIM_FRAMES } = A22.clipExport;
 
 const S = {
+  mode: 'film',
   settings: null,
   keymap: new Map(),
   games: [],
@@ -47,6 +48,43 @@ const S = {
   exportCancelRequested: false,
   exportDraft: null,
 };
+let analysisLab = null;
+let analysisFilterSource = null;
+
+function filterSource() {
+  return S.mode === 'analysis' && analysisFilterSource !== null ? analysisFilterSource : S.plays;
+}
+
+async function setWorkspaceMode(mode, reload = true) {
+  S.mode = mode;
+  document.body.classList.toggle('analysis-mode', mode === 'analysis');
+  $('viewer').hidden = mode === 'analysis';
+  $('analysis-lab').hidden = mode !== 'analysis';
+  $('mode-film').setAttribute('aria-pressed', String(mode === 'film'));
+  $('mode-analysis').setAttribute('aria-pressed', String(mode === 'analysis'));
+  $('analysis-sidebar-note').hidden = mode !== 'analysis';
+  try { localStorage.setItem('amp22.workspace', mode); }
+  catch (error) { setStatus(`Workspace preference could not be saved: ${error.message}`, true); }
+  if (reload && S.sel.gameId) await loadGame();
+}
+
+function analysisFilterDescription() {
+  const f = S.filter;
+  const active = [];
+  if (f.type !== 'all') active.push(`Type: ${f.type}`);
+  if (f.offense) active.push(`Offense: ${f.offense}`);
+  if (f.qtr) active.push(`Quarter: ${f.qtr}`);
+  if (f.result) active.push(`Result: ${f.result}`);
+  if (f.text) active.push(`Search: ${f.text}`);
+  for (const [key, label] of [['air', 'Air yards'], ['yards', 'Yards'], ['dist', 'To go']]) {
+    if (f[`${key}Min`] != null) active.push(`${label} >= ${f[`${key}Min`]}`);
+    if (f[`${key}Max`] != null) active.push(`${label} <= ${f[`${key}Max`]}`);
+  }
+  for (const [key, value] of Object.entries(f.choices)) {
+    if (value && (!Array.isArray(value) || value.length)) active.push(`${ADV_CHOICES.find((x) => x.key === key)?.label || key}: ${Array.isArray(value) ? value.join(' + ') : value}`);
+  }
+  return active.join('; ') || 'None';
+}
 
 /* ---------------- utilities ---------------- */
 
@@ -193,6 +231,7 @@ async function loadSchedule(force) {
 /* ---------------- game loading ---------------- */
 
 async function loadGame(force) {
+  analysisLab?.invalidate();
   const gameId = S.sel.gameId;
   const team = S.sel.team;
   closeFilm();
@@ -217,8 +256,8 @@ async function loadGame(force) {
     { value: '', label: 'Both offenses' },
     { value: S.sel.team, label: `${S.sel.team} offense` },
     ...(opp ? [{ value: opp, label: `${opp} offense` }] : []),
-  ], '');
-  S.filter.offense = '';
+  ], S.mode === 'analysis' ? S.filter.offense : '');
+  if (S.mode !== 'analysis') S.filter.offense = '';
   renderQuarters();
 
   if (S.game) {
@@ -239,6 +278,12 @@ async function loadGame(force) {
   renderQuarters();
   renderAdvancedFilters();
 
+  if (S.mode === 'analysis') {
+    realign();
+    renderList();
+    renderInfo();
+    return;
+  }
   if (isSplitFilm()) {
     await openSplitFilms();
     return;
@@ -273,8 +318,8 @@ async function saveGame(patch) {
   if (S.sel.gameId === gameId && S.sel.team === team) S.gameData = data;
 }
 
-function derivePlays() {
-  for (const p of S.plays) {
+function derivePlays(list = S.plays) {
+  for (const p of list) {
     p.cat = P.category(p);
     p.filmWeight = P.filmWeight(p);
     p.key = P.keyReasons(p, S.settings.keyPlays);
@@ -540,7 +585,7 @@ function choiceMatches(option, v) {
   return String(v) === option;
 }
 
-function choiceOptions(spec, sourcePlays = S.plays) {
+function choiceOptions(spec, sourcePlays = filterSource()) {
   if (spec.options === 'players') {
     const players = new Map();
     for (const p of sourcePlays) {
@@ -586,10 +631,10 @@ function renderPlayerFilter() {
   const spec = ADV_CHOICES.find(({ key }) => key === 'player');
   const all = choiceOptions(spec);
   const selected = S.filter.choices.player || [];
-  const scoped = choiceOptions(spec, S.plays.filter(p => passesFilter(p, 'player')));
+  const scoped = choiceOptions(spec, filterSource().filter(p => passesFilter(p, 'player')));
   const remaining = scoped.filter(([id]) => !selected.includes(id));
   const counts = new Map();
-  for (const play of S.plays) {
+  for (const play of filterSource()) {
     if (!passesFilter(play)) continue;
     for (const id of new Set(spec.get(play))) counts.set(id, (counts.get(id) || 0) + 1);
   }
@@ -631,24 +676,27 @@ function renderPlayerFilter() {
 function renderAdvancedFilters() {
   const html = [];
   const choices = {};
+  const source = filterSource();
+  const preserve = S.mode === 'analysis';
   for (const spec of ADV_CHOICES) {
-    if (!S.plays.some((p) => hasValue(spec.get(p)))) continue;
-    const opts = choiceOptions(spec);
     const cur = S.filter.choices[spec.key];
+    if (!source.some((p) => hasValue(spec.get(p))) && !(preserve && cur)) continue;
+    const opts = choiceOptions(spec).slice();
     if (spec.options === 'players') {
-      const selected = [...new Set(Array.isArray(cur) ? cur : cur ? [cur] : [])].filter((id) => opts.some(([v]) => v === id));
+      const selected = [...new Set(Array.isArray(cur) ? cur : cur ? [cur] : [])].filter((id) => preserve || opts.some(([v]) => v === id));
       if (selected.length) choices[spec.key] = selected;
       html.push('<div id="player-choice" class="player-choice"></div>');
       continue;
     }
-    if (cur && opts.some(([v]) => v === cur)) choices[spec.key] = cur;
+    if (cur && (preserve || opts.some(([v]) => v === cur))) choices[spec.key] = cur;
+    if (preserve && cur && !opts.some(([v]) => v === cur)) opts.push([cur, `${cur} (not in scope)`]);
     html.push(`<label${spec.title ? ` title="${esc(spec.title)}"` : ''}>${esc(spec.label)}<select data-choice="${spec.key}">` +
       `<option value="">Any</option>${opts.map(([v, l]) => `<option value="${esc(v)}"${choices[spec.key] === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`);
   }
   S.filter.choices = choices;
   $('adv-choices').innerHTML = html.join('');
   renderPlayerFilter();
-  $('adv-note').hidden = !S.plays.length || S.plays.some((p) => p.personnel || p.charting);
+  $('adv-note').hidden = !source.length || source.some((p) => p.personnel || p.charting);
   updateAdvancedIndicator();
 }
 
@@ -699,7 +747,8 @@ function passesFilter(p, excludedChoice) {
 }
 
 function renderQuarters() {
-  const qs = [...new Set(S.plays.map((p) => p.qtr).filter((q) => q != null))].sort((a, b) => a - b);
+  const qs = [...new Set(filterSource().map((p) => p.qtr).filter((q) => q != null))].sort((a, b) => a - b);
+  if (S.mode === 'analysis' && S.filter.qtr && !qs.includes(Number(S.filter.qtr))) qs.push(Number(S.filter.qtr));
   const opts = [{ value: '', label: 'All quarters' }].concat(qs.map((q) => ({ value: String(q), label: q >= 5 ? (q === 5 ? 'OT' : `OT${q - 4}`) : `Q${q}` })));
   if (!opts.some((o) => o.value === S.filter.qtr)) S.filter.qtr = '';
   fillSelect($('sel-qtr'), opts, S.filter.qtr);
@@ -757,6 +806,7 @@ function renderList() {
   updateSelection();
   renderParticipationStatus();
   renderPlayerFilter();
+  analysisLab?.refresh();
 }
 
 function boxHtml(p) {
@@ -2166,6 +2216,7 @@ function handleKeydown(e) {
     if (e.target.id === 'search' && (e.key === 'Enter' || e.key === 'ArrowDown')) { e.preventDefault(); e.target.blur(); if (S.visible.length) selectPlay(S.visible[0]); }
     return;
   }
+  if (S.mode === 'analysis') return;
   const combo = comboFromEvent(e);
   if (!combo) return;
   const id = S.keymap.get(combo);
@@ -2180,6 +2231,34 @@ window.addEventListener('keydown', handleKeydown, true);
 /* ---------------- wiring ---------------- */
 
 function wire() {
+  analysisLab = window.createAnalysisLab({
+    getContext: () => ({ games: S.games, sel: S.sel, game: S.game, plays: S.plays, warning: S.participationWarning }),
+    preparePlays: derivePlays,
+    matchesFilter: passesFilter,
+    filterDescription: analysisFilterDescription,
+    onCohortChange: (plays) => {
+      analysisFilterSource = plays;
+      if (plays === null) return;
+      const teams = [...new Set(plays.map((p) => p.posteam).filter(Boolean))].sort();
+      if (S.filter.offense && !teams.includes(S.filter.offense)) teams.push(S.filter.offense);
+      fillSelect($('sel-offense'), [{ value: '', label: 'Both offenses' },
+        ...teams.map((team) => ({ value: team, label: `${team} offense` }))], S.filter.offense);
+      renderAdvancedFilters();
+      renderQuarters();
+    },
+    openPlay: async (play) => {
+      if (!play) return;
+      if (S.sel.gameId !== play.gameId) {
+        S.sel.gameId = play.gameId;
+        renderSelectors();
+        await loadGame();
+      }
+      const index = S.plays.findIndex((p) => p.playId === play.playId);
+      if (index >= 0) selectPlay(index, { autoplay: false });
+    },
+  });
+  $('mode-film').addEventListener('click', () => { if (S.mode !== 'film') setWorkspaceMode('film'); });
+  $('mode-analysis').addEventListener('click', () => { if (S.mode !== 'analysis') setWorkspaceMode('analysis'); });
   $('check-updates').addEventListener('click', () => checkUpdates());
   $('updates-retry').addEventListener('click', () => checkUpdates());
   $('btn-update').addEventListener('click', showUpdate);
@@ -2595,6 +2674,7 @@ async function refreshParticipation(automatic = false) {
     derivePlays();
     realign();
     renderAdvancedFilters();
+    analysisLab?.invalidate();
     renderList();
     renderInfo();
     setStatus(r.warning || 'Participation imports refreshed.', !!r.warning);
@@ -2610,6 +2690,9 @@ async function refreshParticipation(automatic = false) {
 
 (async function boot() {
   wire();
+  try {
+    await setWorkspaceMode(localStorage.getItem('amp22.workspace') === 'analysis' ? 'analysis' : 'film', false);
+  } catch (error) { setStatus(`Workspace preference could not be loaded: ${error.message}`, true); }
   const init = await window.api.init();
   $('app-version').textContent = `AMP22 ${init.version}`;
   $('share-reveal').textContent = init.platform === 'darwin' ? 'Show in Finder' : init.platform === 'win32' ? 'Show in File Explorer' : 'Show in folder';
