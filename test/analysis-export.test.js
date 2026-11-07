@@ -21,6 +21,24 @@ test('analysis export rejects invalid requests and emits actual SVG/CSV', () => 
   assert.throws(() => exportContent({ format: 'png', report: report(), dataUrl: 'data:image/png;base64,AAAA' }), /Invalid/);
 });
 
+test('selection provenance exports separately from bounded graphic notes, including large selections', () => {
+  const selected = {
+    ...report(), notes: 'Play selection: Only selected plays; 1000 selected',
+    selection: { mode: 'include', playIds: Array.from({ length: 1000 }, (_value, index) => `2024_04_BUF_BAL/${index + 1}`) },
+  };
+  const csv = exportContent({ format: 'csv', report: selected }).toString();
+  assert.match(csv, /"Play selection mode","include"/);
+  assert.match(csv, /"Selected game\/play ID","2024_04_BUF_BAL\/1000"/);
+  assert.match(exportContent({ format: 'svg', report: selected }).toString(), /Only selected plays; 1000 selected/);
+  for (const selection of [
+    { mode: 'unknown', playIds: [] }, { mode: 'include', playIds: 'game/1' },
+    { mode: 'exclude', playIds: [null] }, { mode: 'include', playIds: ['x'.repeat(101)] },
+    { mode: 'exclude', playIds: Array(20001).fill('game/1') },
+  ]) {
+    assert.throws(() => exportContent({ format: 'csv', report: { ...report(), selection } }), /Invalid Analysis Lab play selection/);
+  }
+});
+
 test('analysis export saves atomically, supports cancellation and protects participation inputs', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-analysis-export-'));
   try {

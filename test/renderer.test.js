@@ -15,7 +15,7 @@ const filterPresets = require('../src/shared/filter-presets');
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
-    A22: { plays, settings, clipExport, advanced, reports, filterPresets, align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
+    A22: { plays, settings, clipExport, advanced, reports, filterPresets, analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {
       querySelectorAll: () => [],
@@ -36,7 +36,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, ADV_CHOICES, choiceOptions };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -51,6 +51,165 @@ function renderer() {
   api.derivePlays();
   return { ...api, elements, context, visible: () => Array.from(api.S.visible) };
 }
+
+test('choice counts replace only their own filter and predict the displayed plays', () => {
+  const r = contextualPlayers();
+  Object.assign(r.S.plays[2], {
+    down: 3, personnel: { offense: '11', defense: 'Nickel' },
+    charting: {
+      qbLocation: 'Shotgun', formation: 'Spread', backfield: 3, box: 5, rushers: 6, blitzers: 2,
+      blitz: true, pressure: false, boxCategory: 'Light', defPersonnelGroup: 'Nickel',
+      motion: true, playAction: false, rpo: true, screen: false, noHuddle: false,
+      coverage: 'Cover 3', manZone: 'Zone',
+    },
+  });
+  Object.assign(r.S.plays[3], { down: 2, personnel: { offense: '12', defense: 'Dime' } });
+  r.S.plays[2].flags.sack = true;
+  r.derivePlays();
+  Object.assign(r.S.filter, { offense: 'JAX', qtr: '1', type: 'pass', result: 'sack', airMin: 0 });
+  r.S.filter.choices = { player: ['smith'], motion: 'true' };
+  const base = JSON.stringify(r.S.filter);
+  const options = [
+    ['type', ['all', 'run', 'pass', 'special']],
+    ['offense', ['', 'BAL', 'JAX']], ['qtr', ['', '1', '2']],
+    ['result', ['', 'key', 'negative', 'sack', 'turnover', 'score', 'big', 'firstdown', 'penalty']],
+    ...r.ADV_CHOICES.filter(spec => spec.key !== 'player').map(spec =>
+      [spec.key, ['', ...r.choiceOptions(spec).map(([value]) => value)]]),
+  ];
+  for (const [key, values] of options) {
+    for (const value of values) {
+      const predicted = r.filterChoiceCount(key, value);
+      assert.equal(JSON.stringify(r.S.filter), base, 'counting never changes selections');
+      if (r.ADV_CHOICES.some(spec => spec.key === key)) r.S.filter.choices[key] = value;
+      else r.S.filter[key] = value;
+      r.renderList();
+      assert.equal(predicted, r.visible().length, `${key}: ${value}`);
+      r.S.filter = JSON.parse(base);
+    }
+  }
+  assert.equal(r.filterChoiceCount('motion', 'false'), 0, 'other filters still apply');
+  assert.equal(r.filterChoiceCount('rushers', '5+'), 1);
+  assert.equal(r.filterChoiceCount('rushers', '6+'), 1, 'overlapping thresholds each count the play');
+  assert.equal(r.filterChoiceCount('box', '<=5'), 1);
+  assert.equal(r.filterChoiceCount('pressure', 'false'), 1, 'false is data, not missing');
+  assert.equal(r.filterChoiceCount('pressure', 'true'), 0);
+  r.S.filter = filterPresets.emptyFilter();
+  assert.equal(r.filterChoiceCount('motion', ''), 5, 'Any includes missing-data plays');
+  assert.equal(r.filterChoiceCount('motion', 'false'), 1, 'No excludes missing data');
+});
+
+test('count labels refresh without accumulating suffixes or changing selection', () => {
+  const r = renderer();
+  const select = r.context.document.getElementById('sel-offense');
+  select.value = 'BAL';
+  select.options = [
+    { value: '', textContent: 'Both offenses', dataset: {} },
+    { value: 'BAL', textContent: 'BAL offense', dataset: {} },
+    { value: 'BUF', textContent: 'BUF offense', dataset: {} },
+  ];
+  r.renderList();
+  assert.deepEqual(select.options.map(option => option.textContent), ['Both offenses (5)', 'BAL offense (4)', 'BUF offense (1)']);
+  r.S.filter.type = 'run';
+  r.renderList();
+  r.renderList();
+  assert.deepEqual(select.options.map(option => option.textContent), ['Both offenses (1)', 'BAL offense (1)', 'BUF offense (0)']);
+  assert.equal(select.value, 'BAL');
+  assert.match(select.options[1].title, /1 matching play with other filters applied/);
+});
+
+test('offense choices show team names while saved presets retain portable relative roles', () => {
+  const r = renderer();
+  r.S.game = { homeTeam: 'BAL', awayTeam: 'BUF' };
+  r.S.sel.team = 'BAL';
+  r.S.filter.offense = 'BUF';
+  r.renderOffenseOptions();
+  const html = r.elements.get('sel-offense').innerHTML;
+  assert.match(html, /Baltimore Ravens offense/);
+  assert.match(html, /Buffalo Bills offense/);
+  assert.doesNotMatch(html, /Analyzed team|Opponent/);
+  assert.equal(r.elements.get('sel-offense').value, 'BUF');
+  const preset = filterPresets.capture('Other offense', r.S.filter, 'BAL', 'BUF');
+  assert.equal(preset.filter.offense, 'opponent');
+  assert.equal(filterPresets.restore(preset, 'BAL', 'CIN').offense, 'CIN');
+  r.renderOffenseOptions(['BUF', 'CIN']);
+  assert.match(r.elements.get('sel-offense').innerHTML, /Cincinnati Bengals offense/);
+});
+
+test('choice counts use the full Analysis Lab scope rather than just the current game', () => {
+  const r = contextualPlayers();
+  r.S.mode = 'analysis';
+  vm.runInContext('analysisFilterSource = [S.plays[2], S.plays[3], {...S.plays[2]}]', r.context);
+  assert.equal(r.filterChoiceCount('offense', 'JAX'), 3);
+  assert.equal(r.filterChoiceCount('offense', 'BAL'), 0);
+  assert.equal(r.filterChoiceCount('motion', 'true'), 2);
+  r.S.filter.qtr = '2';
+  assert.equal(r.filterChoiceCount('motion', 'true'), 0);
+  assert.equal(r.filterChoiceCount('qtr', '1'), 2);
+});
+
+test('Analysis Lab sidebar follows cohort identities, filters and game order without changing film selection', () => {
+  const r = contextualPlayers();
+  r.S.mode = 'analysis';
+  r.S.selected.add(2);
+  const mapping = r.S.mapping;
+  vm.runInContext('analysisFilterSource = [S.plays[3], S.plays[2]].map(play => ({...play}))', r.context);
+  r.renderList();
+  assert.deepEqual(r.visible(), [2, 3], 'only scoped side plays appear, in selected-game order');
+  r.S.filter.qtr = '1';
+  r.renderList();
+  assert.deepEqual(r.visible(), [2], 'ordinary filters still narrow the chosen side');
+  r.S.filter.qtr = '';
+  vm.runInContext('analysisFilterSource = [S.plays[0], S.plays[1], S.plays[4]]', r.context);
+  r.renderList();
+  assert.deepEqual(r.visible(), [0, 1, 4], 'switching side replaces the sidebar cohort');
+  assert.deepEqual(Array.from(r.S.selected), [2], 'hidden selections are retained');
+  assert.equal(r.S.mapping, mapping);
+  vm.runInContext('analysisFilterSource = []', r.context);
+  r.renderList();
+  assert.deepEqual(r.visible(), [], 'a game outside the analysis scope does not show unrelated plays');
+  r.S.mode = 'film';
+  r.renderList();
+  assert.deepEqual(r.visible(), [0, 1, 2, 3, 4], 'Film Room does not apply the analysis cohort');
+});
+
+test('clear all is visible for every active filter and resets controls without deleting presets or other state', () => {
+  const r = contextualPlayers();
+  r.renderList();
+  assert.equal(r.elements.get('clear-filters').hidden, true);
+  const active = [
+    { text: 'smith' }, { type: 'run' }, { offense: 'JAX' }, { qtr: '1' }, { result: 'sack' },
+    ...['airMin', 'airMax', 'yardsMin', 'yardsMax', 'distMin', 'distMax'].map(key => ({ [key]: 0 })),
+    { choices: { player: ['smith'] } }, { choices: { motion: 'false' } },
+  ];
+  for (const filter of active) {
+    r.S.filter = { ...filterPresets.emptyFilter(), ...filter };
+    r.renderList();
+    assert.equal(r.elements.get('clear-filters').hidden, false, JSON.stringify(filter));
+  }
+  const preset = filterPresets.capture('My filters', r.S.filter, 'BAL', 'JAX');
+  r.S.settings.filterPresets = [preset];
+  r.S.appliedPreset = preset;
+  r.S.pendingPreset = preset.name;
+  r.S.selected.add(2);
+  const mapping = r.S.mapping;
+  const selection = r.S.sel;
+  r.context.document.getElementById('filter-preset-status').textContent = 'Applied preset';
+  r.clearAllFilters();
+  assert.equal(JSON.stringify(r.S.filter), JSON.stringify(filterPresets.emptyFilter()));
+  assert.equal(r.S.appliedPreset, null);
+  assert.equal(r.S.pendingPreset, null);
+  assert.equal(r.S.settings.filterPresets[0], preset);
+  assert.equal(r.S.mapping, mapping);
+  assert.equal(r.S.sel, selection);
+  assert.deepEqual(Array.from(r.S.selected), [2]);
+  assert.equal(r.elements.get('search').value, '');
+  assert.equal(r.elements.get('sel-result').value, '');
+  assert.equal(r.elements.get('air-yards-min').value, '');
+  assert.equal(r.elements.get('filter-preset-team').hidden, true);
+  assert.equal(r.elements.get('filter-preset-status').textContent, '');
+  assert.equal(r.elements.get('clear-filters').hidden, true);
+  assert.deepEqual(r.visible(), [0, 1, 2, 3, 4]);
+});
 
 test('on-field filter matches stable IDs instead of description mentions and composes with other filters', () => {
   const r = renderer();
@@ -145,7 +304,7 @@ test('cross-team presets do not alter current filters until the user applies wit
   assert.equal(JSON.stringify(r.S.filter), before);
   assert.equal(r.S.pendingPreset, preset.name);
   assert.equal(r.elements.get('filter-preset-team').hidden, false);
-  assert.match(r.elements.get('filter-preset-team-message').textContent, /BAL, not KC/);
+  assert.match(r.elements.get('filter-preset-team-message').textContent, /Baltimore Ravens, not Kansas City Chiefs/);
   r.chooseFilterPreset(r.S.pendingPreset, true);
   assert.equal(r.S.filter.offense, 'JAX');
   assert.equal(r.S.filter.choices.player, undefined);
@@ -259,12 +418,12 @@ function playerOrdering() {
 test('player dropdown groups the analyzed team first, not the filtered offense or default team, and defaults to alphabetical within teams', () => {
   const r = playerOrdering();
   assert.deepEqual(playerOptionGroups(r), [
-    { label: 'BAL · Analyzed team', ids: ['nflpro:202', 'alpha-cb', 'alpha-ilb', 'smith', 'q2-only', 'zebra-cb'] },
-    { label: 'JAX', ids: ['hunter', 'lawrence'] },
+    { label: 'Baltimore Ravens', ids: ['nflpro:202', 'alpha-cb', 'alpha-ilb', 'smith', 'q2-only', 'zebra-cb'] },
+    { label: 'Jacksonville Jaguars', ids: ['hunter', 'lawrence'] },
   ]);
   r.S.sel.team = 'JAX';
   r.renderList();
-  assert.deepEqual(playerOptionGroups(r).map(group => group.label), ['JAX · Analyzed team', 'BAL']);
+  assert.deepEqual(playerOptionGroups(r).map(group => group.label), ['Jacksonville Jaguars', 'Baltimore Ravens']);
   assert.deepEqual(playerOptionGroups(r)[0].ids, ['hunter', 'lawrence']);
 });
 
@@ -274,8 +433,8 @@ test('play-count sorting is descending inside each team, breaks ties alphabetica
   r.renderList();
   const initial = playerOptionGroups(r);
   assert.deepEqual(initial, [
-    { label: 'BAL · Analyzed team', ids: ['smith', 'zebra-cb', 'nflpro:202', 'alpha-cb', 'alpha-ilb', 'q2-only'] },
-    { label: 'JAX', ids: ['lawrence', 'hunter'] },
+    { label: 'Baltimore Ravens', ids: ['smith', 'zebra-cb', 'nflpro:202', 'alpha-cb', 'alpha-ilb', 'q2-only'] },
+    { label: 'Jacksonville Jaguars', ids: ['lawrence', 'hunter'] },
   ]);
   const mapping = Array.from(r.S.mapping);
   r.setAdvancedChoice('player', 'hunter');
@@ -291,8 +450,8 @@ test('position sorting uses the shared football order and sorts within each posi
   r.S.settings.playerFilterSort = 'position';
   r.renderList();
   assert.deepEqual(playerOptionGroups(r), [
-    { label: 'BAL · Analyzed team', ids: ['nflpro:202', 'smith', 'alpha-ilb', 'zebra-cb', 'alpha-cb', 'q2-only'] },
-    { label: 'JAX', ids: ['hunter', 'lawrence'] },
+    { label: 'Baltimore Ravens', ids: ['nflpro:202', 'smith', 'alpha-ilb', 'zebra-cb', 'alpha-cb', 'q2-only'] },
+    { label: 'Jacksonville Jaguars', ids: ['hunter', 'lawrence'] },
   ]);
   r.setAdvancedChoice('player', 'hunter');
   assert.deepEqual(playerOptionGroups(r)[0].ids, ['nflpro:202', 'alpha-ilb', 'smith', 'alpha-cb', 'zebra-cb']);

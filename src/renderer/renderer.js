@@ -50,6 +50,7 @@ const S = {
 };
 let analysisLab = null;
 let analysisFilterSource = null;
+let analysisSelectionMatches = null;
 
 function filterSource() {
   return S.mode === 'analysis' && analysisFilterSource !== null ? analysisFilterSource : S.plays;
@@ -63,6 +64,7 @@ async function setWorkspaceMode(mode, reload = true) {
   $('mode-film').setAttribute('aria-pressed', String(mode === 'film'));
   $('mode-analysis').setAttribute('aria-pressed', String(mode === 'analysis'));
   $('analysis-sidebar-note').hidden = mode !== 'analysis';
+  $('analysis-perspective').hidden = mode !== 'analysis';
   try { localStorage.setItem('amp22.workspace', mode); }
   catch (error) { setStatus(`Workspace preference could not be saved: ${error.message}`, true); }
   if (reload && S.sel.gameId) await loadGame(undefined, { preserveFilters: true });
@@ -262,13 +264,8 @@ async function loadGame(force, { preserveFilters = false } = {}) {
   S.gameData = gameData;
   renderFilmControls();
   const opp = S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
-  fillSelect($('sel-offense'), [
-    { value: '', label: 'Both offenses' },
-    { value: S.sel.team, label: 'Analyzed team' },
-    ...(opp ? [{ value: opp, label: 'Opponent' }] : []),
-  ], S.mode === 'analysis' || preserveFilters ? S.filter.offense : '');
-  $('sel-offense').title = `Filter by offense: analyzed team ${S.sel.team}; opponent ${opp || 'unavailable'}`;
   if (S.mode !== 'analysis' && !preserveFilters) S.filter.offense = '';
+  renderOffenseOptions();
   renderQuarters();
 
   if (S.game) {
@@ -563,6 +560,16 @@ function filterOpponent() {
   return S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
 }
 
+function renderOffenseOptions(teams = [S.sel.team, filterOpponent()]) {
+  const available = [...new Set(teams.filter(Boolean))];
+  if (S.filter.offense && !available.includes(S.filter.offense)) available.push(S.filter.offense);
+  fillSelect($('sel-offense'), [
+    { value: '', label: 'Both offenses' },
+    ...available.map(team => ({ value: team, label: `${A22.teams.teamName(team)} offense` })),
+  ], S.filter.offense);
+  $('sel-offense').title = 'Filter plays by the team in possession';
+}
+
 function renderPresetOptions() {
   fillSelect($('filter-preset'), [
     { value: '', label: 'Choose a preset…' },
@@ -598,7 +605,7 @@ function chooseFilterPreset(name, withoutPlayers = false) {
   if (preset.playerTeam && preset.playerTeam !== S.sel.team && !withoutPlayers) {
     S.pendingPreset = preset.name;
     $('filter-preset-team-message').textContent =
-      `“${preset.name}” uses specific players and is tied to analyzed team ${preset.playerTeam}, not ${S.sel.team}. Apply all other filters without any players selected?`;
+      `“${preset.name}” uses specific players and is tied to ${A22.teams.teamName(preset.playerTeam)}, not ${A22.teams.teamName(S.sel.team)}. Apply all other filters without any players selected?`;
     $('filter-preset-team').hidden = false;
     renderPresetOptions();
     return;
@@ -774,6 +781,7 @@ function renderPlayerFilter() {
   const remaining = scoped.filter(([id]) => !selected.includes(id));
   const counts = new Map();
   for (const play of filterSource()) {
+    if (S.mode === 'analysis' && analysisSelectionMatches && !analysisSelectionMatches(play)) continue;
     if (!passesFilter(play)) continue;
     for (const id of new Set(spec.get(play))) counts.set(id, (counts.get(id) || 0) + 1);
   }
@@ -792,7 +800,7 @@ function renderPlayerFilter() {
       options.sort((a, b) => (mode === 'position' ? a[3].positionRank - b[3].positionRank : 0) ||
         (mode === 'plays' || mode === 'position' ? (counts.get(b[0]) || 0) - (counts.get(a[0]) || 0) : 0) ||
         a[2].localeCompare(b[2]) || a[0].localeCompare(b[0]));
-      return `<optgroup label="${esc(team ? `${team}${team === analyzed ? ' · Analyzed team' : ''}` : 'Unknown team')}">` +
+      return `<optgroup label="${esc(team ? A22.teams.teamName(team) : 'Unknown team')}">` +
         options.map(([id, label]) => {
           const count = counts.get(id) || 0;
           return `<option value="${esc(id)}">${esc(label)} (${count} ${count === 1 ? 'play' : 'plays'})</option>`;
@@ -837,6 +845,7 @@ function renderAdvancedFilters() {
   S.filter.choices = choices;
   $('adv-choices').innerHTML = html.join('');
   renderPlayerFilter();
+  renderFilterCounts();
   $('adv-note').hidden = !source.length || source.some((p) => p.personnel || p.charting);
   updateAdvancedIndicator();
   renderFilterDataWarning();
@@ -863,12 +872,25 @@ function removePlayerFilter(id) {
   $('on-field-player').focus();
 }
 
+function clearAllFilters() {
+  S.filter = PRESETS.emptyFilter();
+  S.appliedPreset = null;
+  S.pendingPreset = null;
+  $('filter-preset-team').hidden = true;
+  $('filter-preset-status').textContent = '';
+  if (S.mode === 'analysis') analysisLab?.clearSelectionFilter();
+  syncFilterControls();
+  renderAdvancedFilters();
+  renderList();
+  $('search').focus();
+}
+
 function passesFilter(p, excludedChoice) {
   const f = S.filter;
-  if (['run', 'pass', 'special'].includes(f.type) && p.cat !== f.type) return false;
-  if (f.offense && p.posteam !== f.offense) return false;
-  if (f.qtr && String(p.qtr) !== f.qtr) return false;
-  if (f.result && RESULT_FILTERS[f.result] && !RESULT_FILTERS[f.result](p)) return false;
+  if (excludedChoice !== 'type' && ['run', 'pass', 'special'].includes(f.type) && p.cat !== f.type) return false;
+  if (excludedChoice !== 'offense' && f.offense && p.posteam !== f.offense) return false;
+  if (excludedChoice !== 'qtr' && f.qtr && String(p.qtr) !== f.qtr) return false;
+  if (excludedChoice !== 'result' && f.result && RESULT_FILTERS[f.result] && !RESULT_FILTERS[f.result](p)) return false;
   for (const [key, get] of Object.entries(RANGE_FILTERS)) {
     const min = f[`${key}Min`];
     const max = f[`${key}Max`];
@@ -887,6 +909,51 @@ function passesFilter(p, excludedChoice) {
     for (const w of f.text.toLowerCase().split(/\s+/).filter(Boolean)) if (!p.searchText.includes(w)) return false;
   }
   return true;
+}
+
+function filterChoiceCount(key, value, source = filterSource()) {
+  const spec = ADV_CHOICES.find(spec => spec.key === key);
+  return source.reduce((count, play) => {
+    if (S.mode === 'analysis' && analysisSelectionMatches && !analysisSelectionMatches(play)) return count;
+    if (!passesFilter(play, key)) return count;
+    let matches = !value;
+    if (value) {
+      if (key === 'type') matches = value === 'all' || play.cat === value;
+      else if (key === 'offense') matches = play.posteam === value;
+      else if (key === 'qtr') matches = String(play.qtr) === value;
+      else if (key === 'result') matches = RESULT_FILTERS[value](play);
+      else matches = choiceMatches(value, spec.get(play));
+    }
+    return count + (matches ? 1 : 0);
+  }, 0);
+}
+
+function renderFilterCounts() {
+  const source = filterSource();
+  const selects = [
+    [$('sel-offense'), 'offense'], [$('sel-qtr'), 'qtr'], [$('sel-result'), 'result'],
+    ...Array.from(document.querySelectorAll('#adv-choices select:not([data-choice="player"])'),
+      select => [select, select.dataset.choice]),
+  ];
+  for (const [select, key] of selects) {
+    for (const option of select.options || []) {
+      // Keep the original label so repeated refreshes never accumulate count suffixes.
+      const label = option.dataset.countLabel ??= option.textContent;
+      const count = filterChoiceCount(key, option.value, source);
+      const text = `${label} (${count})`;
+      if (option.textContent !== text) option.textContent = text;
+      option.title = `${label}: ${count} matching ${count === 1 ? 'play' : 'plays'} with other filters applied`;
+    }
+  }
+  for (const button of document.querySelectorAll('#type-chips button')) {
+    const label = button.dataset.countLabel ??= button.textContent;
+    const count = filterChoiceCount('type', button.dataset.type, source);
+    button.innerHTML = `${esc(label)} <span class="filter-choice-count">(${count})</span>`;
+    button.title = `${label}: ${count} matching ${count === 1 ? 'play' : 'plays'} with other filters applied`;
+  }
+  $('clear-filters').hidden = !(S.filter.text || ['run', 'pass', 'special'].includes(S.filter.type) ||
+    S.filter.offense || S.filter.qtr || S.filter.result || activeAdvancedCount() ||
+    (S.mode === 'analysis' && analysisLab?.hasSelectionFilter()));
 }
 
 function renderQuarters() {
@@ -918,13 +985,16 @@ function renderParticipationStatus() {
   el.classList.toggle('warning', !!S.participationWarning);
 }
 
-function renderList() {
+function renderList({ refreshAnalysis = true } = {}) {
   S.visible = [];
   const html = [];
+  const analysisKeys = S.mode === 'analysis' && analysisFilterSource !== null
+    ? new Set(analysisFilterSource.map(A22.analysis.playKey)) : null;
   const anchors = corrections().anchors || {};
   let drive = null;
   let shade = false;
   S.plays.forEach((p, i) => {
+    if (analysisKeys && !analysisKeys.has(A22.analysis.playKey(p))) return;
     if (!passesFilter(p)) return;
     S.visible.push(i);
     const dkey = `${p.driveNum}`;
@@ -953,8 +1023,9 @@ function renderList() {
   updateSelection();
   renderParticipationStatus();
   renderPlayerFilter();
+  renderFilterCounts();
   renderFilterDataWarning();
-  analysisLab?.refresh();
+  if (refreshAnalysis) analysisLab?.refresh();
 }
 
 function boxHtml(p) {
@@ -1229,7 +1300,7 @@ function loadPair(pairIdx, { autoplay = false, keepRel = false } = {}) {
 
 function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
   if (!S.plays[i]) return;
-  if (!keepSelection) {
+  if (!keepSelection && S.mode !== 'analysis') {
     S.selected = new Set([i]);
     S.selectionAnchor = i;
     S.multiSelect = false;
@@ -1256,12 +1327,17 @@ function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
 
 /* ---------------- clip export ---------------- */
 
+function notifyAnalysisSelection() {
+  if (S.mode === 'analysis') analysisLab?.selectionChanged(S.plays.filter((_play, index) => S.selected.has(index)));
+}
+
 function updateSelection() {
-  const multi = S.multiSelect || S.selected.size > 1;
-  $('selection-bar').hidden = !multi;
+  const multi = S.mode === 'analysis' ? S.multiSelect : S.multiSelect || S.selected.size > 1;
+  const showSelection = multi || (S.mode === 'analysis' && S.selected.size > 0);
+  $('selection-bar').hidden = !showSelection;
   $('selection-count').textContent = `${S.selected.size} selected`;
-  $('selection-count').hidden = !multi;
-  $('btn-clear-selection').hidden = !multi;
+  $('selection-count').hidden = !showSelection;
+  $('btn-clear-selection').hidden = !showSelection;
   $('btn-clear-selection').disabled = !S.selected.size;
   $('btn-multi-select').setAttribute('aria-pressed', String(multi));
   $('btn-share').disabled = S.exporting || !S.selected.size || !S.film || !S.pairs.length;
@@ -2391,15 +2467,22 @@ function wire() {
     preparePlays: derivePlays,
     matchesFilter: passesFilter,
     filterDescription: analysisFilterDescription,
-    onCohortChange: (plays) => {
+    onCohortChange: (plays, selectionMatches) => {
       analysisFilterSource = plays;
+      analysisSelectionMatches = selectionMatches || null;
       if (plays === null) return;
       const teams = [...new Set(plays.map((p) => p.posteam).filter(Boolean))].sort();
-      if (S.filter.offense && !teams.includes(S.filter.offense)) teams.push(S.filter.offense);
-      fillSelect($('sel-offense'), [{ value: '', label: 'Both offenses' },
-        ...teams.map((team) => ({ value: team, label: `${team} offense` }))], S.filter.offense);
+      renderOffenseOptions(teams);
       renderAdvancedFilters();
       renderQuarters();
+      renderList({ refreshAnalysis: false });
+    },
+    onSelectionChange: (keys) => {
+      const selected = new Set(keys);
+      S.selected = new Set(S.plays.flatMap((play, index) =>
+        selected.has(A22.analysis.playKey(play)) ? [index] : []));
+      if (S.selected.size) S.multiSelect = true;
+      updateSelection();
     },
     openPlay: async (play) => {
       if (!play) return;
@@ -2616,8 +2699,14 @@ function wire() {
     S.selectionAnchor = -1;
     S.multiSelect = false;
     updateSelection();
+    notifyAnalysisSelection();
   });
   $('btn-multi-select').addEventListener('click', () => {
+    if (S.mode === 'analysis') {
+      S.multiSelect = !S.multiSelect;
+      updateSelection();
+      return;
+    }
     if (S.multiSelect || S.selected.size > 1) {
       const i = S.selected.has(S.curPlay) ? S.curPlay : A22.clipExport.selectedIndices(S.selected)[0];
       S.selected = new Set(i == null ? [] : [i]);
@@ -2678,9 +2767,11 @@ function wire() {
         updateSelection();
       }
     } else selectPlay(i);
+    notifyAnalysisSelection();
   });
 
   $('search').addEventListener('input', (e) => { S.filter.text = e.target.value; renderList(); });
+  $('clear-filters').addEventListener('click', clearAllFilters);
   $('type-chips').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;

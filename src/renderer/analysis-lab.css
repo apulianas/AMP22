@@ -11,6 +11,13 @@
 .lab-controls input { width: 82px; }
 .lab-controls button, .lab-chart-toolbar button { min-height: 28px; }
 .lab-controls label[hidden] { display: none; }
+.lab-selection-controls { margin-top: 12px; align-items: center; }
+#lab-play-selection { margin-top: 14px; }
+#lab-selection-plays { padding-left: 24px; max-height: 280px; overflow-y: auto; }
+#lab-selection-plays li { padding: 8px 0; border-top: 1px solid var(--border); }
+#lab-selection-plays label { display: flex; align-items: start; gap: 8px; font-size: 12px; cursor: pointer; }
+#lab-selection-plays input { flex: none; margin-top: 2px; }
+#lab-selection-plays small { display: block; color: var(--muted); margin-top: 4px; }
 #lab-status { overflow-wrap: anywhere; max-height: 100px; overflow-y: auto; }
 #lab-status.error, #lab-package-status { color: var(--neg); }
 .lab-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
