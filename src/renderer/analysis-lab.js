@@ -206,11 +206,16 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     $('yards-heading').textContent = side === 'defense' ? 'Yards allowed' : 'Yards gained';
     $('group').disabled = chart === 'heatmap';
     $('split').disabled = chart !== 'bars';
-    $('rows').innerHTML = result.rows.map((r, i) => `<tr${r.id === evidenceId ? ' class="selected"' : ''}>
-      <td><button data-row="${i}" title="${esc(r.label)}">${esc(r.label)}</button><small>${esc(r.series)}</small></td>
+    $('rows').innerHTML = result.rows.map((r, i) => {
+      const type = split === 'type' ? r.plays[0].playType : '';
+      const classes = [type ? `lab-row-${type}` : '', r.id === evidenceId ? 'selected' : ''].filter(Boolean).join(' ');
+      const series = type ? esc(r.series).replace(/^(Run|Pass)/, '<span class="lab-split-badge">$1</span>') : esc(r.series);
+      return `<tr class="${classes}">
+      <td><button data-row="${i}" title="${esc(r.label)}">${esc(r.label)}</button><small${type ? ' class="lab-split"' : ''}>${series}</small></td>
       <td>${r.n}${r.n < 10 ? '<small class="lab-small">Small sample</small>' : ''}</td>
       <td>${(r.share * 100).toFixed(1)}%</td><td>${r.yardsN ? r.totalYards : 'N/A'}<small>n=${r.yardsN}</small></td>
-      ${Object.keys(A.METRICS).map((m) => `<td>${A.format(r[m], m)}<small>n=${m === 'epa' || m === 'success' ? r.epaN : m === 'conversion' ? r.conversionN : r.yardsN}</small></td>`).join('')}</tr>`).join('') ||
+      ${Object.keys(A.METRICS).map((m) => `<td>${A.format(r[m], m)}<small>n=${m === 'epa' || m === 'success' ? r.epaN : m === 'conversion' ? r.conversionN : r.yardsN}</small></td>`).join('')}</tr>`;
+    }).join('') ||
       '<tr><td colspan="9">No scored snaps match. Check perspective and shared sidebar filters.</td></tr>';
     let chartRows = result.rows.slice(0, 30);
     if (chart === 'heatmap') {
@@ -218,7 +223,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       const series = [...new Set(result.rows.map((r) => r.series))].slice(0, 8);
       chartRows = result.rows.filter((r) => labels.includes(r.label) && series.includes(r.series));
     }
-    const limit = chartRows.length !== result.rows.length ? `Graphic shows ${chartRows.length} of ${result.rows.length} groups in snap-count order. Table and Summary CSV include all groups.` : 'Graphic includes all groups.';
+    const limit = chartRows.length !== result.rows.length ? `Graphic shows ${chartRows.length} of ${result.rows.length} groups, ordered by combined group snaps with splits together. Table and Summary CSV include all groups.` : 'Graphic includes all groups.';
     report = {
       title: `${ctx.sel.team} ${side === 'defense' ? 'defense: efficiency allowed' : 'offense: efficiency gained'}`,
       subtitle: `${$('scope-note').textContent} / ${A.GROUPS[group]} by ${A.SPLITS[split]}`,

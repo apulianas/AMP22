@@ -39,6 +39,11 @@
 .lab-table td button { display: block; background: transparent; text-align: left; border: 0; color: #d2a8ff; padding: 0; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lab-table small { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; }
 .lab-table .lab-small { color: var(--key); }
+.lab-table tr.lab-row-run { --lab-split-color: #56d364; background: rgba(86, 211, 100, .07); }
+.lab-table tr.lab-row-pass { --lab-split-color: #79c0ff; background: rgba(121, 192, 255, .07); }
+.lab-table .lab-row-run td:first-child, .lab-table .lab-row-pass td:first-child { box-shadow: inset 3px 0 var(--lab-split-color); }
+.lab-table .lab-split { display: flex; align-items: center; gap: 6px; }
+.lab-split-badge { flex: none; padding: 3px 7px; border-radius: 4px; background: var(--lab-split-color); color: #0d1117; font-size: 11px; font-weight: 700; line-height: 1.2; letter-spacing: .5px; text-transform: uppercase; }
 .lab-table tr.selected { background: #27203a; }
 #lab-evidence { margin: 22px 0; border: 1px solid #8957c5; border-radius: 8px; padding: 16px; }
 #lab-evidence h2 { font-size: 18px; }

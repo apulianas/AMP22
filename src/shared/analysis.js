@@ -82,7 +82,8 @@
       if (rule) return `${rule.name}*`;
     }
     const supplied = p.personnel?.defense;
-    return supplied ? `${supplied}${p.personnel.front ? ` ${p.personnel.front}` : ''}${p.personnel.defenseInferred ? '*' : ''}` : UNKNOWN;
+    const front = ['3-4', '4-3'].includes(supplied) ? '' : p.personnel?.front;
+    return supplied ? `${supplied}${front ? ` ${front}` : ''}${p.personnel.defenseInferred ? '*' : ''}` : UNKNOWN;
   }
 
   function half(p) {
@@ -125,15 +126,29 @@
       return true;
     });
     const buckets = new Map();
+    const groups = new Map();
     for (const p of eligible) {
       const label = groupValue(p, group, packages);
       const series = groupValue(p, split, packages);
       const identity = group === 'lineup' && label !== UNKNOWN ? p.onField.defense.map(keyOf).sort().join(';') : label;
       const id = JSON.stringify([identity, series]);
-      if (!buckets.has(id)) buckets.set(id, { id, label, series, plays: [] });
+      if (!groups.has(identity)) groups.set(identity, { label, n: 0 });
+      groups.get(identity).n++;
+      if (!buckets.has(id)) buckets.set(id, { id, groupKey: identity, label, series, plays: [] });
       buckets.get(id).plays.push(p);
     }
-    const rows = [...buckets.values()].map((bucket) => {
+    const seriesOrder = split === 'type' ? ['Run (incl. scrambles)', 'Pass (incl. sacks)'] :
+      split === 'half' ? ['First half', 'Second half', 'Overtime', UNKNOWN] : [];
+    const seriesRank = (series) => {
+      const rank = seriesOrder.indexOf(series);
+      return rank < 0 ? seriesOrder.length : rank;
+    };
+    const rows = [...buckets.values()].sort((a, b) => {
+      const first = groups.get(a.groupKey);
+      const second = groups.get(b.groupKey);
+      return second.n - first.n || first.label.localeCompare(second.label) || a.groupKey.localeCompare(b.groupKey) ||
+        seriesRank(a.series) - seriesRank(b.series) || a.series.localeCompare(b.series, undefined, { numeric: true });
+    }).map(({ groupKey, ...bucket }) => {
       const list = bucket.plays;
       const yards = list.filter((p) => known(p.yards));
       const epas = list.filter((p) => known(p.epa));
@@ -148,7 +163,7 @@
         explosive: average(yards.filter((p) => p.yards >= (p.playType === 'run' ? 10 : 20)).length, yards.length),
         conversion: average(late.filter((p) => p.flags?.first_down || p.flags?.touchdown || p.yards >= p.ydstogo).length, late.length),
       };
-    }).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label) || a.series.localeCompare(b.series));
+    });
     const sources = {};
     for (const p of eligible) {
       const source = p.participation?.defenseSource || p.participation?.source || (p.onField?.defense?.length ? 'nflverse' : 'Unknown participation');

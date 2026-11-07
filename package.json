@@ -1,7 +1,7 @@
 {
   "name": "amp22",
   "productName": "AMP22",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Watch and analyze NFL All-22 film: synced sideline + end zone angles, play-by-play navigation, frame stepping.",
   "main": "src/main/main.js",
   "private": true,

@@ -55,6 +55,47 @@ test('deduplication uses game and play identity and preserves other games with t
   assert.equal(result.n, 2);
 });
 
+test('packages stay together by total snaps, with runs before passes regardless of split size', () => {
+  let id = 0;
+  const snaps = (defense, playType, n) => Array.from({ length: n }, () => play(++id, { playType, personnel: { defense } }));
+  const result = A.summarize([
+    ...snaps('Dime', 'pass', 11), ...snaps('Nickel', 'pass', 3),
+    ...snaps('Dime', 'run', 1), ...snaps('Nickel', 'run', 10),
+    ...snaps('Base', 'pass', 1),
+  ]);
+  assert.deepEqual(result.rows.map((r) => [r.label, r.series, r.n]), [
+    ['Nickel', 'Run (incl. scrambles)', 10], ['Nickel', 'Pass (incl. sacks)', 3],
+    ['Dime', 'Run (incl. scrambles)', 1], ['Dime', 'Pass (incl. sacks)', 11],
+    ['Base', 'Pass (incl. sacks)', 1],
+  ]);
+  assert.equal(result.n, 26);
+  assert.equal(result.rows[2].ypp, 8);
+  const report = { title: 'Grouped packages', subtitle: 'Scope', notes: '', rows: result.rows, metric: 'ypp', chart: 'bars' };
+  const svgOrder = [...A.svg(report).matchAll(/data-bucket="([^"]+)"/g)].map((m) => m[1].replace(/&quot;/g, '"'));
+  assert.deepEqual(svgOrder, result.rows.map((r) => r.id));
+  const csvRows = A.csv(report).split('\r\n').slice(4, -1);
+  assert.deepEqual(csvRows.map((r) => r.split(',').slice(0, 2).join(',')), [
+    '"Nickel","Run (incl. scrambles)"', '"Nickel","Pass (incl. sacks)"',
+    '"Dime","Run (incl. scrambles)"', '"Dime","Pass (incl. sacks)"',
+    '"Base","Pass (incl. sacks)"',
+  ]);
+});
+
+test('half splits remain chronological within each group and equal-size groups sort by name', () => {
+  const result = A.summarize([
+    play(1, { qtr: 3, personnel: { defense: 'Nickel' } }),
+    play(2, { qtr: 3, personnel: { defense: 'Nickel' } }),
+    play(3, { qtr: 1, personnel: { defense: 'Nickel' } }),
+    play(4, { qtr: 5, personnel: { defense: 'Dime' } }),
+    play(5, { qtr: 1, personnel: { defense: 'Dime' } }),
+    play(6, { qtr: null, personnel: { defense: 'Dime' } }),
+  ], { split: 'half' });
+  assert.deepEqual(result.rows.map((r) => [r.label, r.series]), [
+    ['Dime', 'First half'], ['Dime', 'Overtime'], ['Dime', 'Unknown'],
+    ['Nickel', 'First half'], ['Nickel', 'Second half'],
+  ]);
+});
+
 test('big and standard nickel require complete unique position evidence, not just five DBs', () => {
   const big = play(1, { onField: { defense: roster(A.DEFAULT_PACKAGES[0].counts) } });
   assert.equal(A.defensivePackage(big, A.DEFAULT_PACKAGES), 'Big nickel*');
@@ -66,6 +107,18 @@ test('big and standard nickel require complete unique position evidence, not jus
   standard.personnel = { defense: 'Nickel', front: '2-4-5' };
   assert.equal(A.defensivePackage(standard, A.DEFAULT_PACKAGES), 'Nickel 2-4-5');
   assert.equal(A.composition(play(3, { onField: { defense: roster({ DL: 2, LB: 4, DB: 5 }) } })).CB, undefined);
+});
+
+test('base packages use short front names without losing inference markers or other package detail', () => {
+  for (const defense of ['3-4', '4-3']) {
+    const p = play(1, { personnel: { defense, front: `${defense}-4`, offense: '11' } });
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), defense);
+    assert.equal(A.summarize([p]).rows[0].label, defense);
+    assert.equal(A.summarize([p], { group: 'matchup' }).rows[0].label, `11 vs ${defense}`);
+    p.personnel.defenseInferred = true;
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), `${defense}*`);
+  }
+  assert.equal(A.defensivePackage(play(1, { personnel: { defense: 'Dime', front: '1-4-6' } }), A.DEFAULT_PACKAGES), 'Dime 1-4-6');
 });
 
 test('custom packages validate total, unknown positions and conflicting rules', () => {
