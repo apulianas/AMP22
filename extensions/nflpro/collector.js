@@ -1,14 +1,15 @@
 (function (root, factory) {
-  const mod = factory();
+  const node = typeof module === 'object' && module.exports;
+  const mod = factory(node ? require('../../src/shared/participation') : root.AMP22Participation);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.AMP22NFLCollector = mod;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (participationSchema) {
   'use strict';
 
-  function gamePlays(response, url) {
+  function gamePlays(response, url, allowEmpty = false) {
     const game = new URL(url).searchParams.get('gameId');
     const count = Number(response?.count);
-    if (response?.code || !Number.isSafeInteger(count) || count < 1 || count > 600 ||
+    if (response?.code || !Number.isSafeInteger(count) || count < (allowEmpty ? 0 : 1) || count > 600 ||
         !Array.isArray(response.plays) || response.plays.length !== count) {
       throw new Error('NFL Pro did not return a complete game playlist. No CSV will be saved.');
     }
@@ -27,6 +28,23 @@
     return response.plays;
   }
 
+  function chartingField(plays, responses, url, field) {
+    const all = new Map(plays.map(play => [String(play.playId), play]));
+    const values = new Map();
+    for (const [parameter, value] of field.options) {
+      const response = responses.get(parameter);
+      for (const play of gamePlays(response, url, true)) {
+        const id = String(play.playId);
+        if (!all.has(id) || String(all.get(id).fapiGameId) !== String(play.fapiGameId)) {
+          throw new Error(`NFL Pro ${field.query} returned a play outside the captured game playlist.`);
+        }
+        if (values.has(id)) throw new Error(`NFL Pro ${field.query} returned overlapping filter results. No charting values can be trusted.`);
+        values.set(id, value);
+      }
+    }
+    return values;
+  }
+
   function snapshot(state, url, now = new Date().toISOString()) {
     const selected = state?.film?.selectedPlay;
     const expanded = state?.film?.selectedPlayExpanded;
@@ -36,7 +54,7 @@
     return participation(selected, expanded, url, now);
   }
 
-  function participation(selected, expanded, url, now = new Date().toISOString()) {
+  function participation(selected, expanded, url, now = new Date().toISOString(), charting = {}) {
     if (!Array.isArray(expanded?.home) || !Array.isArray(expanded?.away) || typeof expanded.homeIsOffense !== 'boolean') {
       throw new Error('NFL Pro did not expose the expected home/away participation fields.');
     }
@@ -48,7 +66,7 @@
     const away = selected.visitorTeamAbbr;
     const down = String(selected.down ?? '');
     const base = {
-      schema_version: '1', season: query.get('season'), season_type: query.get('seasonType'),
+      schema_version: '2', season: query.get('season'), season_type: query.get('seasonType'),
       week: String(/^WEEK_\d+$/.test(query.get('weekSlug') || '') ?
         query.get('weekSlug').replace(/^WEEK_/, '') : selected.week ?? ''),
       away_team: away, home_team: home, source_game_id: sourceGame,
@@ -58,6 +76,7 @@
       yards_to_go: String(selected.yardsToGo ?? ''),
       description: String(selected.playDescriptionNoTime ?? selected.playDescription ?? '').replace(/^\([^)]*\)\s*/, ''),
       captured_at: now,
+      ...Object.fromEntries(participationSchema.CHARTING_COLUMNS.map(column => [column, charting[column] ?? ''])),
     };
     if (![String(selected.gameId), String(selected.fapiGameId)].includes(sourceGame)) {
       throw new Error('The loaded play is from a different game than the URL.');
@@ -87,7 +106,7 @@
       started_at: time(report.started_at),
       completed: count(report.completed, 600), total: count(report.total, 600),
       failure: failure ? {
-        stage: ['playlist', 'participation', 'validation', 'export'].includes(failure.stage) ? failure.stage : '',
+        stage: ['playlist', 'charting', 'participation', 'validation', 'export'].includes(failure.stage) ? failure.stage : '',
         source_play_id: id(failure.source_play_id),
         field, ...(field ? { value: schema.validationValue(field, failure.value) } : {}),
         row: count(failure.row, 13200),
@@ -97,7 +116,7 @@
       events: (Array.isArray(report.events) ? report.events.slice(-200) : []).map((event) => ({
         at: time(event?.at),
         type: ['request', 'response', 'retry', 'validated', 'failed', 'finished'].includes(event?.type) ? event.type : '',
-        endpoint: ['playlist', 'participation'].includes(event?.endpoint) ? event.endpoint : '',
+        endpoint: ['playlist', 'charting', 'participation'].includes(event?.endpoint) ? event.endpoint : '',
         source_play_id: id(event?.source_play_id),
         attempt: count(event?.attempt, 3),
         http_status: count(event?.http_status, 599),
@@ -107,5 +126,5 @@
     };
   }
 
-  return { snapshot, participation, gamePlays, diagnostics };
+  return { snapshot, participation, gamePlays, chartingField, diagnostics };
 });

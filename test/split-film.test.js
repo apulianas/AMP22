@@ -44,7 +44,7 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
   };
   const context = vm.createContext({
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
-    A22: { align, plays, settings, clipExport, advanced, reports, teams: require('../src/shared/teams'), overlay: require('../src/shared/overlay') },
+    A22: { align, plays, settings, clipExport, advanced, reports, filterPresets: require('../src/shared/filter-presets'), teams: require('../src/shared/teams'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, api },
     document: { getElementById: element, querySelectorAll: () => [] },
   });

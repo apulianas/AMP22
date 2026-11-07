@@ -254,6 +254,7 @@
     if (!isScrimmage(play) || (!part && !ftn)) return play;
     const dropback = isDropback(play);
     const charting = {};
+    const sources = {};
     if (part) {
       const off = offenseCode(part.offense_personnel);
       const def = defensePackage(part.defense_personnel);
@@ -279,26 +280,62 @@
       const defense = onFieldPlayers(part, 'defense', directory);
       if (offense.length || defense.length) play.onField = { offense, defense };
     }
+    for (const key of Object.keys(charting)) sources[key] = 'nflverse participation';
     if (ftn) {
+      const ftnCharting = {};
       const qb = QB_LOCATIONS[str(ftn.qb_location).toUpperCase()];
-      if (qb) charting.qbLocation = qb;
+      if (qb) ftnCharting.qbLocation = qb;
       const backfield = int(ftn.n_offense_backfield);
-      if (backfield != null && qb) charting.backfield = backfield;
+      if (backfield != null && qb) ftnCharting.backfield = backfield;
       const box = int(ftn.n_defense_box);
-      if (box) charting.box = box;
+      if (box) ftnCharting.box = box;
       for (const [key, col] of [['motion', 'is_motion'], ['playAction', 'is_play_action'], ['rpo', 'is_rpo'], ['screen', 'is_screen_pass'], ['noHuddle', 'is_no_huddle']]) {
         const b = bool(ftn[col]);
-        if (b != null) charting[key] = b;
+        if (b != null) ftnCharting[key] = b;
       }
       if (dropback) {
         const rushers = int(ftn.n_pass_rushers);
-        if (rushers) charting.rushers = rushers;
+        if (rushers) ftnCharting.rushers = rushers;
         const blitzers = int(ftn.n_blitzers);
-        if (blitzers != null && rushers) charting.blitzers = blitzers;
+        if (blitzers != null && rushers) ftnCharting.blitzers = blitzers;
+      }
+      Object.assign(charting, ftnCharting);
+      for (const key of Object.keys(ftnCharting)) sources[key] = 'FTN';
+    }
+    if (Object.keys(charting).length) {
+      play.charting = charting;
+      play.chartingSources = sources;
+    }
+    return play;
+  }
+
+  function attachNFLProCharting(play, records) {
+    if (!isScrimmage(play) || !Object.keys(records).length) return;
+    const values = {};
+    const conflicts = {};
+    const charting = { ...play.charting };
+    const sources = { ...play.chartingSources };
+    for (const key of Object.keys(sources)) {
+      if (sources[key] === 'NFL Pro / NGS') {
+        delete charting[key];
+        delete sources[key];
       }
     }
-    if (Object.keys(charting).length) play.charting = charting;
-    return play;
+    for (const [key, record] of Object.entries(records)) {
+      const value = record.value;
+      values[key] = value;
+      if (charting[key] == null || charting[key] === '') {
+        charting[key] = value;
+        sources[key] = 'NFL Pro / NGS';
+      } else if (charting[key] !== value) {
+        conflicts[key] = { source: sources[key] || 'nflverse', value: charting[key], nflPro: value };
+      }
+    }
+    play.charting = charting;
+    play.chartingSources = sources;
+    play.nflProCharting = { values, provenance: records };
+    if (Object.keys(conflicts).length) play.chartingConflicts = conflicts;
+    else delete play.chartingConflicts;
   }
 
   /** Short tags describing a play's personnel/charting for display, e.g. ["12 personnel", "Nickel 4-2-5", "Shotgun"]. */
@@ -319,6 +356,10 @@
     if (c.box) out.push(`${c.box} in box`);
     if (c.rushers) out.push(`${c.rushers} rushers`);
     if (c.blitzers) out.push(`${c.blitzers} blitzer${c.blitzers === 1 ? '' : 's'}`);
+    if (c.blitz != null) out.push(`NGS blitz: ${c.blitz ? 'Yes' : 'No'}`);
+    if (c.pressure != null) out.push(`NGS pressure: ${c.pressure ? 'Yes' : 'No'}`);
+    if (c.boxCategory) out.push(`NGS box: ${c.boxCategory}`);
+    if (c.defPersonnelGroup) out.push(`NGS personnel: ${c.defPersonnelGroup}`);
     if (c.coverage || c.manZone) out.push([c.coverage, c.manZone].filter(Boolean).join(' '));
     return out;
   }
@@ -326,6 +367,6 @@
   return {
     PARTICIPATION_FIRST_SEASON, CHARTING_FIRST_SEASON, PARTICIPATION_COLUMNS, CHARTING_COLUMNS, DEFENSE_ORDER,
     parsePersonnel, offenseCode, defensePackage, coverageLabel, formationLabel, onFieldPlayers, attach, tags, playerKey, inferPersonnel,
-    needsDepthPosition, attachDepthPositions, annotateEligible, displayPosition, playerPositionRank, orderedPlayers,
+    needsDepthPosition, attachDepthPositions, annotateEligible, displayPosition, playerPositionRank, orderedPlayers, attachNFLProCharting,
   };
 });
