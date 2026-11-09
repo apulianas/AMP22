@@ -94,6 +94,11 @@ jobs:
             file "$binary"
             lipo -verify_arch "$cpu" "$binary"
           done
+          if [ "$APP_ARCH" = "arm64" ]; then
+            helper="$contents/Resources/native/amp22-foundation-models"
+            lipo -verify_arch arm64 "$helper"
+            codesign --verify --strict "$helper"
+          fi
           "$ffmpeg" -version > /dev/null
           "$ffprobe" -version > /dev/null
       - name: Verify ad-hoc signature of the app shipped in the DMG

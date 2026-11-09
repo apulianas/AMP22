@@ -27,6 +27,15 @@
 .lab-methods { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 18px; }
 .lab-methods summary { cursor: pointer; color: #d2a8ff; }
 .lab-methods p { max-width: 1000px; font-size: 12px; }
+#lab-ai[hidden], #lab-ai-model-label[hidden], #lab-ai-cancel[hidden],
+#lab-ai-answer[hidden], #lab-ai-evidence[hidden] { display: none; }
+#lab-ai-form { display: flex; flex-direction: column; gap: 8px; max-width: 1000px; }
+#lab-ai-form label { font-size: 12px; color: var(--muted); }
+#lab-ai-question { width: 100%; box-sizing: border-box; resize: vertical; min-height: 60px; font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+#lab-ai-status.error { color: var(--neg); }
+#lab-ai-summary { font-weight: 600; }
+#lab-ai-evidence-plays { padding-left: 24px; max-height: 320px; overflow-y: auto; }
+#lab-ai-evidence-plays li { padding: 8px 0; border-top: 1px solid var(--border); }
 .lab-package { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 5px 0; max-width: 700px; }
 .lab-package button { font-size: 11px; }
 .lab-package-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }

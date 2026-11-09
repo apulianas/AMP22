@@ -18,6 +18,14 @@ contextBridge.exposeInMainWorld('api', {
   chooseParticipationFolder: () => ipcRenderer.invoke('dialog:participation-folder'),
   exportData: (request) => ipcRenderer.invoke('data:export', request),
   exportAnalysis: (request) => ipcRenderer.invoke('analysis:export', request),
+  discoverAnalysisAI: () => ipcRenderer.invoke('analysis-ai:discover'),
+  planAnalysisQuestion: (request) => ipcRenderer.invoke('analysis-ai:plan', request),
+  cancelAnalysisQuestion: () => ipcRenderer.invoke('analysis-ai:cancel'),
+  cloudAIStatus: () => ipcRenderer.invoke('analysis-ai:cloud-status'),
+  saveCloudAI: (request) => ipcRenderer.invoke('analysis-ai:cloud-save', request),
+  disconnectCloudAI: (provider) => ipcRenderer.invoke('analysis-ai:cloud-disconnect', provider),
+  checkCloudAI: (provider) => ipcRenderer.invoke('analysis-ai:cloud-check', provider),
+  shareAnalysisContext: (request) => ipcRenderer.invoke('analysis-ai:handoff', request),
   onParticipationChanged: (cb) => {
     const h = () => cb();
     ipcRenderer.on('participation:changed', h);

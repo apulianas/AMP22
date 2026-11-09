@@ -17,6 +17,14 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
 button, select, input { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+textarea { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+#cloud-ai-settings, #analysis-context { color: var(--text); width: min(820px, 90vw); max-height: 90vh; overflow-y: auto; }
+#cloud-ai-form, #analysis-context > label { display: flex; flex-direction: column; gap: 10px; }
+#cloud-ai-form > label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+#analysis-context > label { margin: 12px 0; }
+#analysis-context-preview { width: 100%; min-height: 200px; resize: vertical; font-size: 12px; }
+#cloud-ai-status.error, #analysis-context-status.error { color: var(--neg); }
+#cloud-ai-cancel[hidden] { display: none; }
 button { cursor: pointer; }
 button:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent); }

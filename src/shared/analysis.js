@@ -10,7 +10,7 @@
   const DEFINITIONS = 'YPP uses snaps with known yards. EPA and success use snaps with known EPA; success = offensive EPA > 0. Explosives = runs 10+ or passes 20+ yards. Conversions = first down or TD on 3rd/4th down. Sack losses count in passing yards.';
   const GROUPS = {
     defense: 'Defensive package', offense: 'Offensive personnel', matchup: 'Personnel matchup',
-    half: 'Half', rushers: 'Pass rushers', lineup: 'Defensive lineup',
+    half: 'Half', rushers: 'Pass rushers', lineup: 'Defensive lineup', all: 'All snaps',
   };
   const SPLITS = { none: 'No split', type: 'Run / pass', half: 'Half', offense: 'Offensive personnel', motion: 'Motion', playAction: 'Play action' };
   const METRICS = {
@@ -292,5 +292,5 @@
   }
 
   return { UNKNOWN, EXCLUSIONS, DEFINITIONS, GROUPS, SPLITS, METRICS, DEFAULT_PACKAGES, POSITIONS,
-    scoredSnap, composition, defensivePackage, validatePackages, summarize, format, svg, csv, validateReport, playKey };
+    scoredSnap, composition, defensivePackage, groupValue, validatePackages, summarize, format, svg, csv, validateReport, playKey };
 });

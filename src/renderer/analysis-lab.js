@@ -3,6 +3,7 @@
 
 window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, filterDescription, onCohortChange, onSelectionChange, openPlay }) {
   const A = A22.analysis;
+  const AI = A22.analysisAI;
   const root = document.getElementById('analysis-lab');
   const $ = (id) => document.getElementById(`lab-${id}`);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -24,6 +25,19 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   let selectionPlays = [];
   let selectionAnchor = null;
   let selectionLimit = 200;
+  let aiRevision = 0;
+  let aiBusy = false;
+  let aiChecking = false;
+  let aiCheckedAt = 0;
+  let aiRows = [];
+  let aiEvidence = [];
+  let aiCloud = false;
+  let aiDiscoveryPending = false;
+  let handoffReport = null;
+  let handoffRevision = 0;
+  let handoffBusy = false;
+  const handoffDialog = document.getElementById('analysis-context');
+  const share = id => document.getElementById(`analysis-context-${id}`);
   const playKey = A.playKey;
   try {
     const saved = localStorage.getItem('amp22.analysis.packages');
@@ -65,6 +79,44 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     </details>
     <p id="lab-scope-note" class="muted small"></p>
     <p id="lab-status" role="status" aria-live="polite"></p>
+    <details id="lab-ai" class="lab-methods" hidden>
+      <summary>Ask Analysis Lab</summary>
+      <p><span id="lab-ai-privacy">Questions stay on this device.</span> The model interprets your question; AMP22 calculates the numbers.
+        Uses the current scope, analysis side, sidebar filters and play selection without changing them.</p>
+      <form id="lab-ai-form">
+        <label id="lab-ai-model-label" hidden>Question provider<select id="lab-ai-model"></select></label>
+        <label for="lab-ai-question">Question</label>
+        <textarea id="lab-ai-question" rows="2" maxlength="1000" required
+          placeholder="Compare defensive EPA with and without Kyle Hamilton on the field."></textarea>
+        <div class="row"><button id="lab-ai-ask" type="submit" disabled>Ask</button>
+          <button id="lab-ai-cancel" type="button" hidden>Cancel</button>
+          <span id="lab-ai-provider" class="muted small"></span></div>
+      </form>
+      <p id="lab-ai-status" role="status" aria-live="polite"></p>
+      <p id="lab-ai-usage" class="muted small"></p>
+      <section id="lab-ai-answer" hidden aria-label="Computed answer">
+        <p id="lab-ai-summary"></p><p id="lab-ai-query" class="muted small"></p>
+        <p id="lab-ai-context" class="muted small"></p>
+        <div class="lab-table-wrap"><table class="lab-table"><thead><tr>
+          <th>Group / split</th><th>Snaps</th><th>Requested metric</th><th>Known observations</th>
+        </tr></thead><tbody id="lab-ai-rows"></tbody></table></div>
+        <details><summary>All computed metrics</summary>
+          <div class="lab-table-wrap"><table class="lab-table"><thead><tr>
+            <th>Group / split</th><th>Scored snaps</th><th>YPP (known yards)</th><th>Off. EPA/play (known EPA)</th>
+            <th>Off. success (known EPA)</th><th>Explosives (known yards)</th><th>3rd/4th conversion (known observations)</th>
+          </tr></thead><tbody id="lab-ai-statistics"></tbody></table></div>
+          <p class="muted small">Each metric shows its own denominator. Ranking uses the interpreted query's primary metric.
+            These are scored runs/passes, not all special-teams, nullified or other snaps.</p>
+        </details>
+        <p id="lab-ai-coverage" class="muted small"></p>
+        <p class="muted small">* = listed-position estimate, not confirmed alignment. n &lt; 10 = small sample,
+          not a significance threshold. Missing values are not zero. Comparisons are descriptive, not causal.
+          Check the interpreted query and contributing plays; models can misunderstand questions.</p>
+        <section id="lab-ai-evidence" hidden aria-label="Question play evidence">
+          <p id="lab-ai-evidence-label"></p><ol id="lab-ai-evidence-plays"></ol>
+        </section>
+      </section>
+    </details>
     <div id="lab-content" hidden>
       <div id="lab-summary" class="lab-summary"></div>
       <details class="lab-methods"><summary>Definitions, data coverage &amp; package rules</summary>
@@ -85,7 +137,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       <div class="lab-chart-toolbar">
         <label>Graphic<select id="lab-chart"><option value="bars">Efficiency bars</option><option value="heatmap">Matchup heatmap</option><option value="halves">Half comparison</option></select></label>
         <label>Metric<select id="lab-metric">${Object.entries(A.METRICS).map(([v, m]) => `<option value="${v}">${m.label}</option>`).join('')}</select></label>
-        <span class="spacer"></span><button id="lab-svg">Save SVG</button><button id="lab-png">Save PNG</button><button id="lab-csv">Summary CSV</button>
+        <span class="spacer"></span><button id="lab-copy-context">Copy analysis…</button><button id="lab-svg">Save SVG</button><button id="lab-png">Save PNG</button><button id="lab-csv">Summary CSV</button>
       </div>
       <p class="muted small">Click a bar, heatmap cell or table row to inspect contributing plays. n &lt; 10 is flagged as a small sample, not a significance threshold. Comparisons are descriptive, not causal.</p>
       <div id="lab-chart-preview"></div>
@@ -151,11 +203,132 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     syncSelection();
   }
 
+  function clearAI() {
+    ++aiRevision;
+    if (aiBusy) window.api.cancelAnalysisQuestion().catch(error => console.warn('Analytics AI cancellation:', error.message));
+    aiBusy = false;
+    aiRows = aiEvidence = [];
+    $('ai-rows').replaceChildren();
+    $('ai-statistics').replaceChildren();
+    $('ai-answer').hidden = true;
+    $('ai-evidence').hidden = true;
+    $('ai-status').textContent = '';
+    $('ai-usage').textContent = '';
+    $('ai-cancel').hidden = true;
+    $('ai-question').disabled = $('ai-model').disabled = false;
+    $('ai-ask').disabled = !ready || !result?.n;
+  }
+
+  async function discoverAI(force = false) {
+    if (root.hidden || aiBusy || (!force && Date.now() - aiCheckedAt < 60000)) return;
+    if (aiChecking) { aiDiscoveryPending ||= force; return; }
+    aiChecking = true;
+    aiCheckedAt = Date.now();
+    try {
+      const models = await window.api.discoverAnalysisAI();
+      const previous = $('ai-model').value;
+      $('ai-model').innerHTML = models.map(m => `<option value="${esc(m.id)}" data-cloud="${m.cloud === true}">${esc(m.label)}</option>`).join('');
+      if (models.some(m => m.id === previous)) $('ai-model').value = previous;
+      if (previous && $('ai-model').value !== previous) clearAI();
+      $('ai').hidden = !models.length;
+      $('ai-model-label').hidden = models.length < 2;
+      updateProvider();
+      $('ai-ask').disabled = !ready || !result?.n;
+    } catch (error) {
+      console.warn('Analytics AI discovery:', error.message);
+      $('ai').hidden = true;
+    } finally {
+      aiChecking = false;
+      if (aiDiscoveryPending) { aiDiscoveryPending = false; discoverAI(true); }
+    }
+  }
+
+  function updateProvider() {
+    const selected = $('ai-model').selectedOptions[0];
+    aiCloud = selected?.dataset.cloud === 'true';
+    $('ai-provider').textContent = selected?.textContent || '';
+    $('ai-privacy').textContent = aiCloud ?
+      'Cloud provider selected. After your confirmation, the question and analytical context leave this device. Provider API charges and retention policies apply.' :
+      'Questions stay on this device.';
+  }
+
+  async function askAI(event) {
+    event.preventDefault();
+    if (aiBusy || !ready || !result?.n || $('ai').hidden) return;
+    clearAI();
+    const token = aiRevision;
+    const ctx = getContext();
+    const plays = result.plays.slice();
+    const options = { team: ctx.sel.team, side: $('side').value, packages: packages.map(p => ({ name: p.name, counts: { ...p.counts } })) };
+    const context = {
+      team: ctx.sel.team, side: options.side, scope: $('scope-note').textContent, snaps: plays.length,
+      filters: `${filterDescription()}. ${$('selection-mode').selectedOptions[0].textContent}; ${selected.size} selected`,
+    };
+    aiBusy = true;
+    $('ai-ask').disabled = $('ai-question').disabled = $('ai-model').disabled = true;
+    $('ai-cancel').hidden = false;
+    $('ai-status').classList.remove('error');
+    $('ai-status').textContent = aiCloud ? 'Waiting for cloud confirmation, then interpreting the question...' : 'Interpreting the question on this device...';
+    try {
+      const response = await window.api.planAnalysisQuestion({
+        provider: $('ai-model').value, question: $('ai-question').value,
+        context, catalog: AI.catalog(plays, options.packages),
+      });
+      if (token !== aiRevision) return;
+      const plan = response.plan || response;
+      if (aiCloud) $('ai-usage').textContent = response.usage ?
+        `Provider-reported usage: ${response.usage.inputTokens} input / ${response.usage.outputTokens} output tokens. Billed by your API provider; no reliable cost estimate is available.` :
+        'The provider did not report token usage. API charges may still apply.';
+      const answer = AI.execute(plays, options, plan);
+      aiRows = answer.rows;
+      $('ai-summary').textContent = answer.summary;
+      $('ai-query').textContent = `Interpreted query: ${answer.interpretation}`;
+      $('ai-context').textContent = `${context.scope} / ${context.team} ${context.side}. ${context.filters}.`;
+      $('ai-coverage').textContent = `${answer.n}/${plays.length} cohort snaps match. Known EPA: ${answer.knownEpa}/${answer.n}; ` +
+        `known yards: ${answer.knownYards}/${answer.n}; known defense: ${answer.knownDefense}/${answer.n}; ` +
+        `known offense: ${answer.knownOffense}/${answer.n}. ` +
+        `${Object.entries(answer.sources).map(([s, n]) => `${s}: ${n} snaps`).join('; ')}. ` +
+        `${answer.participation ? answer.participation + ' ' : ''}` +
+        `Showing ${Math.min(50, aiRows.length)} of ${aiRows.length} rows, ranked by ${AI.METRICS[plan.metric].label}. ` +
+        `${warnings.length ? 'Data warnings: ' + warnings.join(' | ') : ''}`;
+      $('ai-rows').innerHTML = aiRows.slice(0, 50).map((r, i) => {
+        const sample = plan.metric === 'snaps' ? r.n : plan.metric === 'conversion' ? r.conversionN :
+          ['epa', 'success'].includes(plan.metric) ? r.epaN : r.yardsN;
+        return `<tr><td><button data-ai-row="${i}">${esc(r.label)}</button><small>${esc(r.series)}</small></td>
+          <td>${r.n}${r.n < 10 ? '<small class="lab-small">Small sample</small>' : ''}</td>
+          <td>${esc(AI.format(r[plan.metric], plan.metric))}</td><td>${sample}</td></tr>`;
+      }).join('');
+      $('ai-statistics').innerHTML = aiRows.slice(0, 50).map(r => `<tr>
+        <td>${esc(r.label)}<small>${esc(r.series)}</small></td><td>${r.n}</td>
+        ${Object.keys(A.METRICS).map(metric => {
+          const sample = metric === 'conversion' ? r.conversionN : ['epa', 'success'].includes(metric) ? r.epaN : r.yardsN;
+          return `<td>${esc(A.format(r[metric], metric))}<small>n = ${sample}</small></td>`;
+        }).join('')}</tr>`).join('');
+      $('ai-answer').hidden = false;
+      $('ai-status').textContent = 'Answer computed by AMP22. Click a result row to inspect its plays.';
+    } catch (error) {
+      if (token !== aiRevision) return;
+      $('ai-status').textContent = `Question not answered: ${error.message}`;
+      $('ai-status').classList.add('error');
+    } finally {
+      if (token === aiRevision) {
+        aiBusy = false;
+        $('ai-cancel').hidden = true;
+        $('ai-question').disabled = $('ai-model').disabled = false;
+        $('ai-ask').disabled = !ready || !result?.n;
+      }
+    }
+  }
+
   async function load(force = false) {
+    clearAI();
+    clearHandoff();
     const token = ++revision;
     const ctx = getContext();
     loading = true;
     ready = false;
+    $('ai-ask').disabled = true;
+    $('copy-context').disabled = true;
     result = null;
     report = null;
     $('content').hidden = true;
@@ -244,6 +417,8 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
 
   function render() {
     if (loading || !ready || !loaded.length) return;
+    clearAI();
+    clearHandoff();
     const ctx = getContext();
     preparePlays(loaded);
     const chart = $('chart').value;
@@ -257,6 +432,8 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     onCohortChange(scope, selectionMatches);
     const filtered = renderSelection(scope);
     result = A.summarize(filtered.filter(selectionMatches), { team: ctx.sel.team, side, group, split, packages });
+    $('ai-ask').disabled = !result.n;
+    $('copy-context').disabled = !result.n;
     const mode = $('selection-mode');
     const selectionNote = mode.value === 'all' ? 'All filtered plays' :
       `${mode.selectedOptions[0].textContent}; ${selected.size} selected`;
@@ -348,6 +525,71 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       for (const id of ['svg', 'png', 'csv']) $(id).disabled = loading || !result?.n;
     }
   }
+
+  function clearHandoff() {
+    ++handoffRevision;
+    handoffReport = null;
+    if (handoffDialog.open) handoffDialog.close();
+    share('preview').value = '';
+    share('copy').disabled = share('save').disabled = true;
+  }
+
+  async function previewHandoff() {
+    const token = ++handoffRevision;
+    share('copy').disabled = share('save').disabled = true;
+    share('preview').value = '';
+    if (!handoffReport) return;
+    try {
+      const result = await window.api.shareAnalysisContext({
+        action: 'preview', report: handoffReport, question: share('question').value,
+      });
+      if (token !== handoffRevision) return;
+      share('preview').value = result.text;
+      share('status').classList.remove('error');
+      share('status').textContent = 'Nothing has been copied, saved or sent. Review this text before sharing it.';
+      share('copy').disabled = share('save').disabled = false;
+    } catch (error) {
+      if (token !== handoffRevision) return;
+      share('status').textContent = `Preview unavailable: ${error.message}`;
+      share('status').classList.add('error');
+    }
+  }
+
+  $('copy-context').addEventListener('click', () => {
+    if (!ready || !report || !result?.n) return;
+    handoffReport = { ...report, rows: result.rows.map(({ plays, ...row }) => row) };
+    share('question').value = $('ai').hidden ? '' : $('ai-question').value;
+    handoffDialog.showModal();
+    previewHandoff();
+  });
+  share('question').addEventListener('input', previewHandoff);
+  share('close').addEventListener('click', () => handoffDialog.close());
+  handoffDialog.addEventListener('close', () => {
+    ++handoffRevision;
+    handoffReport = null;
+    share('preview').value = '';
+  });
+  for (const action of ['copy', 'save']) share(action).addEventListener('click', async () => {
+    if (!handoffReport || handoffBusy || share(action).disabled) return;
+    const token = handoffRevision;
+    handoffBusy = true;
+    share('question').disabled = share('copy').disabled = share('save').disabled = true;
+    try {
+      const result = await window.api.shareAnalysisContext({ action, report: handoffReport, question: share('question').value });
+      if (token !== handoffRevision) return;
+      share('status').classList.remove('error');
+      share('status').textContent = result.cancelled ? 'Save cancelled. Nothing was sent.' :
+        action === 'copy' ? 'Text copied. Paste it into your chat app; AMP22 has not sent it anywhere.' : 'Analysis context saved as TXT. Nothing was sent.';
+    } catch (error) {
+      if (token !== handoffRevision) return;
+      share('status').textContent = `Sharing failed: ${error.message}`;
+      share('status').classList.add('error');
+    } finally {
+      handoffBusy = false;
+      share('question').disabled = false;
+      if (token === handoffRevision) share('copy').disabled = share('save').disabled = false;
+    }
+  });
 
   $('scope').addEventListener('change', () => {
     $('from-label').hidden = $('to-label').hidden = $('scope').value !== 'range';
@@ -442,12 +684,40 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     savePackages([...packages, { name: $('package-name').value.trim(), counts: Object.fromEntries(A.POSITIONS.map((p) => [p, $(`count-${p}`).valueAsNumber])) }]);
   });
   renderPackages();
+  $('ai-form').addEventListener('submit', askAI);
+  $('ai-model').addEventListener('change', () => {
+    clearAI();
+    updateProvider();
+  });
+  $('ai-cancel').addEventListener('click', () => {
+    clearAI();
+    $('ai-status').textContent = 'Question cancelled.';
+  });
+  $('ai-rows').addEventListener('click', event => {
+    const button = event.target.closest('[data-ai-row]');
+    if (!button) return;
+    const row = aiRows[Number(button.dataset.aiRow)];
+    if (!row) return;
+    aiEvidence = row.plays;
+    $('ai-evidence-label').textContent = `${row.label} / ${row.series}: ${aiEvidence.length} contributing plays; showing first ${Math.min(200, aiEvidence.length)}.`;
+    $('ai-evidence-plays').innerHTML = aiEvidence.slice(0, 200).map((p, i) =>
+      `<li><button data-ai-play="${i}">${esc(p.gameId)} / ${esc(A22.plays.clockLabel(p))} / ${esc(A22.plays.downDistance(p))}</button>
+        <p>${esc(p.desc)}</p></li>`).join('');
+    $('ai-evidence').hidden = false;
+  });
+  $('ai-evidence-plays').addEventListener('click', event => {
+    const button = event.target.closest('[data-ai-play]');
+    if (button) openPlay(aiEvidence[Number(button.dataset.aiPlay)]);
+  });
+  window.addEventListener('focus', () => discoverAI());
+  window.addEventListener('amp22-ai-providers-changed', () => { clearAI(); aiCheckedAt = 0; discoverAI(true); });
 
   return {
     refresh() {
       if (root.hidden) return;
       const ctx = getContext();
       const key = JSON.stringify([ctx.sel.season, ctx.sel.team, ctx.sel.gameId]);
+      discoverAI(key !== contextKey);
       if (key !== selectionContextKey) { selectionContextKey = key; resetSelection(); }
       if (key !== contextKey) { contextKey = key; evidenceId = null; load(); }
       else if (!loading && ready) {
@@ -456,6 +726,10 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       }
     },
     invalidate() {
+      clearAI();
+      clearHandoff();
+      $('copy-context').disabled = true;
+      $('ai-ask').disabled = true;
       cache.clear();
       contextKey = '';
       ++revision;

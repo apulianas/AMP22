@@ -355,6 +355,11 @@
         <button id="check-updates">Check for updates…</button>
       </div>
       <p id="update-status" class="muted" role="status" aria-live="polite"></p>
+      <details class="lab-methods">
+        <summary>External services</summary>
+        <p>Optional integrations are configured separately and do not affect Film Room or local analysis.</p>
+        <button id="configure-cloud-ai">Configure cloud questions…</button>
+      </details>
       <div class="grid">
         <label>Jump size (frames) <input id="set-jump" type="number" min="1" max="600" /></label>
         <label>At end of play
@@ -422,6 +427,44 @@
     </div>
   </div>
 
+  <dialog id="cloud-ai-settings" class="panel" aria-labelledby="cloud-ai-title">
+    <h2 id="cloud-ai-title">Cloud question providers</h2>
+    <p>Optional: use your own OpenAI or Anthropic API account. Chat subscriptions do not automatically include API access.
+      Provider API charges and retention policies apply. No automatic cloud fallback.</p>
+    <p class="muted small">Keys are encrypted with OS-protected storage, never placed in ordinary settings or exports.
+      You confirm the exact question/context before each cloud request. Connection checks send a synthetic query and may incur a charge.</p>
+    <form id="cloud-ai-form">
+      <label>Provider<select id="cloud-ai-provider"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></label>
+      <label>Model ID<input id="cloud-ai-model" type="text" maxlength="100" required spellcheck="false" /></label>
+      <label>API key<input id="cloud-ai-key" type="password" maxlength="403" autocomplete="off" spellcheck="false" placeholder="Enter a key; blank keeps a saved key" /></label>
+      <p id="cloud-ai-account" class="muted small"></p>
+      <p class="muted small">Model access and structured-output support vary. Output is capped at 1,500 tokens with no automatic retries.
+        Set spending controls in your provider's account. AMP22 shows reported token usage, not a guaranteed cost estimate.</p>
+      <div class="row"><button id="cloud-ai-save" type="submit">Save provider</button>
+        <button id="cloud-ai-check" type="button" disabled>Check connection…</button>
+        <button id="cloud-ai-disconnect" type="button" disabled>Disconnect</button></div>
+    </form>
+    <p class="muted small">Provider changes save immediately, independently of the main Settings Save/Cancel buttons.</p>
+    <p id="cloud-ai-status" role="status" aria-live="polite"></p>
+    <div class="actions"><button id="cloud-ai-cancel" hidden>Cancel request</button>
+      <span class="spacer"></span><button id="cloud-ai-close">Close</button></div>
+  </dialog>
+
+  <dialog id="analysis-context" class="panel" aria-labelledby="analysis-context-title">
+    <h2 id="analysis-context-title">Copy analysis for external chat</h2>
+    <p>Preview the exact text before copying or saving. Paste it into ChatGPT, Claude or another chat app using your existing account.
+      AMP22 does not send this export anywhere or open a chat session.</p>
+    <label>Question (optional)<input id="analysis-context-question" type="text" maxlength="1000"
+      placeholder="Summarize the patterns and limitations" /></label>
+    <label>Preview<textarea id="analysis-context-preview" rows="14" readonly spellcheck="false"></textarea></label>
+    <p class="muted small">Includes the current scope, filters, selection provenance, computed table rows, samples and definitions.
+      No raw play rows, film or API credentials. Clipboard contents can be read by other applications and may sync through your OS settings.</p>
+    <p id="analysis-context-status" role="status" aria-live="polite"></p>
+    <div class="actions"><button id="analysis-context-copy" disabled>Copy text</button>
+      <button id="analysis-context-save" disabled>Save TXT…</button>
+      <span class="spacer"></span><button id="analysis-context-close">Close</button></div>
+  </dialog>
+
   <dialog id="updates" class="panel" aria-labelledby="updates-title">
     <h2 id="updates-title">Software update</h2>
     <p id="updates-summary" role="status" aria-live="polite"></p>
@@ -451,7 +494,9 @@
   <script src="../shared/settings.js"></script>
   <script src="../shared/align.js"></script>
   <script src="../shared/analysis.js"></script>
+  <script src="../shared/analysis-ai.js"></script>
   <script src="analysis-lab.js"></script>
+  <script src="cloud-ai-settings.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

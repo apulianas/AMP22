@@ -2462,6 +2462,7 @@ window.addEventListener('keydown', handleKeydown, true);
 /* ---------------- wiring ---------------- */
 
 function wire() {
+  window.createCloudAISettings();
   analysisLab = window.createAnalysisLab({
     getContext: () => ({ games: S.games, sel: S.sel, game: S.game, plays: S.plays, warning: S.participationWarning }),
     preparePlays: derivePlays,
