@@ -45,3 +45,108 @@ test('attach ignores special teams and keeps 2023+ on-field names, positions, an
   assert.equal(kick.personnel, undefined);
   assert.equal(kick.charting, undefined);
 });
+
+test('jumbo requires a complete heavy front with distinct OLB evidence, not field position', () => {
+  const fronts = [
+    '2 NT, 1 CB, 1 ILB, 1 DT, 2 FS, 1 DE, 1 SS, 2 OLB',
+    '2 DT, 2 NT, 2 CB, 1 ILB, 1 SS, 1 FS, 2 OLB',
+    '5 DL, 2 OLB, 1 ILB, 3 DB',
+  ];
+  for (const defense_personnel of fronts) {
+    const expected = { label: 'Jumbo', front: defense_personnel.startsWith('5 DL') ? '5-3-3' : '4-3-4' };
+    assert.deepEqual(advanced.defensePackage(defense_personnel), expected);
+    const p = plays.normalizePlay({ play_id: '171', play_type: 'pass', pass: '1' });
+    advanced.attach(p, { defense_personnel });
+    assert.equal(p.personnel.defenseInferred, true);
+    assert.deepEqual(advanced.tags(p), ['Jumbo*']);
+  }
+  for (const [personnel, label] of [
+    ['4 DL, 3 LB, 4 DB', '4-3'],
+    ['4 DL, 1 OLB, 2 ILB, 4 DB', '4-3'],
+    ['3 DL, 2 OLB, 2 ILB, 4 DB', '3-4'],
+    ['4 DL, 2 OLB, 5 DB', 'Nickel'],
+    ['4 DL, 2 OLB, 3 DB', 'Goal line'],
+    ['5 DL, 3 LB, 3 DB', 'Goal line'],
+  ]) assert.equal(advanced.defensePackage(personnel).label, label);
+});
+
+test('complete Jumbo participation refines supplied base packages consistently across sources', () => {
+  const positions = ['NT', 'NT', 'DT', 'DE', 'OLB', 'OLB', 'ILB', 'CB', 'CB', 'FS', 'SS'];
+  const part = {
+    defense_personnel: '4 DL, 3 LB, 4 DB',
+    defense_players: positions.map((_p, i) => `id-${i}`).join(';'),
+    defense_names: positions.map((_p, i) => `Defender ${i}`).join(';'),
+    defense_positions: positions.join(';'),
+  };
+  const p = plays.normalizePlay({ play_id: '171', play_type: 'pass', pass: '1' });
+  advanced.attach(p, part);
+  assert.equal(p.personnel.defense, 'Jumbo');
+  assert.equal(p.personnel.defenseInferred, true);
+  assert.equal(p.inferredPersonnel.defense, 'Jumbo');
+  assert.deepEqual(advanced.tags(p), ['Jumbo*']);
+  p.personnel = { defense: '4-3', front: '4-3-4' };
+  advanced.inferPersonnel(p);
+  assert.equal(p.personnel.defense, 'Jumbo', 'imports refine the same supplied base classification');
+  part.defense_players = positions.map(() => 'duplicate').join(';');
+  const duplicate = plays.normalizePlay({ play_id: '218', play_type: 'run', rush: '1' });
+  advanced.attach(duplicate, part);
+  assert.equal(duplicate.personnel.defense, '4-3', 'ambiguous lineups retain the supplied package');
+});
+
+test('32 dime requires two explicit inside linebackers, three front players and six DBs', () => {
+  for (const detail of [
+    '1 DT, 3 CB, 2 OLB, 2 ILB, 2 FS, 1 SS',
+    '2 DL, 1 OLB, 1 ILB, 1 MLB, 6 DB',
+    '3 DL, 2 MLB, 6 DB',
+  ]) {
+    assert.equal(advanced.defensePackage(detail).label, '32 dime');
+    const p = plays.normalizePlay({ play_id: '734', play_type: 'pass', pass: '1' });
+    advanced.attach(p, { defense_personnel: detail });
+    assert.equal(p.personnel.defenseInferred, true);
+    assert.deepEqual(advanced.tags(p), ['32 dime*']);
+  }
+  for (const detail of [
+    '1 DL, 4 LB, 6 DB',
+    '1 DL, 3 OLB, 1 ILB, 6 DB',
+    '2 DL, 2 OLB, 1 ILB, 6 DB',
+    '1 DL, 2 OLB, 1 ILB, 6 DB',
+  ]) assert.equal(advanced.defensePackage(detail).label, 'Dime');
+  assert.equal(advanced.defensePackage('1 DL, 2 OLB, 2 ILB, 5 DB').label, 'Nickel');
+  const positions = ['DT', 'CB', 'CB', 'OLB', 'ILB', 'FS', 'SS', 'ILB', 'FS', 'OLB', 'CB'];
+  const p = plays.normalizePlay({ play_id: '734', play_type: 'pass', pass: '1' });
+  advanced.attach(p, {
+    defense_personnel: '1 DL, 4 LB, 6 DB',
+    defense_players: positions.map((_p, i) => `id-${i}`).join(';'),
+    defense_names: positions.map((_p, i) => `Defender ${i}`).join(';'),
+    defense_positions: positions.join(';'),
+  });
+
+  assert.equal(p.personnel.defense, '32 dime');
+  assert.equal(p.personnel.front, '1-4-6');
+  p.personnel = { defense: 'Dime', front: '1-4-6' };
+  advanced.inferPersonnel(p);
+  assert.equal(p.personnel.defense, '32 dime', 'complete imports refine the supplied broad Dime package');
+});
+
+test('jumbo nickel replaces one OLB with a DL in both standard and big DB combinations', () => {
+  for (const db of ['3 CB, 2 S', '2 CB, 3 S', '5 DB']) {
+    const detail = `3 DL, 1 OLB, 1 ILB, 1 MLB, ${db}`;
+    assert.deepEqual(advanced.defensePackage(detail), { label: 'Jumbo nickel', front: '3-3-5' });
+    const p = plays.normalizePlay({ play_id: '1', play_type: 'run', rush: '1' });
+    advanced.attach(p, { defense_personnel: detail });
+    assert.deepEqual(advanced.tags(p), ['Jumbo nickel*']);
+    assert.equal(p.personnel.defenseInferred, true);
+  }
+  for (const detail of [
+    '3 DL, 3 LB, 5 DB', '3 DL, 1 OLB, 1 ILB, 1 LB, 5 DB',
+    '2 DL, 2 OLB, 2 ILB, 5 DB', '3 DL, 2 OLB, 1 ILB, 5 DB',
+    '3 DL, 1 OLB, 1 ILB, 5 DB',
+  ]) assert.equal(advanced.defensePackage(detail).label, 'Nickel');
+  const p = plays.normalizePlay({ play_id: '1', play_type: 'run', rush: '1' });
+  const positions = ['DT', 'DT', 'DE', 'OLB', 'ILB', 'MLB', 'CB', 'CB', 'CB', 'FS', 'SS'];
+  p.onField = { defense: positions.map((position, i) => ({ id: `id-${i}`, position })) };
+  p.personnel = { defense: 'Nickel', front: '3-3-5' };
+  advanced.inferPersonnel(p);
+  assert.equal(p.personnel.defense, 'Jumbo nickel');
+  assert.equal(p.inferredPersonnel.defense, 'Jumbo nickel');
+});

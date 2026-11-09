@@ -1,9 +1,10 @@
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const mod = factory(node ? require('./plays') : root.A22.plays, node ? require('./teams') : root.A22.teams);
+  const mod = factory(node ? require('./plays') : root.A22.plays, node ? require('./teams') : root.A22.teams,
+    node ? require('./advanced') : root.A22.advanced, node ? require('./analysis') : root.A22.analysis);
   if (node) module.exports = mod;
   else (root.A22 = root.A22 || {}).reports = mod;
-})(typeof self !== 'undefined' ? self : this, function (P, teams) {
+})(typeof self !== 'undefined' ? self : this, function (P, teams, advanced, analysis) {
   'use strict';
 
   const FORMATS = ['none', 'csv', 'txt', 'pdf'];
@@ -11,7 +12,7 @@
     { key: 'airYards', label: 'Air yards', get: (p) => p.airYards },
     { key: 'epa', label: 'EPA', get: (p) => p.epa },
     { key: 'personnel', label: 'Offensive personnel', get: (p) => p.personnel?.offense },
-    { key: 'defense', label: 'Defensive package', get: (p) => [p.personnel?.defense, p.personnel?.front].filter(Boolean).join(' ') },
+    { key: 'defense', label: 'Defensive package', get: (p) => packageLabel(p) },
     { key: 'formation', label: 'Formation', get: (p) => p.charting?.formation },
     { key: 'qbLocation', label: 'QB alignment', get: (p) => p.charting?.qbLocation },
     { key: 'backfield', label: 'Backfield count', get: (p) => p.charting?.backfield },
@@ -52,8 +53,8 @@
     { key: 'offenseParticipationSource', label: 'Offense participation source', get: (p) => p.participation?.offenseSource || (p.onField?.offense?.length ? 'nflverse' : '') },
     { key: 'defenseParticipationSource', label: 'Defense participation source', get: (p) => p.participation?.defenseSource || (p.onField?.defense?.length ? 'nflverse' : '') },
     { key: 'inferredOffense', label: 'Inferred offensive personnel', get: (p) => p.inferredPersonnel?.offense },
-    { key: 'inferredDefense', label: 'Inferred defensive package', get: (p) => [p.inferredPersonnel?.defense, p.inferredPersonnel?.front].filter(Boolean).join(' ') },
-    { key: 'personnelInferred', label: 'Personnel inferred from positions', get: (p) => p.personnel ? !!p.personnel.inferred : null },
+    { key: 'inferredDefense', label: 'Inferred defensive package', get: (p) => inferredPackageLabel(p) },
+    { key: 'personnelInferred', label: 'Personnel inferred from positions', get: (p) => personnelInferred(p) },
   ];
   const DEFAULT_OPTIONS = { format: 'csv', includeAdvanced: false, fields: ADVANCED_FIELDS.map((f) => f.key) };
 
@@ -74,6 +75,7 @@
       throw new Error('Invalid play breakdown options.');
     }
     validateHeadshots(report.headshots);
+    if (report.packages !== undefined) analysis.validatePackages(report.packages);
     if (report.format === 'none') return;
     if (!Array.isArray(report.plays) || report.plays.length !== clipCount ||
         report.plays.some((p) => !p || typeof p.desc !== 'string' || typeof p.posteam !== 'string' ||
@@ -98,8 +100,32 @@
     return typeof value === 'boolean' ? value ? 'Yes' : 'No' : String(value);
   }
 
+  function packageLabel(play, packages = analysis.DEFAULT_PACKAGES) {
+    if (!advanced.isScrimmage(play)) return advanced.formatDefensePackage(play.personnel?.defense, play.personnel?.front);
+    const label = analysis.defensivePackage(play, packages);
+    return label === 'Unknown' ? '' : label;
+  }
+
+  function inferredPackageLabel(play, packages = analysis.DEFAULT_PACKAGES) {
+    if (advanced.isScrimmage(play) && analysis.composition(play)) {
+      const label = packageLabel(play, packages);
+      if (label.endsWith('*')) return label;
+    }
+    return advanced.formatDefensePackage(play.inferredPersonnel?.defense, play.inferredPersonnel?.front);
+  }
+
+  function personnelInferred(play, packages = analysis.DEFAULT_PACKAGES) {
+    return inferredPackageLabel(play, packages).endsWith('*') ? true : play.personnel ? !!play.personnel.inferred : null;
+  }
+
   function advancedFields(report) {
-    return report.includeAdvanced ? ADVANCED_FIELDS.filter((f) => report.fields.includes(f.key)) : [];
+    if (report.packages !== undefined) analysis.validatePackages(report.packages);
+    return report.includeAdvanced ? ADVANCED_FIELDS.filter((f) => report.fields.includes(f.key)).map(f => {
+      if (f.key === 'defense') return { ...f, get: p => packageLabel(p, report.packages) };
+      if (f.key === 'inferredDefense') return { ...f, get: p => inferredPackageLabel(p, report.packages) };
+      if (f.key === 'personnelInferred') return { ...f, get: p => personnelInferred(p, report.packages) };
+      return f;
+    }) : [];
   }
 
   function columns(report) {

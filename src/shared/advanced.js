@@ -31,7 +31,7 @@
   const SPECIALISTS = ['K', 'P', 'LS'];
 
   /** Display order for defensive packages (lightest coverage personnel last). */
-  const DEFENSE_ORDER = ['Goal line', '5-3', '4-4', '6-2', '5-2', '4-3', '3-4', '2-5', '3-3-5', 'Nickel', 'Dime', 'Quarter'];
+  const DEFENSE_ORDER = ['Jumbo', 'Goal line', '5-3', '4-4', '6-2', '5-2', '4-3', '3-4', '2-5', '3-3-5', 'Jumbo nickel', 'Nickel', '32 dime', 'Dime', 'Quarter'];
   const COVERAGE_LABELS = {
     COVER_0: 'Cover 0', COVER_1: 'Cover 1', COVER_2: 'Cover 2', '2_MAN': '2-Man', COVER_3: 'Cover 3', COVER_4: 'Cover 4',
     COVER_6: 'Cover 6', COVER_9: 'Cover 9', COMBO: 'Combo', PREVENT: 'Prevent', BLOWN: 'Blown',
@@ -93,9 +93,43 @@
     return `${g.RB || 0}${g.TE || 0}`;
   }
 
+  function isJumbo(counts) {
+    const g = group(counts, DEFENSE_GROUPS);
+    return (g.DL || 0) >= 4 && (counts.OLB || 0) >= 2 && (g.DB || 0) <= 4 &&
+      (g.DL || 0) + (g.LB || 0) + (g.DB || 0) === 11 && !hasSpecialists(counts);
+  }
+
+  function is32Dime(counts) {
+    const g = group(counts, DEFENSE_GROUPS);
+    const inside = (counts.ILB || 0) + (counts.MLB || 0);
+    return (g.DL || 0) + (counts.OLB || 0) === 3 && inside === 2 &&
+      g.LB === (counts.OLB || 0) + inside && g.DB === 6 && !hasSpecialists(counts);
+  }
+
+  function isJumboNickel(counts) {
+    const g = group(counts, DEFENSE_GROUPS);
+    const inside = (counts.ILB || 0) + (counts.MLB || 0);
+    return g.DL === 3 && counts.OLB === 1 && inside === 2 && g.LB === 3 &&
+      g.DB === 5 && !hasSpecialists(counts);
+  }
+
+  function compositionPackage(counts) {
+    if (isJumbo(counts)) return 'Jumbo';
+    if (isJumboNickel(counts)) return 'Jumbo nickel';
+    if (is32Dime(counts)) return '32 dime';
+    return '';
+  }
+
+  function formatDefensePackage(label, front) {
+    return [label, ['3-4', '4-3', 'Jumbo', 'Jumbo nickel', '32 dime'].includes(label) ? '' : front].filter(Boolean).join(' ');
+  }
+
   /**
    * Defensive package from personnel. Returns { label, front } where front is "DL-LB-DB"
-   * (e.g. "4-2-5"). Four DBs are labelled by their front ("4-3", "3-4"); five or more by
+   * (e.g. "4-2-5"). Complete heavy fronts with 4+ DL, 2+ OLB and at most 4 DBs are Jumbo.
+   * Three DL/OLB plus two explicit inside linebackers and six DBs are 32 dime.
+   * Three DL, one OLB, two explicit inside linebackers and five DBs are Jumbo nickel.
+   * Otherwise four DBs are labelled by their front ("4-3", "3-4"); five or more by
    * sub-package (Nickel, Dime, Quarter); three or fewer are "Goal line".
    */
   function defensePackage(personnel) {
@@ -106,7 +140,8 @@
     const lb = g.LB || 0;
     const db = g.DB || 0;
     if (dl + lb + db < 9) return null;
-    let label;
+    let label = compositionPackage(counts);
+    if (label) return { label, front: `${dl}-${lb}-${db}` };
     if (db >= 7) label = 'Quarter';
     else if (db === 6) label = 'Dime';
     else if (db === 5) label = 'Nickel';
@@ -215,19 +250,20 @@
       playerKey(a).localeCompare(playerKey(b)));
   }
 
+  function personnelDetail(players, groups) {
+    if (players?.length !== 11 || new Set(players.map(playerKey)).size !== 11 ||
+        players.some((p) => !playerKey(p) || !groups[p.position])) return '';
+    const counts = {};
+    for (const p of players) counts[p.position] = (counts[p.position] || 0) + 1;
+    return Object.entries(counts).map(([pos, n]) => `${n} ${pos}`).join(', ');
+  }
+
   function inferPersonnel(play) {
     if (!isScrimmage(play) || !play.onField) return;
-    const detail = (players, groups) => {
-      if (players?.length !== 11 || new Set(players.map(playerKey)).size !== 11 ||
-          players.some((p) => !playerKey(p) || !groups[p.position])) return '';
-      const counts = {};
-      for (const p of players) counts[p.position] = (counts[p.position] || 0) + 1;
-      return Object.entries(counts).map(([pos, n]) => `${n} ${pos}`).join(', ');
-    };
-    const offenseDetail = detail(play.onField.offense, OFFENSE_GROUPS);
+    const offenseDetail = personnelDetail(play.onField.offense, OFFENSE_GROUPS);
     const offenseGroups = group(parsePersonnel(offenseDetail), OFFENSE_GROUPS);
     const standardOffense = offenseGroups.QB === 1 && offenseGroups.OL === 5;
-    const defenseDetail = detail(play.onField.defense, DEFENSE_GROUPS);
+    const defenseDetail = personnelDetail(play.onField.defense, DEFENSE_GROUPS);
     const defense = defenseDetail ? defensePackage(defenseDetail) : null;
     play.inferredPersonnel = {
       offense: standardOffense ? offenseCode(offenseDetail) : '',
@@ -238,7 +274,7 @@
       if (!personnel.offense && play.inferredPersonnel.offense) {
         Object.assign(personnel, { offense: play.inferredPersonnel.offense, offenseDetail, offenseInferred: true });
       }
-      if (!personnel.defense && defense) {
+      if (defense && (!personnel.defense || compositionPackage(parsePersonnel(defenseDetail)))) {
         Object.assign(personnel, { defense: defense.label, front: defense.front, defenseDetail, defenseInferred: true });
       }
       if (personnel.offenseInferred || personnel.defenseInferred) personnel.inferred = true;
@@ -265,6 +301,7 @@
           defense: def ? def.label : '',
           front: def ? def.front : '',
           defenseDetail: str(part.defense_personnel),
+          ...(compositionPackage(parsePersonnel(part.defense_personnel)) ? { defenseInferred: true, inferred: true } : {}),
         };
       }
       const formation = formationLabel(part.offense_formation);
@@ -279,6 +316,7 @@
       const offense = onFieldPlayers(part, 'offense', directory);
       const defense = onFieldPlayers(part, 'defense', directory);
       if (offense.length || defense.length) play.onField = { offense, defense };
+      if (compositionPackage(parsePersonnel(personnelDetail(defense, DEFENSE_GROUPS)))) inferPersonnel(play);
     }
     for (const key of Object.keys(charting)) sources[key] = 'nflverse participation';
     if (ftn) {
@@ -344,7 +382,8 @@
     const pers = play.personnel;
     const c = play.charting || {};
     if (pers && pers.offense) out.push(`${pers.offense} personnel`);
-    if (pers && pers.defense) out.push(/-4$/.test(pers.front) ? `${pers.defense} base` : `${pers.defense} ${pers.front}`);
+    if (pers && pers.defense) out.push(['Jumbo', 'Jumbo nickel', '32 dime'].includes(pers.defense) ? `${pers.defense}${pers.defenseInferred ? '*' : ''}` :
+      /-4$/.test(pers.front) ? `${pers.defense} base` : `${pers.defense} ${pers.front}`);
     if (c.qbLocation) out.push(c.qbLocation);
     if (c.formation) out.push(c.formation);
     if (c.backfield != null) out.push(`${c.backfield} in backfield`);
@@ -366,7 +405,7 @@
 
   return {
     PARTICIPATION_FIRST_SEASON, CHARTING_FIRST_SEASON, PARTICIPATION_COLUMNS, CHARTING_COLUMNS, DEFENSE_ORDER,
-    parsePersonnel, offenseCode, defensePackage, coverageLabel, formationLabel, onFieldPlayers, attach, tags, playerKey, inferPersonnel,
+    parsePersonnel, offenseCode, defensePackage, compositionPackage, formatDefensePackage, coverageLabel, formationLabel, onFieldPlayers, attach, tags, playerKey, inferPersonnel, isScrimmage,
     needsDepthPosition, attachDepthPositions, annotateEligible, displayPosition, playerPositionRank, orderedPlayers, attachNFLProCharting,
   };
 });
