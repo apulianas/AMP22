@@ -222,7 +222,7 @@ test('external-chat handoff includes complete aggregates and provenance without 
   assert.match(text, /Only selected plays/);
   assert.match(text, /"Selected game\/play ID","2024_04_BUF_BAL\/1"/);
   assert.match(text, /"Yards sample"/);
-  assert.match(text, /not a significance threshold/);
+  assert.match(text, /without assigning a significance threshold/);
   assert.equal(text.includes('"plays":'), false);
   assert.throws(() => AI.handoff(report(), 'x'.repeat(1001)), /1,000/);
   assert.throws(() => AI.handoff({ ...report(), rows: null }), /Invalid/);
