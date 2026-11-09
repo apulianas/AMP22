@@ -11,7 +11,7 @@ function ffmpegPath() {
 
 function ffprobePath() {
   if (process.env.A22_FFPROBE) return process.env.A22_FFPROBE;
-  return fixAsar(require('ffprobe-static').path);
+  return fixAsar(require('@derhuerst/ffprobe-static'));
 }
 
 module.exports = { ffmpegPath, ffprobePath, fixAsar };
