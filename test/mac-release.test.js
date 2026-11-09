@@ -179,6 +179,7 @@ switch (args[1]) {
 test('release workflow gates uploads on final DMG verification without any Apple secrets', () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/build.yml'), 'utf8');
   assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: false/);
+  assert.match(workflow, /CSC_FOR_PULL_REQUEST: true/);
   assert.doesNotMatch(workflow, /secrets\.|pull_request_target|notarize-mac-release/);
   assert.ok(workflow.indexOf('node scripts/verify-mac-release.js') < workflow.indexOf('actions/upload-artifact'));
   assert.match(workflow, /needs: \[version, build, extension\]/);

@@ -113,4 +113,19 @@ test('workflow runs install scripts before tests and verifies file-first Mac arc
   assert.ok(packages > 0 && packages < media && media < rebuild && rebuild < workflow.indexOf('npm test'));
   assert.match(workflow, /lipo "\$binary" -verify_arch "\$cpu"/);
   assert.doesNotMatch(workflow, /lipo -verify_arch/);
+  assert.match(workflow, /electron-builder --config scripts\/ci-builder-config\.js/);
+});
+
+test('CI verifies every Electron target against the locked package checksum manifest', () => {
+  const config = require('../scripts/ci-builder-config');
+  const { version } = require('electron/package.json');
+  assert.equal(config.electronVersion, version);
+  assert.deepEqual(config.electronDownload.checksums, require('electron/checksums.json'));
+  for (const target of ['darwin-arm64', 'darwin-x64', 'win32-x64']) {
+    assert.match(config.electronDownload.checksums[`electron-v${version}-${target}.zip`], /^[a-f0-9]{64}$/);
+  }
+  assert.equal(config.electronDownload.unsafelyDisableChecksums, undefined);
+  assert.equal(config.mac.identity, '-');
+  assert.equal(config.mac.strictVerify, true);
+  assert.deepEqual(config.asarUnpack, require('../package.json').build.asarUnpack);
 });

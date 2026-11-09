@@ -79,9 +79,10 @@ jobs:
         env:
           A22_TEST_EXPORT: ${{ runner.os == 'macOS' && '1' || '0' }}
       - name: Package installer (ad-hoc signing on macOS)
-        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+        run: npx electron-builder --config scripts/ci-builder-config.js --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_FOR_PULL_REQUEST: true
       - name: Verify packaged macOS architectures and media tools
         if: runner.os == 'macOS'
         shell: bash
