@@ -235,7 +235,7 @@
     const width = heatmap ? Math.max(1000, 330 + series.length * 150) : 1200;
     const lineHeight = heatmap ? 64 : 48;
     const plotHeight = Math.max(100, (heatmap ? labels.length : rows.length) * lineHeight);
-    const words = `${report.notes} ${EXCLUSIONS} ${DEFINITIONS} * = composition/listed-position estimate, not alignment. n < 10 = small sample; descriptive, not causal.`;
+    const words = `${report.notes} ${EXCLUSIONS} ${DEFINITIONS} * = composition/listed-position estimate, not alignment. Comparisons are descriptive, not causal.`;
     const footer = words.match(/[\s\S]{1,140}/g) || [words];
     const height = 190 + plotHeight + footer.length * 20 + 30;
     const values = rows.map((r) => r[metric]).filter(known);
@@ -266,7 +266,7 @@
           if (r) parts.push(`<g data-bucket="${xml(r.id)}" role="button" tabindex="0" aria-label="${xml(`Inspect ${r.label}, ${r.series}: ${r.n} plays`)}">`);
           parts.push(`<rect x="${x}" y="${y}" width="140" height="55" rx="6" fill="#a371f7" fill-opacity="${opacity.toFixed(3)}"/>`);
           parts.push(`<text x="${x + 12}" y="${y + 23}" font-size="17">${xml(format(v, metric))}</text>`);
-          parts.push(`<text x="${x + 12}" y="${y + 43}" font-size="11">${r ? `n=${r.n}${r.n < 10 ? ' (small)' : ''}; metric n=${sample(r)}` : 'No snaps'}</text>`);
+          parts.push(`<text x="${x + 12}" y="${y + 43}" font-size="11">${r ? `n=${r.n}; metric n=${sample(r)}` : 'No snaps'}</text>`);
           if (r) parts.push('</g>');
         });
       });
@@ -283,7 +283,7 @@
         parts.push(`<text x="32" y="${y + 29}" font-size="11" fill="#aeb8c4">${xml(short(r.series, 45))}</text>`);
         if (known(v)) parts.push(`<rect x="${Math.min(zero, scale(v))}" y="${y}" width="${Math.max(1, Math.abs(scale(v) - zero))}" height="27" rx="3" fill="${color(r)}"/>`);
         parts.push(`<text x="980" y="${y + 14}" font-size="16">${xml(format(v, metric))}</text>`);
-        parts.push(`<text x="980" y="${y + 31}" font-size="11" fill="#aeb8c4">n=${r.n}${r.n < 10 ? ' (small)' : ''}; metric n=${sample(r)}</text>`);
+        parts.push(`<text x="980" y="${y + 31}" font-size="11" fill="#aeb8c4">n=${r.n}; metric n=${sample(r)}</text>`);
         parts.push('</g>');
       });
     }

@@ -120,7 +120,7 @@ The same game with **Analysis side → Baltimore Ravens offense** and **Group by
 
 ![Running AMP22 with Baltimore Ravens offense selected in the left sidebar and 54 actual offensive snaps grouped by personnel](docs/screenshots/analysis-lab-offense.png)
 
-Run/pass results use bold green **RUN** and blue **PASS** badges, matching the charts, with subtle row tints and colored edges. Scramble and sack inclusion remains explicit. This detail of the same Bills–Ravens results table shows the adjacent comparisons.
+Run/pass results use bold green **RUN** and blue **PASS** badges, matching the charts, with subtle row tints and colored edges. Scramble and sack inclusion remains explicit. Snap counts and per-metric sample sizes remain visible without automatic "small sample" warnings. This refreshed detail of the same Bills–Ravens results table shows the adjacent comparisons.
 
 ![Actual Bills at Ravens results table with green RUN and blue PASS badges, row tints, and adjacent package comparisons](docs/screenshots/analysis-lab-table.png)
 

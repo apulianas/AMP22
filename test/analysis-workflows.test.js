@@ -101,6 +101,9 @@ async function exerciseAnalysis({ app, win }) {
   assert.equal(await js(`$('lab-yards-heading').textContent`), 'Yards allowed');
   assert.match(await js(`$('lab-summary').textContent`), /12/);
   assert.match(await js(`$('lab-rows').textContent`), /Big nickel/);
+  assert.doesNotMatch(await js(`$('analysis-lab').textContent`), /small sample|\(small\)/i);
+  assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows tr')].map(row => row.cells[1].textContent)`), ['6', '6']);
+  assert.equal(await js(`document.querySelector('#lab-rows tr').cells[3].querySelector('small').textContent`), 'n=6');
   assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows tr')].map(row => row.querySelector('small').textContent)`),
     ['Run (incl. scrambles)', 'Pass (incl. sacks)']);
   assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows .lab-split-badge')].map(badge => ({

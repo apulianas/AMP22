@@ -90,7 +90,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
         <label>Metric<select id="lab-metric">${Object.entries(A.METRICS).map(([v, m]) => `<option value="${v}">${m.label}</option>`).join('')}</select></label>
         <span class="spacer"></span><button id="lab-svg">Save SVG</button><button id="lab-png">Save PNG</button><button id="lab-csv">Summary CSV</button>
       </div>
-      <p class="muted small">Click a bar, heatmap cell or table row to inspect contributing plays. n &lt; 10 is flagged as a small sample, not a significance threshold. Comparisons are descriptive, not causal.</p>
+      <p class="muted small">Click a bar, heatmap cell or table row to inspect contributing plays. Comparisons are descriptive, not causal.</p>
       <div id="lab-chart-preview"></div>
       <p id="lab-chart-note" class="muted small"></p>
       <div class="lab-table-wrap"><table class="lab-table"><thead><tr>
@@ -293,7 +293,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       const series = type ? esc(r.series).replace(/^(Run|Pass)/, '<span class="lab-split-badge">$1</span>') : esc(r.series);
       return `<tr class="${classes}">
       <td><button data-row="${i}" title="${esc(r.label)}">${esc(r.label)}</button><small${type ? ' class="lab-split"' : ''}>${series}</small></td>
-      <td>${r.n}${r.n < 10 ? '<small class="lab-small">Small sample</small>' : ''}</td>
+      <td>${r.n}</td>
       <td>${(r.share * 100).toFixed(1)}%</td><td>${r.yardsN ? r.totalYards : 'N/A'}<small>n=${r.yardsN}</small></td>
       ${Object.keys(A.METRICS).map((m) => `<td>${A.format(r[m], m)}<small>n=${m === 'epa' || m === 'success' ? r.epaN : m === 'conversion' ? r.conversionN : r.yardsN}</small></td>`).join('')}</tr>`;
     }).join('') ||

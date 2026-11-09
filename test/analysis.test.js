@@ -233,6 +233,8 @@ test('SVGs support negative metrics, escape labels and disclose metric samples a
     assert.match(svg, /&lt;Defense &amp; &quot;data&quot;&gt;/);
     assert.match(svg, /-1.00/);
     assert.match(svg, /metric n=1/);
+    assert.match(svg, /n=1; metric n=1/);
+    assert.doesNotMatch(svg, /small sample|\(small\)|n &lt; 10/i);
     assert.match(svg, /excludes no-plays/);
     assert.doesNotMatch(svg, /NaN|Infinity|<script/);
   }
