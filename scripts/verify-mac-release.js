@@ -30,7 +30,7 @@ function verifyApp(app, arch, execute = run) {
   for (const binary of [
     path.join(contents, 'MacOS/AMP22'),
     path.join(media, 'ffmpeg-static/ffmpeg'),
-    path.join(media, `ffprobe-static/bin/darwin/${arch}/ffprobe`),
+    path.join(media, '@derhuerst/ffprobe-static/ffprobe'),
   ]) {
     verifySignature(binary, execute);
   }

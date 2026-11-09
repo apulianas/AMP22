@@ -19,7 +19,7 @@ test('macOS uses free ad-hoc signing without hardened runtime or notarization', 
   assert.equal(config.build.mac.notarize, false);
   assert.equal(config.build.mac.strictVerify, true);
   assert.equal(config.build.mac.signIgnore, undefined);
-  assert.deepEqual(config.build.asarUnpack, ['node_modules/ffmpeg-static/**', 'node_modules/ffprobe-static/**']);
+  assert.deepEqual(config.build.asarUnpack, ['node_modules/ffmpeg-static/**', 'node_modules/@derhuerst/ffprobe-static/**']);
   assert.equal(config.build.dmg.sign, undefined);
   assert.equal(config.build.win.target[0].target, 'nsis');
 });
@@ -57,7 +57,7 @@ test('checks main executable, both media tools, Electron helpers and frameworks 
     assert.ok(verified.includes(app));
     assert.ok(verified.includes(path.join(app, 'Contents/MacOS/AMP22')));
     assert.ok(verified.includes(path.join(app, 'Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg')));
-    assert.ok(verified.includes(path.join(app, `Contents/Resources/app.asar.unpacked/node_modules/ffprobe-static/bin/darwin/${arch}/ffprobe`)));
+    assert.ok(verified.includes(path.join(app, 'Contents/Resources/app.asar.unpacked/node_modules/@derhuerst/ffprobe-static/ffprobe')));
     assert.ok(verified.includes(path.join(frameworks, 'AMP22 Helper (Renderer).app')));
   }
 });
@@ -183,7 +183,10 @@ test('release workflow gates uploads on final DMG verification without any Apple
   assert.ok(workflow.indexOf('node scripts/verify-mac-release.js') < workflow.indexOf('actions/upload-artifact'));
   assert.match(workflow, /needs: \[version, build, extension\]/);
   assert.match(workflow, /if: github\.event_name != 'pull_request' && github\.ref == 'refs\/heads\/master'/);
-  assert.match(workflow, /--notes-file release-notes\.md \\\n\s+--generate-notes/);
+  for (const newline of ['\n', '\r\n']) {
+    const checkout = workflow.replace(/\r?\n/g, newline);
+    assert.match(checkout, /--notes-file release-notes\.md \\\r?\n\s+--generate-notes/);
+  }
   assert.match(workflow, /gh release view "\$tag" --json body > release-notes\.json/);
   assert.match(workflow, /node scripts\/mac-release-notice\.js --release-json release-notes\.json > release-notes\.md/);
 });

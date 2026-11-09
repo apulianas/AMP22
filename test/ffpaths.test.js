@@ -50,7 +50,7 @@ test('bundled media tools run and contain the native Mac architecture', () => {
     assert.match(version, new RegExp(`^${name} version `));
     if (process.platform === 'darwin') {
       const cpu = process.arch === 'arm64' ? 'arm64' : 'x86_64';
-      execFileSync('lipo', ['-verify_arch', cpu, binary]);
+      execFileSync('lipo', [binary, '-verify_arch', cpu]);
     }
   }
 });
