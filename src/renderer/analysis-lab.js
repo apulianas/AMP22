@@ -109,8 +109,8 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
             These are scored runs/passes, not all special-teams, nullified or other snaps.</p>
         </details>
         <p id="lab-ai-coverage" class="muted small"></p>
-        <p class="muted small">* = listed-position estimate, not confirmed alignment. n &lt; 10 = small sample,
-          not a significance threshold. Missing values are not zero. Comparisons are descriptive, not causal.
+        <p class="muted small">* = listed-position estimate, not confirmed alignment.
+          Missing values are not zero. Comparisons are descriptive, not causal.
           Check the interpreted query and contributing plays; models can misunderstand questions.</p>
         <section id="lab-ai-evidence" hidden aria-label="Question play evidence">
           <p id="lab-ai-evidence-label"></p><ol id="lab-ai-evidence-plays"></ol>
@@ -298,7 +298,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
         const sample = plan.metric === 'snaps' ? r.n : plan.metric === 'conversion' ? r.conversionN :
           ['epa', 'success'].includes(plan.metric) ? r.epaN : r.yardsN;
         return `<tr><td><button data-ai-row="${i}">${esc(r.label)}</button><small>${esc(r.series)}</small></td>
-          <td>${r.n}${r.n < 10 ? '<small class="lab-small">Small sample</small>' : ''}</td>
+          <td>${r.n}</td>
           <td>${esc(AI.format(r[plan.metric], plan.metric))}</td><td>${sample}</td></tr>`;
       }).join('');
       $('ai-statistics').innerHTML = aiRows.slice(0, 50).map(r => `<tr>
