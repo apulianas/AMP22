@@ -183,6 +183,22 @@ See the latest published release notes before opening the download page. This is
 
 For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series), the **x64 DMG** for Intel Macs, or the **Windows installer**. Each installer includes the video-processing tools it needs. Apple Silicon Macs currently need Rosetta 2 for the bundled Intel FFprobe helper; the app and FFmpeg are native arm64. Intel builds run both helpers natively.
 
+### macOS installation and Gatekeeper
+
+AMP22 is **not Apple Developer ID signed or notarized**. New builds use free **ad-hoc signing** to give the complete app a valid local signature, including its Electron helpers and video tools. This does **not** identify a trusted developer or make Gatekeeper trust the download. A free Apple developer account cannot provide Developer ID distribution signing; that requires paid Apple Developer Program enrollment. Ad-hoc signing applies to installers built with this configuration; adding instructions to older release descriptions does not change their binaries.
+
+1. Download the correct DMG from the [official AMP22 GitHub release](https://github.com/apulianas/AMP22/releases/latest), open it, and drag **AMP22** into **Applications**.
+2. Eject the disk image, then open AMP22 from Applications.
+3. If macOS blocks the app, **only if you trust this official AMP22 release**, open **Terminal** (Applications → Utilities, or search for Terminal with Spotlight). Paste this exact command and press Return:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/AMP22.app
+```
+
+Open AMP22 from Applications again. The command removes downloaded-app quarantine recursively from **AMP22 only**, allowing it to bypass that Gatekeeper check. It does **not** notarize the app, repair an invalid signature, or make the app Apple-trusted. Do not disable Gatekeeper globally or run this for an untrusted download. If Terminal reports an error, confirm the app is named **AMP22.app** and is installed in **Applications**; do not blindly add `sudo`.
+
+### Running from source
+
 Requirements: Node.js 20 or later.
 
 ```sh
@@ -396,7 +412,7 @@ Participation imports remain in the configured external folder (Downloads by def
 
 Open **Settings → Check for updates…** to see whether a newer stable version is available. Packaged apps also check once at startup (an internet connection is required). Release notes come from the public GitHub release and are displayed as plain text, not executable HTML. Automatic checks do not download installers or send your film, game data, or settings.
 
-The download button opens the release page, not an unattended installer. After downloading, quit AMP22 before replacing the app on macOS or running the installer on Windows. Existing installations without this update checker need one manual upgrade to gain notifications. In-place automatic download/install is not enabled on either platform; the current macOS releases are unsigned, and reliable macOS auto-updates require Developer ID signing.
+The download button opens the release page, not an unattended installer. After downloading, quit AMP22 before replacing the app on macOS or running the installer on Windows. Existing installations without this update checker need one manual upgrade to gain notifications. In-place automatic download/install is not enabled on either platform. macOS builds use ad-hoc signing rather than trusted Developer ID signing; follow the [Gatekeeper installation instructions](#macos-installation-and-gatekeeper) if a downloaded app is blocked, including after an update.
 
 ## How film analysis works
 
@@ -441,15 +457,19 @@ npm run dist:win   # Windows NSIS installer (run on Windows)
 
 The bundled FFmpeg and FFprobe must run on the target platform. Install dependencies and build natively on each target platform: Apple Silicon macOS, Intel macOS, or Windows x64. Merely cross-targeting Electron does not replace the installed FFmpeg binary. The included GitHub Actions workflow (`.github/workflows/build.yml`) uses a matching native runner for each target, checks the packaged app/FFmpeg architectures, and executes the packaged media tools. The current `ffprobe-static` dependency supplies an Intel FFprobe even in its `arm64` directory, so Apple Silicon uses Rosetta 2 for that helper; Intel packages are fully native.
 
+macOS packaging explicitly uses electron-builder's ad-hoc identity (`mac.identity: "-"`), with hardened runtime and notarization disabled. Electron-builder signs the app and nested Mach-O code, including unpacked FFmpeg/FFprobe, without a certificate, paid account, or Actions secrets. Hardened runtime is disabled because ad-hoc code has no common Team ID for library validation. These are **not** trusted or notarized distribution signatures. To verify the actual app inside a built DMG on macOS, run `node scripts/verify-mac-release.js arm64` (or `x64` for Intel). The verifier mounts the DMG read-only, checks strict/deep signatures plus the app executable, media tools, Electron helper bundles and frameworks, and ejects it; it does not change quarantine or claim Gatekeeper acceptance.
+
 ### Automatic builds and releases
 
-Every merge (or push) to `master` builds separate Apple Silicon (`arm64`) and Intel (`x64`) macOS DMGs and the Windows x64 installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/AMP22/releases) once all three builds pass. The release version normally increments the highest stable Git tag (or the `package.json` baseline if there are no stable tags) by one patch; no version-bump commit is needed. To request a specific newer release, bump `package.json` and `package-lock.json` above all existing stable tags: that exact version is published without an extra patch increment. All installers use the same version. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
+Every merge (or push) to `master` builds separate Apple Silicon (`arm64`) and Intel (`x64`) macOS DMGs and the Windows x64 installer, then publishes them together on the repository's [Releases page](https://github.com/apulianas/AMP22/releases) once all three builds pass, including strict verification of the ad-hoc-signed apps inside both macOS DMGs. The release version normally increments the highest stable Git tag (or the `package.json` baseline if there are no stable tags) by one patch; no version-bump commit is needed. To request a specific newer release, bump `package.json` and `package-lock.json` above all existing stable tags: that exact version is published without an extra patch increment. All installers use the same version. Rerunning a released commit reuses its version and replaces its assets. Builds on `master` are serialized to prevent competing release numbers.
 
 Intel builds use `macos-15-intel` with Xcode 26 for the Icon Composer assets; native encoding tests run on both macOS architectures. GitHub has [scheduled its hosted Intel runner's retirement for August 2027](https://github.com/actions/runner-images/issues/13045), so continuing Intel builds after that will require another build host or a validated cross-build setup.
 
-GitHub-generated release notes are also the in-app changelog. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
+GitHub-generated release notes are also the in-app changelog. Every newly created release includes the macOS Gatekeeper notice, Terminal instructions, and app-only quarantine command before its generated changelog. The existing-release upload path adds the same notice if missing; reruns preserve existing descriptions exactly without duplicating a notice already added manually. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
 
 Pull requests build and test all three targets and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
+
+README installation and release instructions cover this packaging change. Screenshots are not applicable: no AMP22 controls or in-app appearance changed, and app screenshots cannot demonstrate Apple trust or notarization.
 
 ### Download counts
 

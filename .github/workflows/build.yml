@@ -70,7 +70,8 @@ jobs:
       - run: npm test
         env:
           A22_TEST_EXPORT: ${{ runner.os == 'macOS' && '1' || '0' }}
-      - run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+      - name: Package installer (ad-hoc signing on macOS)
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
       - name: Verify packaged macOS architectures and media tools
@@ -99,6 +100,9 @@ jobs:
           fi
           "$ffmpeg" -version > /dev/null
           "$ffprobe" -version > /dev/null
+      - name: Verify ad-hoc signature of the app shipped in the DMG
+        if: runner.os == 'macOS'
+        run: node scripts/verify-mac-release.js "${{ matrix.arch }}"
       - uses: actions/upload-artifact@v4
         with:
           name: amp22-${{ matrix.target }}-${{ matrix.arch }}
@@ -132,6 +136,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v4
         with:
           pattern: amp22-*
@@ -146,11 +154,16 @@ jobs:
         run: |
           tag="v$APP_VERSION"
           if gh release view "$tag" > /dev/null 2>&1; then
+            gh release view "$tag" --json body > release-notes.json
+            node scripts/mac-release-notice.js --release-json release-notes.json > release-notes.md
+            gh release edit "$tag" --notes-file release-notes.md
             gh release upload "$tag" release/* --clobber
           else
+            node scripts/mac-release-notice.js > release-notes.md
             gh release create "$tag" release/* \
               --target "$GITHUB_SHA" \
               --title "AMP22 $tag" \
+              --notes-file release-notes.md \
               --generate-notes \
               --latest
           fi
