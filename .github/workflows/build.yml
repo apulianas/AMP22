@@ -89,15 +89,11 @@ jobs:
           fi
           media="$contents/Resources/app.asar.unpacked/node_modules"
           ffmpeg="$media/ffmpeg-static/ffmpeg"
-          ffprobe="$media/ffprobe-static/bin/darwin/$APP_ARCH/ffprobe"
-          for binary in "$contents/MacOS/AMP22" "$ffmpeg"; do
+          ffprobe="$media/@derhuerst/ffprobe-static/ffprobe"
+          for binary in "$contents/MacOS/AMP22" "$ffmpeg" "$ffprobe"; do
             file "$binary"
-            file -b "$binary" | grep -q "$cpu"
+            lipo -verify_arch "$cpu" "$binary"
           done
-          file "$ffprobe"
-          if [ "$APP_ARCH" = "x64" ]; then
-            file -b "$ffprobe" | grep -q "$cpu"
-          fi
           "$ffmpeg" -version > /dev/null
           "$ffprobe" -version > /dev/null
       - name: Verify ad-hoc signature of the app shipped in the DMG

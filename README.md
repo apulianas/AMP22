@@ -181,7 +181,7 @@ See the latest published release notes before opening the download page. This is
 
 ## Getting started
 
-For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series), the **x64 DMG** for Intel Macs, or the **Windows installer**. Each installer includes the video-processing tools it needs. Apple Silicon Macs currently need Rosetta 2 for the bundled Intel FFprobe helper; the app and FFmpeg are native arm64. Intel builds run both helpers natively.
+For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series), the **x64 DMG** for Intel Macs, or the **Windows installer**. Each installer includes the video-processing tools it needs. Apple Silicon builds include native arm64 versions of the app, FFmpeg, and FFprobe and do not require Rosetta 2. Intel builds run both helpers natively.
 
 ### macOS installation and Gatekeeper
 
@@ -206,7 +206,7 @@ npm install
 npm start
 ```
 
-npm 11 blocks install scripts unless they are approved. The `allowScripts` entry in `package.json` approves the scripts for `electron`, `ffmpeg-static`, and `ffprobe-static`. If the Electron binary is missing, run `node node_modules/electron/install.js`.
+npm 11 blocks install scripts unless they are approved. The `allowScripts` entries in `package.json` approve the download scripts for `ffmpeg-static` and `@derhuerst/ffprobe-static`. If the Electron binary is missing, run `node node_modules/electron/install.js`.
 
 ### Using it
 
@@ -455,7 +455,9 @@ npm run dist:mac   # macOS .dmg   (run on macOS)
 npm run dist:win   # Windows NSIS installer (run on Windows)
 ```
 
-The bundled FFmpeg and FFprobe must run on the target platform. Install dependencies and build natively on each target platform: Apple Silicon macOS, Intel macOS, or Windows x64. Merely cross-targeting Electron does not replace the installed FFmpeg binary. The included GitHub Actions workflow (`.github/workflows/build.yml`) uses a matching native runner for each target, checks the packaged app/FFmpeg architectures, and executes the packaged media tools. The current `ffprobe-static` dependency supplies an Intel FFprobe even in its `arm64` directory, so Apple Silicon uses Rosetta 2 for that helper; Intel packages are fully native.
+The bundled FFmpeg and FFprobe must run on the target platform. Install dependencies and build natively on each target platform: Apple Silicon macOS, Intel macOS, or Windows x64. Merely cross-targeting Electron does not replace the installed media binaries. FFprobe comes from `@derhuerst/ffprobe-static`, which downloads a binary matching the host OS and CPU. Both media tools are unpacked from Electron's ASAR archive so they can execute. The included GitHub Actions workflow (`.github/workflows/build.yml`) uses a matching native runner for each target, requires the packaged app, FFmpeg, and FFprobe to contain the target Mac architecture, and executes the packaged media tools. An Intel-only FFprobe cannot pass the Apple Silicon packaging check, even on a runner with Rosetta installed.
+
+FFmpeg and FFprobe share upstream source but are distributed here by separate npm packages: `ffmpeg-static` and `@derhuerst/ffprobe-static`. Updating one does not update the other, and npm package versions are not the upstream media-tool versions. Release builds use `npm ci` and the committed lockfile; each package pins its binary release, so newer upstream releases are not adopted automatically. To ship newer tools, update the relevant dependencies and lockfile, review the installed binaries' `-version` output, update `allowScripts` approvals if those package versions change, and run the media and export tests before publishing a new AMP22 release.
 
 macOS packaging explicitly uses electron-builder's ad-hoc identity (`mac.identity: "-"`), with hardened runtime and notarization disabled. Electron-builder signs the app and nested Mach-O code, including unpacked FFmpeg/FFprobe, without a certificate, paid account, or Actions secrets. Hardened runtime is disabled because ad-hoc code has no common Team ID for library validation. These are **not** trusted or notarized distribution signatures. To verify the actual app inside a built DMG on macOS, run `node scripts/verify-mac-release.js arm64` (or `x64` for Intel). The verifier mounts the DMG read-only, checks strict/deep signatures plus the app executable, media tools, Electron helper bundles and frameworks, and ejects it; it does not change quarantine or claim Gatekeeper acceptance.
 
