@@ -154,8 +154,8 @@ jobs:
         run: |
           tag="v$APP_VERSION"
           if gh release view "$tag" > /dev/null 2>&1; then
-            gh release view "$tag" --json body --jq .body > release-notes.md
-            node scripts/mac-release-notice.js release-notes.md
+            gh release view "$tag" --json body > release-notes.json
+            node scripts/mac-release-notice.js --release-json release-notes.json > release-notes.md
             gh release edit "$tag" --notes-file release-notes.md
             gh release upload "$tag" release/* --clobber
           else

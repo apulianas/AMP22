@@ -167,7 +167,7 @@ For packaged releases, choose the **arm64 DMG** for Apple Silicon Macs (M-series
 
 ### macOS installation and Gatekeeper
 
-AMP22 is **not Apple Developer ID signed or notarized**. New builds use free **ad-hoc signing** to give the complete app a valid local signature, including its Electron helpers and video tools. This does **not** identify a trusted developer or make Gatekeeper trust the download. A free Apple developer account cannot provide Developer ID distribution signing; that requires paid Apple Developer Program enrollment. Previously published installers, including **v0.6.0**, remain unchanged.
+AMP22 is **not Apple Developer ID signed or notarized**. New builds use free **ad-hoc signing** to give the complete app a valid local signature, including its Electron helpers and video tools. This does **not** identify a trusted developer or make Gatekeeper trust the download. A free Apple developer account cannot provide Developer ID distribution signing; that requires paid Apple Developer Program enrollment. Ad-hoc signing applies to installers built with this configuration; adding instructions to older release descriptions does not change their binaries.
 
 1. Download the correct DMG from the [official AMP22 GitHub release](https://github.com/apulianas/AMP22/releases/latest), open it, and drag **AMP22** into **Applications**.
 2. Eject the disk image, then open AMP22 from Applications.
@@ -447,7 +447,7 @@ Every merge (or push) to `master` builds separate Apple Silicon (`arm64`) and In
 
 Intel builds use `macos-15-intel` with Xcode 26 for the Icon Composer assets; native encoding tests run on both macOS architectures. GitHub has [scheduled its hosted Intel runner's retirement for August 2027](https://github.com/actions/runner-images/issues/13045), so continuing Intel builds after that will require another build host or a validated cross-build setup.
 
-GitHub-generated release notes are also the in-app changelog. The workflow prepends the macOS Gatekeeper notice and app-only Terminal command while preserving the generated changelog; reruns preserve existing notes without duplicating the notice. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
+GitHub-generated release notes are also the in-app changelog. Every newly created release includes the macOS Gatekeeper notice, Terminal instructions, and app-only quarantine command before its generated changelog. The existing-release upload path adds the same notice if missing; reruns preserve existing descriptions exactly without duplicating a notice already added manually. Edit a published release's description to refine those notes; subsequent update checks show the updated text. Keep production tags in stable `vMAJOR.MINOR.PATCH` form. Draft and prerelease versions are not offered by the update checker.
 
 Pull requests build and test all three targets and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
 
