@@ -52,6 +52,8 @@ jobs:
             target: win
             arch: x64
     runs-on: ${{ matrix.os }}
+    env:
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/out/ci-builder/cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,7 +64,15 @@ jobs:
       - name: Select Xcode 26 for Intel icon compilation
         if: matrix.os == 'macos-15-intel'
         run: sudo xcode-select --switch /Applications/Xcode_26.0.1.app/Contents/Developer
-      - run: npm ci
+      - name: Install locked packages
+        run: npm ci --ignore-scripts
+      - name: Download required native media tools through the GitHub asset API
+        timeout-minutes: 15
+        run: node scripts/download-ci-media.js
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Run dependency install scripts
+        run: npm rebuild --foreground-scripts
       - run: npm version "$APP_VERSION" --no-git-tag-version --ignore-scripts --allow-same-version
         shell: bash
         env:
@@ -70,10 +80,16 @@ jobs:
       - run: npm test
         env:
           A22_TEST_EXPORT: ${{ runner.os == 'macOS' && '1' || '0' }}
+      - name: Download checksum-verified Electron and pinned installer tool archives
+        timeout-minutes: 25
+        run: node scripts/download-ci-builder.js
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Package installer (ad-hoc signing on macOS)
-        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+        run: npx electron-builder --config scripts/ci-builder-config.js --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_FOR_PULL_REQUEST: true
       - name: Verify packaged macOS architectures and media tools
         if: runner.os == 'macOS'
         shell: bash
@@ -92,11 +108,11 @@ jobs:
           ffprobe="$media/@derhuerst/ffprobe-static/ffprobe"
           for binary in "$contents/MacOS/AMP22" "$ffmpeg" "$ffprobe"; do
             file "$binary"
-            lipo -verify_arch "$cpu" "$binary"
+            lipo "$binary" -verify_arch "$cpu"
           done
           if [ "$APP_ARCH" = "arm64" ]; then
             helper="$contents/Resources/native/amp22-foundation-models"
-            lipo -verify_arch arm64 "$helper"
+            lipo "$helper" -verify_arch arm64
             codesign --verify --strict "$helper"
           fi
           "$ffmpeg" -version > /dev/null

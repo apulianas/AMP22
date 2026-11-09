@@ -54,7 +54,6 @@
 .lab-table td:first-child { max-width: 250px; white-space: normal; }
 .lab-table td button { display: block; background: transparent; text-align: left; border: 0; color: #d2a8ff; padding: 0; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lab-table small { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; }
-.lab-table .lab-small { color: var(--key); }
 .lab-table tr.lab-row-run { --lab-split-color: #56d364; background: rgba(86, 211, 100, .07); }
 .lab-table tr.lab-row-pass { --lab-split-color: #79c0ff; background: rgba(121, 192, 255, .07); }
 .lab-table .lab-row-run td:first-child, .lab-table .lab-row-pass td:first-child { box-shadow: inset 3px 0 var(--lab-split-color); }
