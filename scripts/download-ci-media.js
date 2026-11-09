@@ -15,6 +15,20 @@ function run(command, args) {
   return `${result.stdout || ''}${result.stderr || ''}`;
 }
 
+async function downloadAssets(repo, release, files, directory, execute = run, wait = delay) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      execute('gh', ['release', 'download', release, '--repo', repo,
+        ...files.flatMap((file) => ['--pattern', file]), '--dir', directory, '--clobber']);
+      return;
+    } catch (error) {
+      console.error(`${repo} ${release} download attempt ${attempt}/3 failed: ${error.message}`);
+      if (attempt === 3) throw error;
+      await wait(attempt * 20000);
+    }
+  }
+}
+
 async function installMedia(root = path.join(__dirname, '..'), execute = run, wait = delay) {
   for (const name of ['ffmpeg-static', '@derhuerst/ffprobe-static']) {
     const directory = path.join(root, 'node_modules', name);
@@ -28,18 +42,8 @@ async function installMedia(root = path.join(__dirname, '..'), execute = run, wa
     const archive = `${tool}-${target}.gz`;
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-media-'));
     try {
-      for (let attempt = 1; ; attempt++) {
-        try {
-          execute('gh', ['release', 'download', release, '--repo', 'eugeneware/ffmpeg-static',
-            '--pattern', archive, '--pattern', `${target}.README`, '--pattern', `${target}.LICENSE`,
-            '--dir', temp, '--clobber']);
-          break;
-        } catch (error) {
-          console.error(`${name} download attempt ${attempt}/3 failed: ${error.message}`);
-          if (attempt === 3) throw error;
-          await wait(attempt * 20000);
-        }
-      }
+      await downloadAssets('eugeneware/ffmpeg-static', release,
+        [archive, `${target}.README`, `${target}.LICENSE`], temp, execute, wait);
       const binary = path.join(directory, tool + (process.platform === 'win32' ? '.exe' : ''));
       fs.writeFileSync(binary, gunzipSync(fs.readFileSync(path.join(temp, archive))), { mode: 0o755 });
       for (const suffix of ['README', 'LICENSE']) {
@@ -60,4 +64,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { installMedia };
+module.exports = { installMedia, downloadAssets };

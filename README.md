@@ -487,7 +487,7 @@ GitHub-generated release notes are also the in-app changelog. Every newly create
 
 Pull requests build and test all three targets and upload workflow artifacts, but do not publish releases. You can also run the **build** workflow manually on `master` to retry a build or release.
 
-CI packages with `--config scripts/ci-builder-config.js`, which retains the app's build settings and uses the locked Electron npm package's version and SHA-256 checksum manifest. Electron archive verification remains enabled without downloading a redundant remote checksum file, even when the archive is already cached.
+CI runs `node scripts/download-ci-builder.js` to fetch Electron and the required installer tool archives through the same official GitHub asset API with bounded retries. It verifies Electron's archive against the locked npm package's SHA-256 checksum manifest and seeds electron-builder's documented archive cache; electron-builder still verifies its pinned toolset checksums before extraction. CI then packages with `--config scripts/ci-builder-config.js`, retaining the app's build settings and using the verified local Electron archive without redundant public-URL downloads. The preparer pins the toolset assets used by the locked electron-builder version and fails explicitly if that version changes; review these pins when upgrading electron-builder. No archive checksum verification is disabled.
 
 README installation and release instructions cover this packaging change. Screenshots are not applicable: no AMP22 controls or in-app appearance changed, and app screenshots cannot demonstrate Apple trust or notarization.
 

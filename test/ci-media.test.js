@@ -5,8 +5,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { gzipSync } = require('node:zlib');
 const { installMedia } = require('../scripts/download-ci-media');
+const { prepareBuilder, toolAssets } = require('../scripts/download-ci-builder');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-ci-media-test-'));
@@ -114,6 +116,8 @@ test('workflow runs install scripts before tests and verifies file-first Mac arc
   assert.match(workflow, /lipo "\$binary" -verify_arch "\$cpu"/);
   assert.doesNotMatch(workflow, /lipo -verify_arch/);
   assert.match(workflow, /electron-builder --config scripts\/ci-builder-config\.js/);
+  assert.ok(workflow.indexOf('node scripts/download-ci-builder.js') < workflow.indexOf('electron-builder --config'));
+  assert.match(workflow, /ELECTRON_BUILDER_CACHE: \$\{\{ github\.workspace \}\}\/out\/ci-builder\/cache/);
 });
 
 test('CI verifies every Electron target against the locked package checksum manifest', () => {
@@ -128,4 +132,60 @@ test('CI verifies every Electron target against the locked package checksum mani
   assert.equal(config.mac.identity, '-');
   assert.equal(config.mac.strictVerify, true);
   assert.deepEqual(config.asarUnpack, require('../package.json').build.asarUnpack);
+});
+
+test('CI fetches and verifies Electron before seeding the native installer archive cache', {
+  skip: !['darwin', 'win32'].includes(process.platform),
+}, async (t) => {
+  const { root } = fixture(t);
+  const bytes = Buffer.from('Electron archive fixture');
+  const file = `electron-v45.0.0-${process.platform}-${process.arch}.zip`;
+  for (const [name, version] of [['electron', '45.0.0'], ['app-builder-lib', '26.18.0']]) {
+    fs.mkdirSync(path.join(root, 'node_modules', name));
+    fs.writeFileSync(path.join(root, 'node_modules', name, 'package.json'), JSON.stringify({ version }));
+  }
+  fs.writeFileSync(path.join(root, 'node_modules/electron/checksums.json'), JSON.stringify({
+    [file]: createHash('sha256').update(bytes).digest('hex'),
+  }));
+  const calls = [];
+  const download = async (repo, release, files, directory) => {
+    calls.push([repo, release, files, directory]);
+    fs.writeFileSync(path.join(directory, files[0]), bytes);
+  };
+  await prepareBuilder(root, download);
+  assert.deepEqual(calls[0].slice(0, 3), ['electron/electron', 'v45.0.0', [file]]);
+  const tools = toolAssets(process.platform, process.arch);
+  assert.equal(calls.length, tools.length + 1);
+  for (const [index, [release, asset]] of tools.entries()) {
+    assert.deepEqual(calls[index + 1], ['electron-userland/electron-builder-binaries', release, [asset],
+      path.join(root, 'out/ci-builder/cache', release)]);
+  }
+  calls.length = 0;
+  await assert.rejects(prepareBuilder(root, async (...args) => {
+    await download(...args);
+    fs.writeFileSync(path.join(args[3], file), 'corrupted Electron archive');
+  }), /checksum mismatch/);
+  assert.equal(calls.length, 1);
+  fs.writeFileSync(path.join(root, 'node_modules/app-builder-lib/package.json'), '{"version":"27.0.0"}');
+  await assert.rejects(prepareBuilder(root, () => assert.fail('must review new toolset pins first')), /upgrading electron-builder/);
+});
+
+test('installer cache pins cover both Mac architectures and Windows and reject unsupported targets', () => {
+  assert.deepEqual(toolAssets('darwin', 'arm64'), [
+    ['7zip@1.0.0', '7zip-darwin-arm64.tar.gz'],
+    ['dmg-builder@1.2.5', 'dmgbuild-bundle-arm64-75c8a6c.tar.gz'],
+  ]);
+  assert.deepEqual(toolAssets('darwin', 'x64'), [
+    ['7zip@1.0.0', '7zip-darwin-x86_64.tar.gz'],
+    ['dmg-builder@1.2.5', 'dmgbuild-bundle-x86_64-75c8a6c.tar.gz'],
+  ]);
+  assert.deepEqual(toolAssets('win32', 'x64'), [
+    ['7zip@1.0.0', '7zip-win-x64.tar.gz'],
+    ['winCodeSign-2.6.0', 'winCodeSign-2.6.0.7z'],
+    ['nsis-3.0.4.1', 'nsis-3.0.4.1.7z'],
+    ['nsis-resources-3.4.1', 'nsis-resources-3.4.1.7z'],
+  ]);
+  assert.throws(() => toolAssets('linux', 'x64'), /supports macOS and Windows/);
+  assert.throws(() => toolAssets('darwin', 'ia32'), /macOS CI requires/);
+  assert.throws(() => toolAssets('win32', 'arm64'), /Windows CI requires/);
 });

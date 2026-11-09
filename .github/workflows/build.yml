@@ -52,6 +52,8 @@ jobs:
             target: win
             arch: x64
     runs-on: ${{ matrix.os }}
+    env:
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/out/ci-builder/cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,6 +80,11 @@ jobs:
       - run: npm test
         env:
           A22_TEST_EXPORT: ${{ runner.os == 'macOS' && '1' || '0' }}
+      - name: Download checksum-verified Electron and pinned installer tool archives
+        timeout-minutes: 25
+        run: node scripts/download-ci-builder.js
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Package installer (ad-hoc signing on macOS)
         run: npx electron-builder --config scripts/ci-builder-config.js --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
