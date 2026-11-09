@@ -73,6 +73,74 @@ test('CSV prevents formula execution without changing numeric losses', () => {
   assert.equal(parseCSV(reports.csv(input)).rows[1]['Yards gained'], '-3');
 });
 
+test('package names omit redundant fronts consistently in play, player and breakdown exports', () => {
+  for (const [defense, front, expected] of [
+    ['3-4', '3-4-4', '3-4'], ['4-3', '4-3-4', '4-3'],
+    ['Jumbo', '4-3-4', 'Jumbo'], ['32 dime', '1-4-6', '32 dime'],
+    ['Nickel', '2-4-5', 'Nickel 2-4-5'], ['Dime', '1-4-6', 'Dime 1-4-6'],
+    ['Goal line', '5-3-3', 'Goal line 5-3-3'], ['', '', ''],
+  ]) {
+    const input = report({ includeAdvanced: true, fields: ['defense', 'inferredDefense', 'personnelInferred'] });
+    input.plays = [input.plays[0]];
+    input.plays[0].personnel = { defense, front, inferred: true };
+    input.plays[0].inferredPersonnel = { defense, front };
+    input.plays[0].onField = { defense: [{ id: 'defender', position: 'ILB', name: 'Defender' }] };
+    for (const csv of [reports.csv(input), reports.analysisCsv(input), reports.analysisCsv(input, 'players')]) {
+      const row = parseCSV(csv).rows[0];
+      assert.equal(row['Defensive package'], expected);
+      assert.equal(row['Inferred defensive package'], expected);
+      assert.equal(row['Personnel inferred from positions'], 'Yes');
+    }
+    if (expected) {
+      assert.ok(reports.text(input).includes(`Defensive package: ${expected}`));
+      assert.ok(reports.html(input).includes(`<dd>${expected}</dd>`));
+    }
+    assert.equal(input.plays[0].personnel.front, front, 'formatting must not alter source composition');
+  }
+});
+
+test('exports use Analysis Lab composition labels, saved custom rules and explicit inference provenance', () => {
+  const analysis = require('../src/shared/analysis');
+  const roster = counts => Object.entries(counts).flatMap(([position, count]) =>
+    Array.from({ length: count }, (_p, i) => ({ id: `${position}-${i}`, position })));
+  for (const rule of [
+    ...analysis.DEFAULT_PACKAGES,
+    { name: 'Jumbo nickel', counts: { DL: 3, OLB: 1, ILB: 2, CB: 2, S: 3 } },
+  ]) {
+    const input = report({ includeAdvanced: true, fields: ['defense', 'inferredDefense', 'personnelInferred'] });
+    input.plays = [input.plays[0]];
+    input.plays[0].onField = { defense: roster(rule.counts) };
+    input.plays[0].personnel = { defense: 'Nickel', front: '2-4-5' };
+    for (const packages of [undefined, [{ name: 'Custom package', counts: rule.counts }], []]) {
+      input.packages = packages;
+      const expected = analysis.defensivePackage(input.plays[0], packages || analysis.DEFAULT_PACKAGES);
+      for (const csv of [reports.csv(input), reports.analysisCsv(input), reports.analysisCsv(input, 'players')]) {
+        const rows = parseCSV(csv).rows;
+        assert.ok(rows.every(row => row['Defensive package'] === expected));
+        assert.ok(rows.every(row => row['Inferred defensive package'] === (expected.endsWith('*') ? expected : '')));
+        assert.ok(rows.every(row => row['Personnel inferred from positions'] === (expected.endsWith('*') ? 'Yes' : 'No')));
+      }
+      assert.ok(reports.text(input).includes(`Defensive package: ${expected}`));
+      assert.ok(reports.html(input).includes(`<dd>${expected}</dd>`));
+    }
+    input.packages = undefined;
+    input.plays[0].onField.defense.pop();
+    assert.equal(parseCSV(reports.analysisCsv(input)).rows[0]['Defensive package'], 'Nickel 2-4-5');
+    input.plays[0].onField.defense = roster(rule.counts);
+    input.plays[0].onField.defense[0] = input.plays[0].onField.defense[1];
+    assert.equal(parseCSV(reports.analysisCsv(input)).rows[0]['Defensive package'], 'Nickel 2-4-5');
+    assert.equal(input.plays[0].personnel.defense, 'Nickel', 'exports must not mutate imported classifications');
+  }
+  const invalid = report({ packages: [{ name: 'Invalid', counts: { DL: 10 } }] });
+  assert.throws(() => reports.validateReport(invalid, 3), /totaling 11/);
+  assert.throws(() => reports.analysisCsv(invalid), /totaling 11/);
+  const special = report();
+  special.plays = [normalizePlay({ play_type: 'kickoff' }), normalizePlay({ play_type: 'no_play' })];
+  for (const p of special.plays) p.onField = { defense: roster(analysis.DEFAULT_PACKAGES[0].counts) };
+  assert.ok(parseCSV(reports.analysisCsv(special)).rows.every(row =>
+    row['Defensive package'] === '' && row['Inferred defensive package'] === ''));
+});
+
 test('PDF layout uses real team colors, escaped content, rich play cards, and video order', () => {
   const input = report({ includeAdvanced: true, fields: ['coverage', 'defense'] });
   input.matchup = '<script>alert("bad")</script>';

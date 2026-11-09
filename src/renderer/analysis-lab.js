@@ -71,6 +71,9 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
         <p>${A.EXCLUSIONS}</p><p>${A.DEFINITIONS}</p>
         <p>All sidebar filters and the Analyze play-selection mode also apply to this cohort, across every game in a range. Only selected plays intersects selections with those filters; Exclude selected plays removes them. An empty selection produces no snaps in Only selected plays, and excludes nothing in Exclude selected plays. Run/pass splits use official play type: sacks are passes and scrambles are runs. Usage is share of the entire filtered cohort, not within a split. Unknown data stays visible; missing values are never zero.</p>
         <p>Packages marked * are estimates from listed positions, not charted alignment. Generic LB/DB positions are not guessed as ILB/CB/S. Complete, uniquely identified eleven-player defenses are required for composition rules. Otherwise the supplied broad package is retained, or Unknown. A player's presence does not establish coverage responsibility or causal impact.</p>
+        <p>Jumbo* identifies a complete eleven-player defense with at least four listed DL (DE/DT/NT), at least two OLB, and no more than four DBs. It is a heavy-front composition estimate, not confirmed goal-line alignment. Custom exact-composition rules take precedence.</p>
+        <p>32 dime* identifies three listed DL/OLB combined, two explicit ILB (including MLB), and six DBs. Two inside linebackers distinguish it from standard and rush dime; generic LB positions do not establish that role. This also requires a complete, uniquely identified eleven-player defense for on-field estimates.</p>
+        <p>Jumbo nickel* identifies three DL, one OLB, two explicit ILB (including MLB), and five DBs: a nickel composition with one OLB replaced by a DL. Both standard (three CB/two S) and big (two CB/three S) DB combinations qualify. Generic LB positions are not guessed as inside or outside linebackers; exact custom rules take precedence.</p>
         <p id="lab-coverage"></p>
         <div id="lab-packages"></div>
         <form id="lab-package-form" class="lab-package-form">
@@ -425,7 +428,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     $('evidence-csv').disabled = true;
     try {
       const saved = await window.api.exportData({
-        ...A22.reports.mergeOptions(), format: 'csv', layout: 'plays', plays: evidence,
+        ...A22.reports.mergeOptions(), format: 'csv', layout: 'plays', plays: evidence, packages,
         team: getContext().sel.team, matchup: $('scope-note').textContent,
       });
       $('status').textContent = saved.cancelled ? 'Export cancelled.' : `Saved ${evidence.length} evidence plays to ${saved.path}`;
@@ -444,6 +447,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   renderPackages();
 
   return {
+    getPackages: () => packages.map(rule => ({ name: rule.name, counts: { ...rule.counts } })),
     refresh() {
       if (root.hidden) return;
       const ctx = getContext();

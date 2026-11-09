@@ -1,8 +1,8 @@
 (function (root, factory) {
-  const mod = factory();
+  const mod = factory(typeof module === 'object' && module.exports ? require('./advanced') : root.A22.advanced);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).analysis = mod;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (advanced) {
   'use strict';
 
   const UNKNOWN = 'Unknown';
@@ -80,10 +80,11 @@
     if (counts) {
       const rule = packages.find((r) => POSITIONS.every((k) => (r.counts[k] || 0) === (counts[k] || 0)));
       if (rule) return `${rule.name}*`;
+      const named = advanced.compositionPackage(counts);
+      if (named) return `${named}*`;
     }
     const supplied = p.personnel?.defense;
-    const front = ['3-4', '4-3'].includes(supplied) ? '' : p.personnel?.front;
-    return supplied ? `${supplied}${front ? ` ${front}` : ''}${p.personnel.defenseInferred ? '*' : ''}` : UNKNOWN;
+    return supplied ? `${advanced.formatDefensePackage(supplied, p.personnel?.front)}${p.personnel.defenseInferred ? '*' : ''}` : UNKNOWN;
   }
 
   function half(p) {

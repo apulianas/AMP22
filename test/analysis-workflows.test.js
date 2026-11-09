@@ -162,6 +162,14 @@ async function exerciseAnalysis({ app, win }) {
     $('lab-package-form').requestSubmit();`);
   assert.match(await js(`$('lab-rows').textContent`), /My nickel/);
   assert.match(await js(`localStorage.getItem('amp22.analysis.packages')`), /My nickel/);
+  const packageFolder = app.getPath('userData');
+  dialog.showSaveDialog = async () => ({ canceled: false, filePath: path.join(packageFolder, 'custom-evidence.csv') });
+  await js(`document.querySelector('#lab-rows button').click(); $('lab-evidence-csv').click()`);
+  await waitUntil(`$('lab-status').textContent.includes('evidence plays')`);
+  const customRows = require('../src/shared/csv').parseCSV(fs.readFileSync(path.join(packageFolder, 'custom-evidence.csv'), 'utf8')).rows;
+  assert.ok(customRows.every(row => row['Defensive package'] === 'My nickel*'));
+  assert.ok(customRows.every(row => row['Inferred defensive package'] === 'My nickel*'));
+  await js(`$('lab-evidence-close').click()`);
   await js(`$('lab-count-S').value = '2'; $('lab-package-name').value = 'Invalid'; $('lab-package-form').requestSubmit()`);
   assert.match(await js(`$('lab-package-status').textContent`), /not saved/);
   await js(`$('lab-package-reset').click()`);

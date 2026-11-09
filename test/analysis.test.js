@@ -130,6 +130,69 @@ test('custom packages validate total, unknown positions and conflicting rules', 
   assert.throws(() => A.validatePackages([{ name: 'Bad', counts: { imaginary: 11 } }]), /totaling 11/);
 });
 
+test('jumbo groups both Jacksonville goal-line compositions and respects custom rules and incomplete evidence', () => {
+  const first = play(171, { gameId: '2026_09_JAX_BAL', posteam: 'JAX',
+    onField: { defense: roster({ NT: 2, CB: 1, ILB: 1, DT: 1, FS: 2, DE: 1, SS: 1, OLB: 2 }) },
+    personnel: { defense: '4-3', front: '4-3-4', defenseInferred: true, offense: '13' } });
+  const second = play(218, { gameId: '2026_09_JAX_BAL', posteam: 'JAX', playType: 'run',
+    onField: { defense: roster({ DT: 2, NT: 2, CB: 2, ILB: 1, SS: 1, FS: 1, OLB: 2 }) },
+    personnel: { defense: '4-3', front: '4-3-4', defenseInferred: true, offense: '12' } });
+  const result = A.summarize([first, second], { team: 'BAL', split: 'none' });
+  assert.deepEqual(result.rows.map(r => [r.label, r.n]), [['Jumbo*', 2]]);
+  assert.equal(result.knownDefense, 2);
+  assert.equal(A.summarize([first], { group: 'matchup' }).rows[0].label, '13 vs Jumbo*');
+  const custom = [{ name: 'My heavy front', counts: { DL: 4, OLB: 2, ILB: 1, CB: 1, S: 3 } }];
+  assert.equal(A.defensivePackage(first, custom), 'My heavy front*');
+  first.onField.defense.pop();
+  assert.equal(A.defensivePackage(first, []), '4-3*');
+  second.onField.defense[0] = second.onField.defense[1];
+  assert.equal(A.defensivePackage(second, []), '4-3*');
+  assert.equal(A.defensivePackage(play(1, { onField: { defense: roster({ DL: 4, LB: 3, DB: 4 }) } }), []), 'Unknown');
+  const report = { title: 'Jumbo', subtitle: 'Jacksonville at Baltimore', notes: '', rows: result.rows, metric: 'ypp', chart: 'bars' };
+  assert.match(A.csv(report), /"Jumbo\*","All","2"/);
+  assert.match(A.svg(report), /Jumbo\*/);
+});
+
+test('32 dime distinguishes two inside linebackers from standard and rush dime without changing saved rules', () => {
+  const p = play(734, { gameId: '2026_09_JAX_BAL', posteam: 'JAX', personnel: {
+    defense: 'Dime', front: '1-4-6', defenseInferred: true, offense: '11',
+  }, onField: { defense: roster({ DT: 1, OLB: 2, ILB: 2, CB: 3, FS: 2, SS: 1 }) } });
+  assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), '32 dime*');
+  assert.equal(A.defensivePackage(p, []), '32 dime*', 'built-in refinement applies with previously saved package lists');
+  assert.equal(A.summarize([p], { group: 'matchup' }).rows[0].label, '11 vs 32 dime*');
+  const result = A.summarize([p,
+    play(1, { onField: { defense: roster(A.DEFAULT_PACKAGES[2].counts) } }),
+    play(2, { onField: { defense: roster(A.DEFAULT_PACKAGES[3].counts) } }),
+  ], { split: 'none' });
+  assert.deepEqual(result.rows.map(r => r.label), ['32 dime*', 'Rush dime*', 'Standard dime*']);
+  const custom = [{ name: 'My dime', counts: { DL: 1, OLB: 2, ILB: 2, CB: 3, S: 3 } }];
+  assert.equal(A.defensivePackage(p, custom), 'My dime*');
+  p.onField.defense.find(player => player.position === 'ILB').position = 'LB';
+  assert.equal(A.defensivePackage(p, []), 'Dime 1-4-6*');
+  p.onField.defense.pop();
+  assert.equal(A.defensivePackage(p, []), 'Dime 1-4-6*');
+  p.personnel.defense = '32 dime';
+  assert.equal(A.defensivePackage(p, []), '32 dime*');
+  const report = { title: 'Dime packages', subtitle: 'Jacksonville at Baltimore', notes: '', rows: result.rows, metric: 'ypp', chart: 'bars' };
+  assert.match(A.csv(report), /"32 dime\*","All","1"/);
+  assert.match(A.svg(report), /32 dime\*/);
+});
+
+test('jumbo nickel includes both DB variants while preserving custom precedence and incomplete fallbacks', () => {
+  for (const db of [{ CB: 3, S: 2 }, { CB: 2, S: 3 }]) {
+    const counts = { DL: 3, OLB: 1, ILB: 2, ...db };
+    const p = play(1, { personnel: { defense: 'Nickel', front: '3-3-5' },
+      onField: { defense: roster(counts) } });
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), 'Jumbo nickel*');
+    assert.equal(A.defensivePackage(p, []), 'Jumbo nickel*');
+    assert.equal(A.defensivePackage(p, [{ name: 'Custom heavy nickel', counts }]), 'Custom heavy nickel*');
+    p.onField.defense.find(player => player.position === 'ILB').position = 'LB';
+    assert.equal(A.defensivePackage(p, []), 'Nickel 3-3-5');
+    p.onField.defense.pop();
+    assert.equal(A.defensivePackage(p, []), 'Nickel 3-3-5');
+  }
+});
+
 test('exact lineups group by stable identities, not changing display names or player order', () => {
   const first = roster(A.DEFAULT_PACKAGES[0].counts);
   const second = first.map((p) => ({ ...p, name: p.name.toUpperCase() })).reverse();
