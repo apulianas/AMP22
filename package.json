@@ -1,14 +1,16 @@
 {
   "name": "amp22",
   "productName": "AMP22",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "Watch and analyze NFL All-22 film: synced sideline + end zone angles, play-by-play navigation, frame stepping.",
   "main": "src/main/main.js",
   "private": true,
   "license": "UNLICENSED",
   "author": "apulianas",
   "scripts": {
+    "prestart": "npm run build:ai",
     "start": "electron .",
+    "build:ai": "node scripts/build-analytics-ai.js",
     "test": "node --test",
     "analyze": "node scripts/analyze.js",
     "build:icons": "node scripts/build-icons.js",
@@ -32,6 +34,7 @@
     "electron-winstaller@5.4.0": true
   },
   "build": {
+    "beforePack": "./scripts/build-analytics-ai.js",
     "appId": "com.apulianas.a22filmtool",
     "productName": "AMP22",
     "directories": {
@@ -46,6 +49,15 @@
       "node_modules/@derhuerst/ffprobe-static/**"
     ],
     "mac": {
+      "extraResources": [
+        {
+          "from": "build/native",
+          "to": "native",
+          "filter": [
+            "amp22-foundation-models"
+          ]
+        }
+      ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "icon": "build/AMP22.icon",
       "category": "public.app-category.sports",
