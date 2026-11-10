@@ -260,11 +260,59 @@
         </div>
         <p id="share-preview-status" class="muted small" role="status" aria-live="polite"></p>
       </fieldset>
+      <details id="highlight-section">
+        <summary>Player highlight (selected clip only)</summary>
+        <p class="muted small">Optional, local analysis only when you click Track. Nothing runs during import. Each angle needs its own player selection; roster identity is assigned by you, not recognized from film.</p>
+        <div id="highlight-editor" hidden>
+          <div id="highlight-progress-panel" hidden>
+            <label id="highlight-progress-label" for="highlight-progress">Tracking in the background</label>
+            <progress id="highlight-progress" max="1" value="0"></progress>
+            <button id="highlight-cancel" type="button" hidden>Cancel tracking</button>
+          </div>
+          <fieldset id="highlight-controls">
+            <legend>Highlight editor</legend>
+            <label>Camera <select id="highlight-angle"><option value="sideline">Sideline</option><option value="endzone">End zone</option></select></label>
+            <p><label><input id="highlight-enabled" type="checkbox" /> Highlight this player in this angle</label></p>
+            <div class="grid">
+              <label>Display <select id="highlight-mode"><option value="full">Through the play</option><option value="presnap">Before the snap only</option></select></label>
+              <label>Circle radius (% of film width) <input id="highlight-radius" type="number" min="1.5" max="10" step="0.5" /></label>
+            </div>
+            <label>Player identity <select id="highlight-player"></select></label>
+            <label>Name <input id="highlight-name" maxlength="100" /></label>
+            <div class="row">
+              <label><input id="highlight-show-name" type="checkbox" /> Show name</label>
+              <label><input id="highlight-show-photo" type="checkbox" /> Available headshot</label>
+            </div>
+            <p class="muted small">Uses the export's team/saved theme and opacity below, with a lightly filled circle. Changing identity or display options does not run tracking.</p>
+            <label>Click action <select id="highlight-tool"><option value="player">Place / correct highlighted player</option><option value="offense">Mark offensive targets for snap suggestion</option></select></label>
+            <video id="highlight-video" preload="metadata" muted playsinline hidden></video>
+            <canvas id="highlight-canvas" role="img" aria-label="Player highlight film preview. Click a player's torso to start background tracking or correct the highlight."></canvas>
+            <label>Time from trimmed clip start <input id="highlight-time" type="range" min="0" max="1" step="0.1" /></label>
+            <p id="highlight-time-label" class="mono"></p>
+            <p id="highlight-preview-state" class="muted small" role="status"></p>
+            <div class="row">
+              <button id="highlight-back" type="button">Back 1 frame</button>
+              <button id="highlight-play" type="button">Play preview</button>
+              <button id="highlight-forward" type="button">Forward 1 frame</button>
+            </div>
+            <p class="muted small">Click the player's torso to start tracking in the background. Keep previewing or editing while it runs; click again to replace a pending track. If tracking loses the player, click to correct. Corrections replace later positions, not earlier work. Review for identity switches during overlaps and camera zooms.</p>
+            <p id="highlight-coverage" class="muted small"></p>
+            <div class="row"><button id="highlight-run" type="button">Track from this frame</button><button id="highlight-review-stop" type="button">Go to last tracked frame</button><button id="highlight-clear-track" type="button">Remove this angle's highlight</button></div>
+            <p><span id="highlight-offense-count"></span> <button id="highlight-clear-offense" type="button">Clear offensive markers</button></p>
+            <p class="muted small">Optional snap suggestion: mark at least 3 stationary offensive players on this same frame before tracking. Camera-compensated movement is a heuristic, not verified ball movement. Missing/ambiguous evidence yields no suggestion. Offensive markers are temporary and do not add exported circles.</p>
+            <p id="highlight-suggestion" class="muted small"></p>
+            <button id="highlight-accept-snap" type="button" disabled>Accept suggested snap</button>
+            <p><label>Snap (seconds from trimmed start) <input id="highlight-snap" type="number" min="0" step="0.001" /></label></p>
+            <div class="row"><button id="highlight-set-snap" type="button">Set snap to current frame</button><button id="highlight-defaults" type="button">Make display options default</button></div>
+          </fieldset>
+          <p id="highlight-status" role="status" aria-live="polite"></p>
+        </div>
+      </details>
       <p><label><input id="share-clean" type="checkbox" /> Clean export (no overlays)</label></p>
       <p><label>Overlay duration (seconds from each trimmed start)
         <input id="share-overlay-seconds" type="number" min="0" step="any" />
       </label></p>
-      <p id="share-overlay-description" class="muted">Applies to every angle and play. Zero hides overlays.<br>Original portrait layout keeps its lower panel when the overlay ends.<br>Overlays include the primary player's headshot when available.</p>
+      <p id="share-overlay-description" class="muted">Applies to play information in every angle and play. Zero hides the information card, not player highlights.<br>Original portrait layout keeps its lower panel when the card ends.<br>Cards include the primary player's headshot when available.</p>
       <fieldset id="share-theming">
         <legend>Overlay theme</legend>
         <label for="share-theme">Team or saved theme</label>
@@ -491,12 +539,14 @@
   <script src="../shared/reports.js"></script>
   <script src="../shared/export.js"></script>
   <script src="../shared/overlay.js"></script>
+  <script src="../shared/tracking.js"></script>
   <script src="../shared/filter-presets.js"></script>
   <script src="../shared/settings.js"></script>
   <script src="../shared/align.js"></script>
   <script src="../shared/analysis-ai.js"></script>
   <script src="analysis-lab.js"></script>
   <script src="cloud-ai-settings.js"></script>
+  <script src="player-highlights.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

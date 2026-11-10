@@ -29,6 +29,16 @@ button { cursor: pointer; }
 button:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent); }
 button:disabled { opacity: .4; cursor: default; }
+#highlight-section { margin: 12px 0; }
+#highlight-section summary { cursor: pointer; font-weight: 600; }
+#highlight-canvas { display: block; width: 100%; height: auto; margin: 10px 0; cursor: crosshair; background: #000; }
+#highlight-time { width: 100%; }
+#highlight-controls > label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+#highlight-status.error { color: var(--neg); }
+#highlight-progress-panel { position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 8px 0; }
+#highlight-progress { width: 100%; display: block; margin: 6px 0; accent-color: var(--accent); }
+#highlight-progress-panel[hidden] { display: none; }
+#highlight-video[hidden], #highlight-cancel[hidden], #highlight-editor[hidden] { display: none; }
 .muted { color: var(--muted); }
 .small { font-size: 11px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -224,6 +234,7 @@ main { display: flex; height: calc(100% - 46px); }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-height: 90vh; overflow-y: auto; min-width: 460px; }
 .panel.wide { width: 820px; }
 #share .panel { width: 560px; max-width: 90vw; }
+#share .panel:has(#highlight-section[open]) { width: 1000px; }
 #share-preview-play { width: 100%; margin-top: 6px; }
 .trim-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; }
 .trim-previews figure { margin: 0; min-width: 0; }

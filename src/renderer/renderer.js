@@ -51,6 +51,7 @@ const S = {
 let analysisLab = null;
 let analysisFilterSource = null;
 let analysisSelectionMatches = null;
+let highlightEditor = null;
 
 function filterSource() {
   return S.mode === 'analysis' && analysisFilterSource !== null ? analysisFilterSource : S.plays;
@@ -1570,7 +1571,14 @@ function openShare() {
       if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
       const pair = S.pairs[pairIdx];
       const film = pair.film || S.film;
-      return { ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)), file: film.path, play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim };
+      const highlightKey = JSON.stringify([S.sel.team, S.plays[i].playId, film.path, film.size, film.mtimeMs,
+        pair.sideline.start, pair.sideline.end, pair.endzone.start, pair.endzone.end]);
+      return {
+        ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)),
+        file: film.path, url: film.url, info: film.info, fps: film.info.fps || 59.94,
+        play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim, highlightKey, gameId: S.sel.gameId,
+        highlights: structuredClone(S.gameData.playerHighlights?.[highlightKey] || {}),
+      };
     });
     const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'AMP22';
     S.exportDraft = { file: S.film.path, clips, matchup, team: S.sel.team || S.settings.defaultTeam };
@@ -1602,7 +1610,9 @@ function updateExportOptions() {
     if (!$('share-clean').checked && (!Number.isFinite(seconds) || seconds < 0)) throw new Error('Overlay duration must be zero or more seconds.');
     $('share-status').textContent = '';
     $('share-status').classList.remove('error');
-    $('share-export').disabled = S.exporting || positionSaving;
+    const tracking = !!highlightEditor?.busy() && !$('share-clean').checked;
+    if (tracking) $('share-status').textContent = 'Player tracking is running in the background. Finish or cancel tracking before exporting highlights, or choose Clean export.';
+    $('share-export').disabled = S.exporting || positionSaving || tracking;
   } catch (e) {
     $('share-status').textContent = e.message;
     $('share-status').classList.add('error');
@@ -1729,6 +1739,7 @@ async function loadPositionHeadshots() {
 }
 
 function renderPositionPreview() {
+  highlightEditor?.refresh();
   const canvas = $('share-position-preview');
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   const mode = $('share-angle').value;
@@ -1858,6 +1869,7 @@ function selectTrimPlay() {
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   if (!clip) return;
   $('share-trim').value = clip.trim;
+  highlightEditor?.select($('highlight-section').open ? clip : null);
   queueTrimPreview();
 }
 
@@ -1919,8 +1931,10 @@ function updateReportOptions() {
 }
 
 async function exportSelection() {
-  if (!S.exportDraft || S.exporting || positionSaving) return;
+  if (!S.exportDraft || S.exporting || positionSaving || highlightEditor?.busy() && !$('share-clean').checked) return;
+  highlightEditor?.pause();
   S.exporting = true;
+  highlightEditor?.refresh();
   S.exportCancelRequested = false;
   updateSelection();
   $('share-angle').disabled = true;
@@ -1944,7 +1958,7 @@ async function exportSelection() {
     const mode = $('share-angle').value;
     const clean = $('share-clean').checked;
     const { file, matchup, team } = S.exportDraft;
-    const clips = trimmedExportClips();
+    let clips = trimmedExportClips();
     const overlaySeconds = clean ? 0 : $('share-overlay-seconds').valueAsNumber;
     const appearance = currentOverlayAppearance();
     if (!Number.isFinite(overlaySeconds) || overlaySeconds < 0) throw new Error('Invalid overlay duration.');
@@ -1964,6 +1978,11 @@ async function exportSelection() {
     if (report.format === 'pdf') {
       report.headshots = Object.fromEntries([...images].map(([id, image]) => [id, image.toDataURL('image/png')]));
     }
+    if (!clean) {
+      const highlighted = await highlightEditor.export(clips, mode, appearance, sharePosition.preset !== 'original');
+      clips = highlighted.clips;
+      highlighted.warnings.forEach(warning => warnings.add(warning));
+    }
     if (S.exportCancelRequested) {
       $('share-status').textContent = 'Export cancelled.';
       return;
@@ -1975,7 +1994,9 @@ async function exportSelection() {
       suggestedName: A22.clipExport.exportFilename(clips.map((clip) => clip.play), {
         team, playNumber: clips[0].playNumber, role: A22.align.filmRole(clips[0].play, team),
       }),
-      clips: clips.map(({ play, playNumber, ...range }) => clean ? range : { ...range, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition, appearance) }),
+      clips: clips.map(({ play, playNumber, info, fps, url, highlightKey, gameId, highlights, ...range }) => clean ? range : {
+        ...range, highlights, card: playCard(play, mode, matchup, images.get(P.primaryPlayer(play)?.id), sharePosition, appearance),
+      }),
     });
     $('share-status').textContent = result.cancelled ? 'Export cancelled.' : `Saved to ${result.path}`;
     if (!result.cancelled) {
@@ -1993,6 +2014,7 @@ async function exportSelection() {
     $('share-status').classList.toggle('error', !S.exportCancelRequested);
   } finally {
     S.exporting = false;
+    highlightEditor?.refresh();
     $('share-angle').disabled = false;
     $('share-clean').disabled = false;
     $('share-trimming').disabled = false;
@@ -2310,6 +2332,7 @@ async function closeUpdate() {
 
 function toggleOverlay(id, show) {
   if (S.exporting) return;
+  highlightEditor?.pause();
   const el = $(id);
   const want = show == null ? el.hidden : show;
   document.querySelectorAll('.overlay').forEach((o) => { o.hidden = true; });
@@ -2463,6 +2486,29 @@ window.addEventListener('keydown', handleKeydown, true);
 /* ---------------- wiring ---------------- */
 
 function wire() {
+  highlightEditor = A22.createHighlightEditor({
+    defaults: () => S.settings?.highlightDefaults,
+    appearance: currentOverlayAppearance,
+    isClean: () => $('share-clean').checked || S.exporting,
+    preparePhoto: trimHeadshot,
+    players: clip => {
+      const players = [...(clip.play.onField?.offense || []), ...(clip.play.onField?.defense || []), P.primaryPlayer(clip.play)].filter(p => p?.id);
+      return [...new Map(players.map(p => [p.id, p])).values()];
+    },
+    onBusy: () => updateExportOptions(),
+    save: async (clip, value) => {
+      const saved = await window.api.getGame(clip.gameId);
+      const data = await window.api.saveGame(clip.gameId, { playerHighlights: { ...saved.playerHighlights, [clip.highlightKey]: value } });
+      if (S.sel.gameId === clip.gameId) S.gameData = data;
+    },
+    saveDefaults: async value => {
+      applySettings(await window.api.saveSettings({ ...S.settings, highlightDefaults: value }));
+    },
+  });
+  $('highlight-section').addEventListener('toggle', () => {
+    const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+    highlightEditor.select($('highlight-section').open && !$('share').hidden ? clip : null);
+  });
   window.createCloudAISettings();
   analysisLab = window.createAnalysisLab({
     getContext: () => ({ games: S.games, sel: S.sel, game: S.game, plays: S.plays, warning: S.participationWarning }),
@@ -2604,6 +2650,7 @@ function wire() {
     updatePositionControls();
     loadPositionHeadshots();
     updateExportOptions();
+    highlightEditor?.refresh();
   });
   $('share-position').addEventListener('change', () => {
     const selected = $('share-position').value;
@@ -2666,6 +2713,7 @@ function wire() {
     if (!clip) return;
     clip.trim = $('share-trim').valueAsNumber;
     updateExportOptions();
+    highlightEditor.select($('highlight-section').open && Number.isFinite(clip.trim) && clip.trim >= 0 && clip.trim < clip.len ? clip : null);
     queueTrimPreview();
   });
   $('share-overlay-seconds').addEventListener('input', () => {

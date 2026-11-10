@@ -19,6 +19,7 @@ const films = require('../shared/films');
 const teams = require('../shared/teams');
 const { registerAnalysisExport } = require('./analysis');
 const { registerAnalyticsAI } = require('./analytics-ai');
+const playerTracking = require('./tracking');
 
 let win = null;
 let data;
@@ -33,6 +34,7 @@ const running = new Map(); // film path -> {controller, promise}
 let exporting = null;
 let lastExportPath = null;
 let headshotPreparation = null;
+let trackingJob = null;
 const appIcon = path.join(__dirname, '..', 'renderer', 'assets', 'icon.png');
 
 function createWindow() {
@@ -262,7 +264,7 @@ function registerIpc() {
     const st = fs.statSync(file);
     const cached = readCachedAnalysis(file, st);
     const info = cached ? cached.info : await media.probe(file);
-    return { path: file, url: pathToFileURL(file).href, size: st.size, info, analysis: cached };
+    return { path: file, url: pathToFileURL(file).href, size: st.size, mtimeMs: st.mtimeMs, info, analysis: cached };
   });
 
   ipcMain.handle('film:analyze', async (e, { file, force }) => {
@@ -297,6 +299,19 @@ function registerIpc() {
   });
 
   ipcMain.handle('clips:preview', (_e, { file, time }) => media.previewFrame(file, time));
+  ipcMain.handle('tracking:analyze', async (event, request) => {
+    if (trackingJob) throw new Error('Player tracking is already running. Cancel it before starting another clip.');
+    playerTracking.validateAnalysis(request);
+    const controller = new AbortController();
+    trackingJob = controller;
+    try {
+      return await playerTracking.analyze(request, {
+        signal: controller.signal,
+        onProgress: fraction => { if (!event.sender.isDestroyed()) event.sender.send('tracking:progress', fraction); },
+      });
+    } finally { trackingJob = null; }
+  });
+  ipcMain.handle('tracking:cancel', () => { trackingJob?.abort(); });
 
   ipcMain.handle('clips:export', async (e, request) => {
     if (exporting) throw new Error('A clip export is already in progress.');
@@ -357,6 +372,7 @@ function registerIpc() {
   ipcMain.handle('clips:cancel', () => {
     if (exporting) exporting.abort();
     if (headshotPreparation) headshotPreparation.abort();
+    trackingJob?.abort();
   });
   ipcMain.handle('clips:reveal', () => {
     if (!lastExportPath) throw new Error('Export a clip before opening its folder.');
@@ -403,12 +419,14 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  trackingJob?.abort();
   for (const r of running.values()) r.controller.abort();
   if (exporting) exporting.abort();
   if (headshotPreparation) headshotPreparation.abort();
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('before-quit', () => {
+  trackingJob?.abort();
   participationWatcher?.close();
   clearTimeout(participationTimer);
 });
