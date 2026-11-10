@@ -24,10 +24,13 @@ async function exerciseWorkflows({ app, win }) {
     assert.equal(result.status, 0, String(result.stderr));
     sources[role] = file;
   }
+  let singleFilm = false;
   ipcMain.removeHandler('film:open');
   ipcMain.handle('film:open', async (_e, file) => ({
     path: file, url: pathToFileURL(file).href, info: await probe(file),
-    analysis: { pairs: [{ sideline: { start: 0, end: 2 }, endzone: { start: 2, end: 4 } }] },
+    analysis: { pairs: singleFilm
+      ? Array.from({ length: 3 }, (_n, i) => ({ sideline: { start: i, end: i + 0.5 }, endzone: { start: i + 0.5, end: i + 1 } }))
+      : [{ sideline: { start: 0, end: 2 }, endzone: { start: 2, end: 4 } }] },
   }));
   const js = (source) => win.webContents.executeJavaScript(source, true);
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -407,6 +410,46 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js(`$('share-status').classList.contains('error')`), true);
   assert.match(await js(`$('share-status').textContent`), /Video saved.*breakdown could not be saved/);
   assert.ok(!fs.readdirSync(root).some((file) => file.endsWith('.tmp')));
+  await js(`$('share-close').click();
+    S.game = {...S.game, gameId: S.sel.gameId};
+    S.games = [S.game];`);
+  const workflowPlays = await js(`S.plays`);
+  const timeoutPlay = require('../src/shared/plays').normalizePlay({ play_id: 4, play_type: 'timeout', desc: 'Timeout' });
+  // Reload in a different order so preserving an array index cannot pass.
+  let reordered = false;
+  ipcMain.removeHandler('pbp:get');
+  ipcMain.handle('pbp:get', () => ({ plays: reordered ? [timeoutPlay, ...workflowPlays] : [...workflowPlays, timeoutPlay] }));
+  for (const format of ['split', 'single']) {
+    singleFilm = format === 'single';
+    reordered = false;
+    await js(`(async () => {
+      await saveGame({filmFormat: '${format}', filmPath: ${JSON.stringify(sources.offense)}});
+      await loadGame();
+      selectPlay(S.plays.findIndex(play => play.playId === 1), {autoplay: false});
+    })()`);
+    reordered = true;
+    await js(`setWorkspaceMode('analysis')`);
+    assert.equal(await js(`S.plays[S.curPlay].playId`), 1, 'entering Analysis Lab retains the active play by ID after reordering');
+    assert.equal(await js(`S.film`), null, 'Analysis Lab does not open film');
+    await js(`document.querySelector('#play-list li[data-i="2"]').click()`);
+    reordered = false;
+    await js(`setWorkspaceMode('film')`);
+    await until(settled);
+    assert.equal(await js(`S.plays[S.curPlay].playId`), 2, `${format}: sidebar play survives workspace reload`);
+    assert.equal(await js(`S.curPair`), 1, `${format}: selected play loads its linked pair, not the first pair`);
+    assert.equal(await js(`vidA().src`), pathToFileURL(singleFilm ? sources.offense : sources.defense).href);
+    assert.equal(await js(`S.playing`), false, 'returning to Film Room does not autoplay');
+    assert.ok(Math.abs(await js(`vidA().currentTime - S.range.aStart`)) < 0.001);
+    assert.ok(Math.abs(await js(`vidB().currentTime - S.range.bStart`)) < 0.001);
+    await js(`(async () => {
+      await setWorkspaceMode('analysis');
+      selectPlay(S.plays.findIndex(play => play.playId === 4), {autoplay: false});
+      await setWorkspaceMode('film');
+    })()`);
+    assert.equal(await js(`S.plays[S.curPlay].playId`), 4, `${format}: unlinked plays remain selected`);
+    assert.equal(await js(`S.curPair`), -1, 'unlinked play does not show unrelated linked film');
+    assert.equal(await js(`S.range`), null);
+  }
   console.log('FILM WORKFLOWS PASSED');
   app.exit(0);
 }
