@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld('api', {
   cancelAnalysis: (file) => ipcRenderer.invoke('film:cancel', file),
   exportClips: (request) => ipcRenderer.invoke('clips:export', request),
   previewFrame: (file, time) => ipcRenderer.invoke('clips:preview', { file, time }),
+  trackPlayer: (request) => ipcRenderer.invoke('tracking:analyze', request),
+  cancelTracking: () => ipcRenderer.invoke('tracking:cancel'),
+  onTrackingProgress: (cb) => {
+    const h = (_e, fraction) => cb(fraction);
+    ipcRenderer.on('tracking:progress', h);
+    return () => ipcRenderer.removeListener('tracking:progress', h);
+  },
   cancelExport: () => ipcRenderer.invoke('clips:cancel'),
   revealExport: () => ipcRenderer.invoke('clips:reveal'),
   onExportProgress: (cb) => {

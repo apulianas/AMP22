@@ -5,6 +5,7 @@ const path = require('path');
 const { run, probe } = require('./media');
 const { ffmpegPath } = require('./ffpaths');
 const { MODES, dimensions, exportSequence, overlayPosition } = require('../shared/export');
+const highlights = require('./highlight-export');
 
 function validateRequest(request) {
   if (!request || typeof request.file !== 'string' || !MODES.includes(request.mode) ||
@@ -28,6 +29,7 @@ function validateRequest(request) {
       throw new Error('Invalid export clip timing.');
     }
     if (request.clean) continue;
+    highlights.validateHighlights(clip.highlights);
     const png = clip.card;
     if (typeof png !== 'string' || png.length > 8 * 1024 * 1024 || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(png)) {
       throw new Error('Invalid play information image.');
@@ -42,7 +44,7 @@ function validateRequest(request) {
   return request;
 }
 
-function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeconds = mode === 'both' ? null : 3, position) {
+function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeconds = mode === 'both' ? null : 3, position, markers = []) {
   const centered = clean || overlayPosition(position).preset !== 'original';
   const args = ['-hide_banner', '-v', 'error', '-xerror', '-nostats', '-progress', 'pipe:1', '-y'];
   const duration = clip.len.toFixed(6);
@@ -51,7 +53,8 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeco
   if (mode === 'both') input(clip.bStart);
   const cardIndex = mode === 'both' ? 2 : 1;
   if (!clean) args.push('-framerate', String(fps), '-i', 'card.png');
-  const audioIndex = hasAudio ? 0 : cardIndex + (clean ? 0 : 1);
+  if (!clean) markers.forEach((_marker, index) => args.push('-loop', '1', '-framerate', String(fps), '-i', `highlight-${index}.png`));
+  const audioIndex = hasAudio ? 0 : cardIndex + (clean ? 0 : 1 + markers.length);
   if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo');
   const scale = (w, h) => `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},setpts=PTS-STARTPTS`;
   const filters = mode === 'both'
@@ -61,9 +64,16 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeco
       `[a][b]vstack=inputs=2:shortest=1,pad=1080:1920:0:${centered ? '(oh-ih)/2' : '0'}:color=${centered ? 'black' : '0x0d1117'}[base]`,
     ]
     : [`[0:v]${scale(1920, 1080)}[base]`];
+  let base = 'base';
+  if (!clean) markers.forEach((marker, index) => {
+    const expression = highlights.expressions(marker);
+    const output = `highlighted${index}`;
+    filters.push(`[${base}][${cardIndex + 1 + index}:v]overlay=x='${expression.x}':y='${expression.y}':enable='${expression.enable}':eof_action=repeat[${output}]`);
+    base = output;
+  });
   filters.push(clean
-    ? '[base]format=yuv420p[v]'
-    : `[base][${cardIndex}:v]overlay=0:0:eof_action=repeat${overlaySeconds === null ? '' : `:enable='lt(t,${overlaySeconds})'`},format=yuv420p[v]`);
+    ? `[${base}]format=yuv420p[v]`
+    : `[${base}][${cardIndex}:v]overlay=0:0:eof_action=repeat${overlaySeconds === null ? '' : `:enable='lt(t,${overlaySeconds})'`},format=yuv420p[v]`);
   filters.push(`[${audioIndex}:a]aresample=48000,asetpts=PTS-STARTPTS,apad[audio]`);
   args.push('-filter_complex', filters.join(';'), '-map', '[v]', '-map', '[audio]',
     '-t', duration, '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p',
@@ -102,8 +112,20 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
       const sourceFile = clip.file || file;
       const card = path.join(temp, 'card.png');
       if (!clean) await fs.writeFile(card, Buffer.from(clip.card.split(',')[1], 'base64'));
-      const args = segmentArgs(sourceFile, clip, angle, sources.get(sourceFile).hasAudio, fps, clean, request.overlaySeconds, request.overlayPosition);
+      const markers = clean ? [] : highlights.descriptors(clip, angle, sources.get(sourceFile), overlayPosition(request.overlayPosition).preset !== 'original');
+      const args = segmentArgs(sourceFile, clip, angle, sources.get(sourceFile).hasAudio, fps, clean, request.overlaySeconds, request.overlayPosition, markers);
       if (!clean) args[args.indexOf('card.png')] = card;
+      for (const [index, marker] of markers.entries()) {
+        const image = path.join(temp, `highlight-${index}.png`);
+        await fs.writeFile(image, Buffer.from(marker.track.graphic.dataUrl.split(',')[1], 'base64'));
+        args[args.indexOf(`highlight-${index}.png`)] = image;
+      }
+      if (markers.length) {
+        const filterIndex = args.indexOf('-filter_complex');
+        const script = path.join(temp, 'highlight-filter.txt');
+        await fs.writeFile(script, args[filterIndex + 1]);
+        args.splice(filterIndex, 2, '-filter_complex_script', script);
+      }
       args.push(path.join(temp, `clip-${i}.mp4`));
       let pending = '';
       await run(ffmpegPath(), args, {

@@ -15,6 +15,7 @@ const filterPresets = require('../src/shared/filter-presets');
 function renderer() {
   const elements = new Map();
   const context = vm.createContext({
+    structuredClone,
     A22: { plays, settings, clipExport, advanced, reports, filterPresets, analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {

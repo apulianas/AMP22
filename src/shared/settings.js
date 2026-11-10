@@ -1,9 +1,9 @@
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport, node ? require('./overlay') : root.A22.overlay, node ? require('./filter-presets') : root.A22.filterPresets);
+  const mod = factory(node ? require('./reports') : root.A22.reports, node ? require('./export') : root.A22.clipExport, node ? require('./overlay') : root.A22.overlay, node ? require('./filter-presets') : root.A22.filterPresets, node ? require('./tracking') : root.A22.tracking);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).settings = mod;
-})(typeof self !== 'undefined' ? self : this, function (reports, clipExport, overlay, filterPresets) {
+})(typeof self !== 'undefined' ? self : this, function (reports, clipExport, overlay, filterPresets, tracking) {
   'use strict';
 
   const ACTIONS = [
@@ -48,6 +48,7 @@
     overlayTheme: null,
     overlayThemes: [],
     overlayOpacity: overlay.DEFAULT_OPACITY,
+    highlightDefaults: tracking.defaults(),
     playReport: reports.mergeOptions(),
     keyPlays: {
       turnovers: true,
@@ -67,6 +68,7 @@
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
     out.playReport = reports.mergeOptions(s.playReport);
     out.filterPresets = filterPresets.savedPresets(s.filterPresets);
+    out.highlightDefaults = tracking.defaults(s.highlightDefaults || {});
     try { out.overlayTheme = s.overlayTheme == null ? null : overlay.theme(s.overlayTheme); }
     catch { out.overlayTheme = null; }
     try { out.overlayOpacity = overlay.opacity(out.overlayOpacity); }

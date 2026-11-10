@@ -43,6 +43,7 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
     saveGame: async (_gameId, patch) => (gameData = { ...gameData, ...patch }),
   };
   const context = vm.createContext({
+    structuredClone,
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     A22: { align, plays, settings, clipExport, advanced, reports, filterPresets: require('../src/shared/filter-presets'), teams: require('../src/shared/teams'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, api },
@@ -58,7 +59,8 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
     updateTimeUI = () => {};
     globalThis.renderer = { S, derivePlays, openSplitFilms, selectPlay, navClip, setAnchor,
       nudge, pairKey, realign, corrections, openShare, trimmedExportClips, updateExportOptions, selectTrimPlay, queueTrimPreview, analyze, closeFilm, setVideoTime,
-      setCustomPosition, savePositionPreference, saveThemePreference, currentOverlayAppearance };
+      setCustomPosition, savePositionPreference, saveThemePreference, currentOverlayAppearance, toggleOverlay,
+      setHighlightEditor: value => { highlightEditor = value; } };
   `, context);
   const r = context.renderer;
   element('share-angle').value = 'sideline';
@@ -72,6 +74,29 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
   r.derivePlays();
   return { ...r, api, films, elements, element };
 }
+
+test('background tracking does not block closing Share or clean exports, but pending highlights cannot export', async () => {
+  const r = renderer();
+  await r.openSplitFilms();
+  r.selectPlay(0, { autoplay: false });
+  let paused = 0;
+  r.setHighlightEditor({ busy: () => true, select() {}, refresh() {}, pause: () => { paused++; } });
+  r.openShare();
+  assert.equal(r.element('share-export').disabled, true);
+  assert.match(r.element('share-status').textContent, /tracking is running in the background/);
+  assert.equal(r.element('share-close').disabled, false);
+  assert.equal(r.element('share-trimming').disabled, false);
+  assert.equal(r.element('share-angle').disabled, false);
+  r.element('share-clean').checked = true;
+  r.updateExportOptions();
+  assert.equal(r.element('share-export').disabled, false);
+  r.toggleOverlay('share', false);
+  assert.equal(r.element('share').hidden, true);
+  assert.ok(paused > 0);
+  r.S.exporting = true;
+  r.updateExportOptions();
+  assert.equal(r.element('share-export').disabled, true, 'actual encoding still blocks another export');
+});
 
 test('split playback switches source and frame rate while keeping file-specific offsets and corrections', async () => {
   const r = renderer();
