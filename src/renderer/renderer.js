@@ -68,7 +68,7 @@ async function setWorkspaceMode(mode, reload = true) {
   $('analysis-perspective').hidden = mode !== 'analysis';
   try { localStorage.setItem('amp22.workspace', mode); }
   catch (error) { setStatus(`Workspace preference could not be saved: ${error.message}`, true); }
-  if (reload && S.sel.gameId) await loadGame(undefined, { preserveFilters: true });
+  if (reload && S.sel.gameId) await loadGame(undefined, { preserveFilters: true, preservePlay: true });
 }
 
 function analysisFilterDescription() {
@@ -234,7 +234,8 @@ async function loadSchedule(force) {
 
 /* ---------------- game loading ---------------- */
 
-async function loadGame(force, { preserveFilters = false } = {}) {
+async function loadGame(force, { preserveFilters = false, preservePlay = false } = {}) {
+  const playId = preservePlay ? S.plays[S.curPlay]?.playId : null;
   analysisLab?.invalidate();
   const gameId = S.sel.gameId;
   const team = S.sel.team;
@@ -289,13 +290,14 @@ async function loadGame(force, { preserveFilters = false } = {}) {
   syncFilterControls();
 
   if (S.mode === 'analysis') {
+    S.curPlay = playId != null ? S.plays.findIndex((play) => play.playId === playId) : -1;
     realign();
     renderList();
     renderInfo();
     return;
   }
   if (isSplitFilm()) {
-    await openSplitFilms();
+    await openSplitFilms({ playId });
     return;
   }
   let filmPath = S.gameData.filmPath;
@@ -313,11 +315,7 @@ async function loadGame(force, { preserveFilters = false } = {}) {
     closeFilm();
     showMessage('Choose an All-22 file containing both sideline and end zone angles.<br><span class="muted">Tip: set a film folder in Settings ⚙ to find files automatically.</span>');
   }
-  realign();
-  renderList();
-  const first = S.visible.find((i) => S.mapping[i] != null);
-  if (first != null) selectPlay(first, { autoplay: false });
-  else renderInfo();
+  selectFirstLinked({ playId });
 }
 
 async function saveGame(patch) {
@@ -426,15 +424,16 @@ function rebuildSplitPairs() {
   renderFilmSetup();
 }
 
-function selectFirstLinked() {
+function selectFirstLinked({ playId = null } = {}) {
   realign();
   renderList();
-  const first = S.visible.find((i) => S.mapping[i] != null);
+  const preferred = playId != null ? S.plays.findIndex((play) => play.playId === playId) : -1;
+  const first = preferred >= 0 ? preferred : S.visible.find((i) => S.mapping[i] != null);
   if (first != null) selectPlay(first, { autoplay: false });
   else renderInfo();
 }
 
-async function openSplitFilms() {
+async function openSplitFilms({ playId = null } = {}) {
   closeFilm();
   const revision = S.filmRevision;
   const paths = (S.gameData.splitFilmPaths || {})[S.sel.team] || {};
@@ -455,7 +454,7 @@ async function openSplitFilms() {
     `${role === 'special' ? 'Special teams' : `${S.sel.team} ${role}`}: ${paths[role] ? paths[role].split(/[\\/]/).pop() : 'not selected'}`).join(' · ');
   $('film-name').title = $('film-name').textContent;
   rebuildSplitPairs();
-  selectFirstLinked();
+  selectFirstLinked({ playId });
   if (errors.length) setStatus(`Couldn't open split film: ${errors.join('; ')}`, true);
   if (!S.pairs.length) showMessage('Choose offense, defense, and special-teams film for the selected team. Each file should contain sideline followed by end zone for each play.<br><span class="muted">Each file aligns independently. Plays from files you have not selected remain unlinked.</span>');
   if (S.settings.autoAnalyze && Object.values(S.splitFilms).some((film) => !film.analysis)) await analyze(false);
