@@ -36,7 +36,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, ADV_CHOICES, choiceOptions };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, ADV_CHOICES, choiceOptions };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -51,6 +51,21 @@ function renderer() {
   api.derivePlays();
   return { ...api, elements, context, visible: () => Array.from(api.S.visible) };
 }
+
+test('workspace film selection restores play IDs, including unlinked or filtered-out plays', () => {
+  const r = renderer();
+  vm.runInContext(`realign = () => {}; renderList = () => {}; renderInfo = () => {};`, r.context);
+  r.S.visible = [0, 1];
+  r.S.mapping[3] = null;
+  r.selectFirstLinked({ playId: r.S.plays[3].playId });
+  assert.equal(r.S.curPlay, 3, 'an unlinked play outside the filters is not replaced with the first clip');
+  r.selectFirstLinked({ playId: r.S.plays[1].playId });
+  assert.equal(r.S.curPlay, 1);
+  r.selectFirstLinked({ playId: 999 });
+  assert.equal(r.S.curPlay, 0, 'a play absent from refreshed data falls back to the first linked play');
+  r.selectFirstLinked();
+  assert.equal(r.S.curPlay, 0, 'ordinary game loads keep their first-linked default');
+});
 
 test('choice counts replace only their own filter and predict the displayed plays', () => {
   const r = contextualPlayers();
