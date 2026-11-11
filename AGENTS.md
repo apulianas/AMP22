@@ -6,3 +6,8 @@
 - Use clear, stable screenshot filenames and repository-relative README image links. Keep images focused and legible, and exclude personal file paths, credentials, and unrelated desktop content.
 - Internal-only changes do not require new screenshots. Mark the documentation or screenshot checklist items not applicable with a short reason when no user-facing behavior or appearance changes.
 - Before opening or updating a PR, check that README feature descriptions and screenshots match the branch and complete the PR template's documentation checklist.
+
+# Tests and validation
+
+- For every PR, evaluate whether changed behavior requires new or updated tests, fixtures, or assertions, including existing workflow and export expectations. Update affected tests to reflect intended behavior without weakening unrelated checks.
+- Run the relevant tests before opening or updating the PR, and record the results and any limitations. If no test changes are needed, explain why in the PR's validation section.
