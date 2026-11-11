@@ -109,6 +109,26 @@ test('big and standard nickel require complete unique position evidence, not jus
   assert.equal(A.composition(play(3, { onField: { defense: roster({ DL: 2, LB: 4, DB: 5 }) } })).CB, undefined);
 });
 
+test('WRs on defense count as CBs for default and custom packages, but still require complete unique lineups', () => {
+  for (const [counts, expected] of [
+    [{ DL: 2, OLB: 2, ILB: 2, CB: 2, S: 2, WR: 1 }, 'Standard nickel*'],
+    [{ DL: 2, OLB: 2, ILB: 2, S: 3, WR: 2 }, 'Big nickel*'],
+  ]) {
+    const p = play(1, { onField: { defense: roster(counts) } });
+    const composition = A.composition(p);
+    assert.equal(composition.CB, (counts.CB || 0) + counts.WR);
+    assert.equal(composition.WR, undefined);
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), expected);
+    assert.equal(A.defensivePackage(p, [{ name: 'Custom', counts: composition }]), 'Custom*');
+    assert.equal(p.onField.defense.filter(x => x.position === 'WR').length, counts.WR);
+    p.onField.defense.pop();
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), 'Unknown');
+    p.onField.defense = roster(counts);
+    p.onField.defense[0] = p.onField.defense[1];
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), 'Unknown');
+  }
+});
+
 test('base packages use short front names without losing inference markers or other package detail', () => {
   for (const defense of ['3-4', '4-3']) {
     const p = play(1, { personnel: { defense, front: `${defense}-4`, offense: '11' } });

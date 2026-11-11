@@ -106,6 +106,12 @@ Introduced in **0.6.0**, Analysis Lab compares defensive packages with run/pass 
 
 ![Running AMP22 Analysis Lab with actual Bills at Ravens personnel efficiency, data-coverage counts, and SVG, PNG and summary CSV export controls](docs/screenshots/analysis-lab.png)
 
+**WRs on defense are assumed to be cornerbacks for package identification.** This applies to broad defensive packages, Analysis Lab's default and custom composition rules, and data exports. Recorded player positions remain WR; the assumption is not verified alignment. Complete, unique eleven-player lists are still required for on-field composition estimates.
+
+This running-app capture uses real 2024 Seahawks at Falcons play-by-play and historical participation, filtered to Dee Williams's four scored defensive snaps. His recorded position is WR, counted as CB for packages: three **Nickel 4-2-5** snaps and one **Jumbo nickel*** snap. The expanded evidence shows the Q4 2:00 run for three yards. No film was loaded.
+
+![Running AMP22 with four actual Dee Williams defensive snaps, WR treated as CB for Nickel and Jumbo nickel identification, and the contributing Jumbo nickel play expanded](docs/screenshots/analysis-lab-wr-defense.png)
+
 **Jumbo*** identifies a complete eleven-player defense with at least four listed defensive linemen (DE/DT/NT), at least two OLBs, and no more than four defensive backs. This is a heavy-front composition estimate, not verified alignment or a field-position filter. Generic LB positions are not assumed to be OLBs; ordinary 3-4, 4-3, and nickel packages retain their classifications. Exact custom package rules take precedence in Analysis Lab. Jumbo is also available in the defensive-package sidebar filter and play-data exports.
 
 This running-app capture uses the actual 2026 Week 9 Jaguars at Ravens game and imported NFL Pro participation, with the **Jumbo** defensive-package filter selected. The **Jumbo*** bucket contains two Baltimore defensive snaps at its 1-yard line: Q1 12:08 (incomplete pass) and Q1 11:24 (1-yard touchdown run). No film was loaded.
@@ -118,7 +124,7 @@ This actual 2026 Jaguars at Ravens capture shows the **32 dime** filter and its 
 
 ![Running AMP22 Analysis Lab with the actual Jaguars at Ravens 32 dime snap and its incomplete-pass result](docs/screenshots/analysis-lab-32-dime.png)
 
-**Jumbo nickel*** identifies **three DL, one OLB, two explicit ILB/MLB, and five DBs**: a nickel composition with one OLB replaced by a defensive lineman. Both standard nickel's three CB/two safeties and big nickel's two CB/three safeties qualify. Complete, unique eleven-player position lists are required for on-field estimates; generic LB positions do not establish inside/outside roles. This classification is shared by Analysis Lab, defensive-package filters, and exports, with exact custom rules taking precedence in Analysis Lab and exports. No matching real snap was available for a representative Jumbo nickel screenshot; the existing game captures do not demonstrate this package.
+**Jumbo nickel*** identifies **three DL, one OLB, two explicit ILB/MLB, and five DBs**: a nickel composition with one OLB replaced by a defensive lineman. Both standard nickel's three CB/two safeties and big nickel's two CB/three safeties qualify. Complete, unique eleven-player position lists are required for on-field estimates; generic LB positions do not establish inside/outside roles. This classification is shared by Analysis Lab, defensive-package filters, and exports, with exact custom rules taking precedence in Analysis Lab and exports. The Seahawks at Falcons WR-on-defense capture above demonstrates one actual Jumbo nickel snap using the WR-as-CB assumption.
 
 **Extra offensive linemen count as tight ends for personnel packages.** One RB, one TE, and six OL is **12 (6)**; with seven OL it is **13 (7)**. The parenthesized number is the total offensive-lineman count, not the number of eligible reports. Supplied personnel counts or complete, unique eleven-player lists establish the package; on-field estimates carry the usual `*` in Analysis Lab. These labels appear in offensive-personnel groups, splits, matchups, Summary CSV, and both play and player layouts of **Export data**. Original player positions, explicitly reported eligibility, and QB alignment/formation charting remain unchanged.
 

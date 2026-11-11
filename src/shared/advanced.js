@@ -27,7 +27,7 @@
   ];
 
   const OFFENSE_GROUPS = { RB: 'RB', HB: 'RB', FB: 'RB', TE: 'TE', WR: 'WR', QB: 'QB', C: 'OL', G: 'OL', T: 'OL', OL: 'OL', OT: 'OL', OG: 'OL', LT: 'OL', LG: 'OL', RG: 'OL', RT: 'OL' };
-  const DEFENSE_GROUPS = { DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LB: 'LB', ILB: 'LB', OLB: 'LB', MLB: 'LB', DB: 'DB', CB: 'DB', S: 'DB', FS: 'DB', SS: 'DB', SAF: 'DB' };
+  const DEFENSE_GROUPS = { DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LB: 'LB', ILB: 'LB', OLB: 'LB', MLB: 'LB', DB: 'DB', CB: 'DB', WR: 'DB', S: 'DB', FS: 'DB', SS: 'DB', SAF: 'DB' };
   const SPECIALISTS = ['K', 'P', 'LS'];
 
   /** Display order for defensive packages (lightest coverage personnel last). */

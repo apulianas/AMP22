@@ -30,7 +30,7 @@
   const POSITION_GROUPS = {
     DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LDE: 'DL', RDE: 'DL', LDT: 'DL', RDT: 'DL',
     OLB: 'OLB', LOLB: 'OLB', ROLB: 'OLB', ILB: 'ILB', MLB: 'ILB', LB: 'LB',
-    CB: 'CB', S: 'S', FS: 'S', SS: 'S', SAF: 'S', DB: 'DB',
+    CB: 'CB', WR: 'CB', S: 'S', FS: 'S', SS: 'S', SAF: 'S', DB: 'DB',
   };
   const known = (v) => typeof v === 'number' && Number.isFinite(v);
   const keyOf = (p) => p.id || (p.sourceId ? `nflpro:${p.sourceId}` : '');

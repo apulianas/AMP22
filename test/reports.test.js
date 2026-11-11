@@ -106,12 +106,13 @@ test('exports use Analysis Lab composition labels, saved custom rules and explic
   for (const rule of [
     ...analysis.DEFAULT_PACKAGES,
     { name: 'Jumbo nickel', counts: { DL: 3, OLB: 1, ILB: 2, CB: 2, S: 3 } },
+    { name: 'WR as corner', counts: { DL: 2, OLB: 2, ILB: 2, CB: 2, S: 2, WR: 1 } },
   ]) {
     const input = report({ includeAdvanced: true, fields: ['defense', 'inferredDefense', 'personnelInferred'] });
     input.plays = [input.plays[0]];
     input.plays[0].onField = { defense: roster(rule.counts) };
     input.plays[0].personnel = { defense: 'Nickel', front: '2-4-5' };
-    for (const packages of [undefined, [{ name: 'Custom package', counts: rule.counts }], []]) {
+    for (const packages of [undefined, [{ name: 'Custom package', counts: analysis.composition(input.plays[0]) }], []]) {
       input.packages = packages;
       const expected = analysis.defensivePackage(input.plays[0], packages || analysis.DEFAULT_PACKAGES);
       for (const csv of [reports.csv(input), reports.analysisCsv(input), reports.analysisCsv(input, 'players')]) {

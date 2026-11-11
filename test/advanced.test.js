@@ -60,6 +60,24 @@ test('defensive packages use fronts for base personnel and DB counts for sub-pac
   assert.equal(advanced.defensePackage(''), null);
 });
 
+test('WRs on defense count as defensive backs without changing recorded positions', () => {
+  const detail = '2 DL, 2 OLB, 2 ILB, 2 CB, 2 S, 1 WR';
+  assert.deepEqual(advanced.defensePackage(detail), { label: 'Nickel', front: '2-4-5' });
+  const positions = ['DL', 'DL', 'OLB', 'OLB', 'ILB', 'ILB', 'CB', 'CB', 'S', 'S', 'WR'];
+  const p = plays.normalizePlay({ play_id: '1', play_type: 'pass', pass: '1' });
+  p.onField = { defense: positions.map((position, i) => ({ id: `id-${i}`, position })) };
+  advanced.inferPersonnel(p);
+  assert.equal(p.personnel.defense, 'Nickel');
+  assert.equal(p.personnel.front, '2-4-5');
+  assert.equal(p.personnel.defenseInferred, true);
+  assert.equal(p.onField.defense[10].position, 'WR');
+  assert.ok(p.inferredPersonnel.defenseDetail.includes('1 WR'));
+  const kick = plays.normalizePlay({ play_type: 'kickoff' });
+  kick.onField = p.onField;
+  advanced.inferPersonnel(kick);
+  assert.equal(kick.personnel, undefined);
+});
+
 test('attach ignores special teams and keeps 2023+ on-field names, positions, and numbers', () => {
   const play = plays.normalizePlay({ play_id: '5', play_type: 'run', rush: '1', desc: 'run' });
   advanced.attach(play, {
