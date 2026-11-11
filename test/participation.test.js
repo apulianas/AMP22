@@ -12,6 +12,7 @@ const collector = require('../extensions/nflpro/collector');
 const advanced = require('../src/shared/advanced');
 const reports = require('../src/shared/reports');
 const { normalizePlay, category } = require('../src/shared/plays');
+const analysis = require('../src/shared/analysis');
 
 const game = { season: 2026, gameType: 'REG', week: 9, awayTeam: 'BAL', homeTeam: 'BUF' };
 function state() {
@@ -174,7 +175,39 @@ test('partial imports retain historical players and supplied personnel, and unkn
   p.onField.offense[0].position = 'QB';
   p.onField.offense[3].position = 'T';
   advanced.inferPersonnel(p);
-  assert.equal(p.inferredPersonnel.offense, '', 'extra-lineman packages are not forced into standard personnel codes');
+  assert.equal(p.inferredPersonnel.offense, '12 (6)');
+  assert.equal(p.personnel.offense, '12 (6)', 'complete extra-OL evidence refines supplied packages');
+});
+
+test('extra-OL imports share package labels across Analysis Lab and both data-export layouts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-extra-ol-'));
+  try {
+    for (const [extra, expected] of [[1, '12 (6)'], [2, '13 (7)'], [3, '14 (8)']]) {
+      const captured = rows().map(r => r.side === 'offense' && Number(r.jersey_number) >= 4 &&
+        Number(r.jersey_number) < 4 + extra ? { ...r, position: 'T' } : r);
+      fs.writeFileSync(path.join(dir, 'nflpro-game.csv'), schema.csv(captured));
+      const p = play();
+      p.personnel = { offense: '11' };
+      assert.deepEqual(attachImports(dir, game, [p]), []);
+      assert.equal(p.personnel.offense, expected);
+      const summary = analysis.summarize([p], { group: 'offense', split: 'none' });
+      assert.equal(summary.rows[0].label, `${expected}*`);
+      assert.equal(analysis.summarize([p], { split: 'offense' }).rows[0].series, `${expected}*`);
+      assert.ok(analysis.summarize([p], { group: 'matchup' }).rows[0].label.startsWith(`${expected}* vs `));
+      assert.match(analysis.csv({ title: 'Extra OL', subtitle: '', notes: '', metric: 'ypp', chart: 'bars',
+        rows: summary.rows }), new RegExp(expected.replace(/[()]/g, '\\$&')));
+      for (const layout of ['plays', 'players']) {
+        const exported = parseCSV(reports.analysisCsv({ ...reports.mergeOptions(), plays: [p] }, layout)).rows;
+        assert.ok(exported.every(r => r['Offensive personnel'] === expected));
+        assert.ok(exported.every(r => r['Inferred offensive personnel'] === expected));
+      }
+      assert.equal(p.onField.offense.filter(x => x.position === 'T').length, 2 + extra);
+      p.onField.offense.find(x => x.number === '4').position = 'WR';
+      advanced.inferPersonnel(p);
+      assert.equal(p.personnel.offense, extra === 1 ? '11' : `1${extra} (${4 + extra})`,
+        'refreshed inferred labels do not retain an old lineman count');
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('partial import does not replace a historical side and warns on unmatched source plays', () => {

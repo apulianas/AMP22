@@ -120,6 +120,12 @@ This actual 2026 Jaguars at Ravens capture shows the **32 dime** filter and its 
 
 **Jumbo nickel*** identifies **three DL, one OLB, two explicit ILB/MLB, and five DBs**: a nickel composition with one OLB replaced by a defensive lineman. Both standard nickel's three CB/two safeties and big nickel's two CB/three safeties qualify. Complete, unique eleven-player position lists are required for on-field estimates; generic LB positions do not establish inside/outside roles. This classification is shared by Analysis Lab, defensive-package filters, and exports, with exact custom rules taking precedence in Analysis Lab and exports. No matching real snap was available for a representative Jumbo nickel screenshot; the existing game captures do not demonstrate this package.
 
+**Extra offensive linemen count as tight ends for personnel packages.** One RB, one TE, and six OL is **12 (6)**; with seven OL it is **13 (7)**. The parenthesized number is the total offensive-lineman count, not the number of eligible reports. Supplied personnel counts or complete, unique eleven-player lists establish the package; on-field estimates carry the usual `*` in Analysis Lab. These labels appear in offensive-personnel groups, splits, matchups, Summary CSV, and both play and player layouts of **Export data**. Original player positions, explicitly reported eligibility, and QB alignment/formation charting remain unchanged.
+
+This running-app capture uses real 2024 Bills at Ravens play-by-play and historical participation. Buffalo's **13 (6)*** package has two runs for 11 yards and one incomplete pass; the expanded run evidence shows both contributing plays, including Alec Anderson's reported-eligible snap. No film was loaded.
+
+![Running AMP22 with actual Bills at Ravens six-lineman 13 (6) personnel, separate run and pass results, and two real rushing plays in the evidence panel](docs/screenshots/analysis-lab-extra-ol.png)
+
 The same game with **Analysis side → Baltimore Ravens offense** and **Group by → Offensive personnel** shows **54 scored offensive snaps**: 34 runs and 20 passes, with known personnel and EPA. The sidebar automatically shows only those Ravens offensive snaps, rather than both teams' plays. This is an actual running-app capture; no film was loaded.
 
 ![Running AMP22 with Baltimore Ravens offense selected in the left sidebar and 54 actual offensive snaps grouped by personnel](docs/screenshots/analysis-lab-offense.png)

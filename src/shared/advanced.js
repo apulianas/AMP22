@@ -26,7 +26,7 @@
     'is_motion', 'is_play_action', 'is_screen_pass', 'is_rpo', 'n_blitzers', 'n_pass_rushers',
   ];
 
-  const OFFENSE_GROUPS = { RB: 'RB', HB: 'RB', FB: 'RB', TE: 'TE', WR: 'WR', QB: 'QB', C: 'OL', G: 'OL', T: 'OL', OL: 'OL', OT: 'OL', OG: 'OL' };
+  const OFFENSE_GROUPS = { RB: 'RB', HB: 'RB', FB: 'RB', TE: 'TE', WR: 'WR', QB: 'QB', C: 'OL', G: 'OL', T: 'OL', OL: 'OL', OT: 'OL', OG: 'OL', LT: 'OL', LG: 'OL', RG: 'OL', RT: 'OL' };
   const DEFENSE_GROUPS = { DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LB: 'LB', ILB: 'LB', OLB: 'LB', MLB: 'LB', DB: 'DB', CB: 'DB', S: 'DB', FS: 'DB', SS: 'DB', SAF: 'DB' };
   const SPECIALISTS = ['K', 'P', 'LS'];
 
@@ -84,13 +84,14 @@
     return SPECIALISTS.some((p) => counts[p]);
   }
 
-  /** Offensive personnel code: RB count then TE count, e.g. "11", "12", "21". '' when unknown. */
+  /** RB then TE count, counting extra OL as TEs and suffixing the total OL, e.g. "12 (6)". */
   function offenseCode(personnel) {
     const counts = parsePersonnel(personnel);
     if (hasSpecialists(counts)) return '';
     const g = group(counts, OFFENSE_GROUPS);
-    if (g.RB == null && g.TE == null && g.WR == null) return '';
-    return `${g.RB || 0}${g.TE || 0}`;
+    const extraOL = Math.max(0, (g.OL || 0) - 5);
+    if (g.RB == null && g.TE == null && g.WR == null && !extraOL) return '';
+    return `${g.RB || 0}${(g.TE || 0) + extraOL}${extraOL ? ` (${g.OL})` : ''}`;
   }
 
   function isJumbo(counts) {
@@ -262,16 +263,16 @@
     if (!isScrimmage(play) || !play.onField) return;
     const offenseDetail = personnelDetail(play.onField.offense, OFFENSE_GROUPS);
     const offenseGroups = group(parsePersonnel(offenseDetail), OFFENSE_GROUPS);
-    const standardOffense = offenseGroups.QB === 1 && offenseGroups.OL === 5;
+    const knownOffense = offenseGroups.QB === 1 && offenseGroups.OL >= 5;
     const defenseDetail = personnelDetail(play.onField.defense, DEFENSE_GROUPS);
     const defense = defenseDetail ? defensePackage(defenseDetail) : null;
     play.inferredPersonnel = {
-      offense: standardOffense ? offenseCode(offenseDetail) : '',
+      offense: knownOffense ? offenseCode(offenseDetail) : '',
       offenseDetail, defense: defense?.label || '', front: defense?.front || '', defenseDetail,
     };
     if (play.inferredPersonnel.offense || defense) {
       const personnel = { ...play.personnel };
-      if (!personnel.offense && play.inferredPersonnel.offense) {
+      if (play.inferredPersonnel.offense && (!personnel.offense || personnel.offenseInferred || offenseGroups.OL > 5)) {
         Object.assign(personnel, { offense: play.inferredPersonnel.offense, offenseDetail, offenseInferred: true });
       }
       if (defense && (!personnel.defense || compositionPackage(parsePersonnel(defenseDetail)))) {
@@ -316,7 +317,8 @@
       const offense = onFieldPlayers(part, 'offense', directory);
       const defense = onFieldPlayers(part, 'defense', directory);
       if (offense.length || defense.length) play.onField = { offense, defense };
-      if (compositionPackage(parsePersonnel(personnelDetail(defense, DEFENSE_GROUPS)))) inferPersonnel(play);
+      if (group(parsePersonnel(personnelDetail(offense, OFFENSE_GROUPS)), OFFENSE_GROUPS).OL > 5 ||
+          compositionPackage(parsePersonnel(personnelDetail(defense, DEFENSE_GROUPS)))) inferPersonnel(play);
     }
     for (const key of Object.keys(charting)) sources[key] = 'nflverse participation';
     if (ftn) {

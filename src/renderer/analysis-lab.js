@@ -126,6 +126,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
         <p>Jumbo* identifies a complete eleven-player defense with at least four listed DL (DE/DT/NT), at least two OLB, and no more than four DBs. It is a heavy-front composition estimate, not confirmed goal-line alignment. Custom exact-composition rules take precedence.</p>
         <p>32 dime* identifies three listed DL/OLB combined, two explicit ILB (including MLB), and six DBs. Two inside linebackers distinguish it from standard and rush dime; generic LB positions do not establish that role. This also requires a complete, uniquely identified eleven-player defense for on-field estimates.</p>
         <p>Jumbo nickel* identifies three DL, one OLB, two explicit ILB (including MLB), and five DBs: a nickel composition with one OLB replaced by a DL. Both standard (three CB/two S) and big (two CB/three S) DB combinations qualify. Generic LB positions are not guessed as inside or outside linebackers; exact custom rules take precedence.</p>
+        <p>Offensive personnel counts every OL beyond five as a TE, with the total OL count in parentheses: one RB, one TE and six OL is 12 (6); seven OL is 13 (7). Complete, unique eleven-player lists with one QB are required for on-field estimates, marked *. Original positions and reported eligibility are unchanged.</p>
         <p id="lab-coverage"></p>
         <div id="lab-packages"></div>
         <form id="lab-package-form" class="lab-package-form">

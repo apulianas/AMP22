@@ -8,11 +8,43 @@ const plays = require('../src/shared/plays');
 test('offensive personnel codes count RBs then TEs in both participation formats', () => {
   assert.equal(advanced.offenseCode('1 RB, 1 TE, 3 WR'), '11');
   assert.equal(advanced.offenseCode('1 C, 2 G, 1 QB, 1 RB, 2 T, 2 TE, 2 WR'), '12');
-  assert.equal(advanced.offenseCode('6 OL, 2 RB, 2 TE, 0 WR'), '22');
+  assert.equal(advanced.offenseCode('6 OL, 2 RB, 2 TE, 0 WR'), '23 (6)');
+  assert.equal(advanced.offenseCode('1 QB, 1 RB, 1 TE, 2 WR, 1 C, 2 G, 3 T'), '12 (6)');
+  assert.equal(advanced.offenseCode('1 QB, 1 RB, 1 TE, 1 WR, 7 OL'), '13 (7)');
+  assert.equal(advanced.offenseCode('1 QB, 1 RB, 1 WR, 8 OL'), '13 (8)');
+  assert.equal(advanced.offenseCode('1 QB, 4 WR, 1 C, 1 LG, 1 RG, 1 LT, 2 RT'), '01 (6)');
   assert.equal(advanced.offenseCode('1 C, 2 G, 1 QB, 2 T, 5 WR'), '00');
   assert.equal(advanced.offenseCode('1 FB, 1 RB, 1 TE, 2 WR'), '21');
   assert.equal(advanced.offenseCode('2 DE, 1 FS, 2 MLB, 2 RB, 2 TE, 2 WR, 1 K'), '');
   assert.equal(advanced.offenseCode(''), '');
+});
+
+test('complete extra-OL lineups refine supplied packages without changing positions or QB alignment', () => {
+  for (const [positions, label] of [
+    [['QB', 'RB', 'TE', 'WR', 'WR', 'C', 'G', 'G', 'T', 'T', 'T'], '12 (6)'],
+    [['QB', 'RB', 'TE', 'WR', 'C', 'LG', 'RG', 'LT', 'RT', 'OL', 'OT'], '13 (7)'],
+  ]) {
+    const part = {
+      offense_personnel: '1 RB, 1 TE, 3 WR', offense_formation: 'SHOTGUN',
+      offense_players: positions.map((_p, i) => `id-${i}`).join(';'),
+      offense_names: positions.map((_p, i) => `Player ${i}`).join(';'),
+      offense_positions: positions.join(';'),
+    };
+    const p = plays.normalizePlay({ play_id: '1', play_type: 'run', rush: '1' });
+    advanced.attach(p, part);
+    assert.equal(p.personnel.offense, label);
+    assert.equal(p.inferredPersonnel.offense, label);
+    assert.equal(p.personnel.offenseInferred, true);
+    assert.equal(p.charting.qbLocation, 'Shotgun');
+    assert.deepEqual(p.onField.offense.map(x => x.position), positions);
+    assert.ok(advanced.tags(p).includes(`${label} personnel`));
+    const duplicate = plays.normalizePlay({ play_id: '2', play_type: 'run', rush: '1' });
+    advanced.attach(duplicate, { ...part, offense_players: positions.map(() => 'duplicate').join(';') });
+    assert.equal(duplicate.personnel.offense, '11');
+  }
+  const p = plays.normalizePlay({ play_id: '3', play_type: 'run', rush: '1' });
+  advanced.attach(p, { offense_personnel: '1 RB, 1 TE, 2 WR, 6 OL' });
+  assert.equal(p.personnel.offense, '12 (6)', 'supplied counts work without individual participation');
 });
 
 test('defensive packages use fronts for base personnel and DB counts for sub-packages', () => {
