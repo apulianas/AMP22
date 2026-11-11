@@ -50,9 +50,9 @@ test('advanced data merges participation and FTN charting by play and resolves o
     `${gameId},12,,"1 K","1 K",,,,,,`,
   ].join('\n');
   const ftn = [
-    'nflverse_game_id,nflverse_play_id,qb_location,n_offense_backfield,n_defense_box,is_no_huddle,is_motion,is_play_action,is_screen_pass,is_rpo,n_blitzers,n_pass_rushers',
-    `${gameId},10,S,1,6,FALSE,TRUE,TRUE,FALSE,FALSE,1,5`,
-    `${gameId},11,U,2,8,FALSE,FALSE,FALSE,FALSE,TRUE,0,0`,
+    'nflverse_game_id,nflverse_play_id,qb_location,n_offense_backfield,n_defense_box,is_no_huddle,is_motion,is_play_action,is_screen_pass,is_rpo,is_qb_sneak,n_blitzers,n_pass_rushers',
+    `${gameId},10,S,1,6,FALSE,TRUE,TRUE,FALSE,FALSE,FALSE,1,5`,
+    `${gameId},11,U,2,8,FALSE,FALSE,FALSE,FALSE,TRUE,TRUE,0,0`,
   ].join('\n');
   const players = 'gsis_id,headshot,nfl_id,display_name,position\n00-1,,111,Lamar Jackson,QB\n00-3,,333,Maxx Crosby,DE\n';
   const urls = [];
@@ -69,7 +69,7 @@ test('advanced data merges participation and FTN charting by play and resolves o
     assert.equal(warning, undefined);
     const [pass, run, kick] = plays;
     assert.deepEqual(pass.personnel, { offense: '11', offenseDetail: '1 RB, 1 TE, 3 WR', defense: 'Nickel', front: '4-2-5', defenseDetail: '4 DL, 2 LB, 5 DB' });
-    assert.deepEqual(pass.charting, { qbLocation: 'Shotgun', box: 6, rushers: 5, coverage: 'Cover 1', manZone: 'Man', backfield: 1, motion: true, playAction: true, rpo: false, screen: false, noHuddle: false, blitzers: 1 });
+    assert.deepEqual(pass.charting, { qbLocation: 'Shotgun', box: 6, rushers: 5, coverage: 'Cover 1', manZone: 'Man', backfield: 1, motion: true, playAction: true, rpo: false, screen: false, noHuddle: false, qbSneak: false, blitzers: 1 });
     assert.deepEqual(pass.onField.offense, [
       { id: '00-1', name: 'Lamar Jackson', position: 'QB', number: '' },
       { id: '', name: '', position: '', number: '' },
@@ -79,6 +79,7 @@ test('advanced data merges participation and FTN charting by play and resolves o
     assert.equal(run.personnel.defense, '4-3');
     assert.equal(run.charting.formation, 'I-Form');
     assert.equal(run.charting.qbLocation, 'Under center');
+    assert.equal(run.charting.qbSneak, true);
     assert.equal(run.charting.rushers, undefined, 'pass rushers apply only to dropbacks');
     assert.equal(run.charting.blitzers, undefined);
     assert.equal(kick.personnel, undefined);
@@ -107,6 +108,44 @@ test('a missing advanced-data file for the current season leaves plays unchanged
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('direct-snap positions resolve independently of the eventual rusher and lookup failures stay explicit', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'amp22-direct-snap-'));
+  const gameId = '2026_09_JAX_BAL';
+  const pbp = [
+    'game_id,play_id,play_type,desc,rusher_player_id,rusher_player_name,special_teams_play',
+    `${gameId},1,run,Direct snap to 22-D.Henry. 4-Z.Flowers runs.,wr,Z.Flowers,0`,
+    `${gameId},2,run,Direct snap to 89-M.Andrews. 4-Z.Flowers runs.,wr,Z.Flowers,0`,
+    `${gameId},3,run,22-D.Henry runs.,rb,D.Henry,0`,
+    `${gameId},4,run,Direct snap to 8-L.Jackson.,qb,L.Jackson,0`,
+    `${gameId},5,run,Direct snap to 10-A.Smith.,,,0`,
+    `${gameId},6,run,(Punt formation) Direct snap to 89-M.Andrews.,te,M.Andrews,1`,
+  ].join('\n');
+  const players = [
+    'gsis_id,nfl_id,display_name,position',
+    'rb,1,Derrick Henry,RB', 'te,2,Mark Andrews,TE', 'wr,3,Zay Flowers,WR', 'qb,4,Lamar Jackson,QB',
+    'a,5,Alex Smith,RB', 'b,6,Andrew Smith,TE',
+  ].join('\n');
+  const advanced = require('../src/shared/advanced');
+  const service = new DataService(dir, async url => {
+    if (url === PBP_URL(2026)) return new Response(zlib.gzipSync(pbp));
+    if (url === PLAYERS_URL) return new Response(players);
+    return new Response('', { status: 404 });
+  });
+  try {
+    const result = await service.loadGamePlays(2026, gameId);
+    assert.equal(result.warning, undefined);
+    assert.deepEqual(result.plays.map(advanced.formationModifier), ['Wildcat', 'Tush push', '', '', '', '']);
+    assert.equal(result.plays[0].directSnap.id, 'rb');
+    assert.equal(result.plays[1].directSnap.id, 'te');
+    assert.equal(result.plays[1].directSnap.position, 'TE');
+    assert.equal(result.plays[1].personnel, undefined, 'a directory match does not invent an on-field lineup');
+    service.loadPlayers = async () => { throw new Error('Player directory offline'); };
+    const offline = await service.loadGamePlays(2026, gameId);
+    assert.match(offline.warning, /Direct-snap player positions unavailable.*Player directory offline/);
+    assert.ok(offline.plays.every(p => advanced.formationModifier(p) === ''));
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
 test('depth charts enrich local imports after merging, reuse the season index and visibly handle offline or malformed data', async () => {

@@ -696,7 +696,7 @@ const YES_NO = [['true', 'Yes'], ['false', 'No']];
 const ADV_CHOICES = [
   { key: 'down', label: 'Down', get: (p) => p.down, options: [['1', '1st'], ['2', '2nd'], ['3', '3rd'], ['4', '4th']] },
   { key: 'player', label: 'On-field player', get: (p) => [...(p.onField?.offense || []), ...(p.onField?.defense || [])].map(ADV.playerKey).filter(Boolean), options: 'players' },
-  { key: 'offPersonnel', label: 'Off. personnel', get: (p) => p.personnel?.offense, options: 'values', title: 'RB count then TE count (11 = 1 RB, 1 TE, 3 WR)' },
+  { key: 'offPersonnel', label: 'Off. personnel', get: (p) => ADV.formatOffensePackage(p.personnel?.offense, p), options: 'values', title: 'RB count then TE count; extra OL count as TEs, with total OL in parentheses. Direct snaps to backs/WRs append Wildcat; TE snaps or FTN QB sneaks append Tush push.' },
   { key: 'defPackage', label: 'Def. package', get: (p) => p.personnel?.defense, options: 'values', order: ADV.DEFENSE_ORDER, title: 'Jumbo: 4+ DL, 2+ OLB and at most 4 DBs. Jumbo nickel: 3 DL, 1 OLB, 2 ILB/MLB and 5 DBs. 32 dime: 3 DL/OLB combined, 2 ILB/MLB and 6 DBs. Complete listed-position estimates. Otherwise 4 DBs: front (DL-LB); 5: Nickel; 6: Dime; 7+: Quarter; 3 or fewer: Goal line' },
   { key: 'qbLocation', label: 'QB alignment', get: (p) => p.charting?.qbLocation, options: 'values' },
   { key: 'formation', label: 'Formation', get: (p) => p.charting?.formation, options: 'values' },

@@ -211,6 +211,23 @@ class DataService {
     const game = this.games?.list.find((g) => g.gameId === gameId);
     const warnings = [warning, ...await this.attachAdvanced(season, gameId, list, opts),
       ...attachImports(opts.participationRoot, game, list)].filter(Boolean);
+    const directSnaps = list.filter(advanced.directSnapTarget);
+    let directory;
+    if (directSnaps.some(play => !advanced.directSnapPlayer(play)?.position)) {
+      try {
+        const players = await this.loadPlayers({ signal: opts.signal });
+        directory = players.byId;
+        if (players.warning) warnings.push(players.warning);
+      } catch (e) {
+        if (opts.signal?.aborted) throw e;
+        warnings.push(`Direct-snap player positions unavailable (${e.message}); unresolved targets remain unclassified.`);
+      }
+    }
+    for (const play of directSnaps) {
+      const player = advanced.directSnapPlayer(play, directory);
+      if (player) play.directSnap = player;
+      advanced.inferPersonnel(play);
+    }
     for (const play of list) advanced.annotateEligible(play);
     const teams = new Set(list.filter(p => p.posteam &&
       p.onField?.offense?.some(player => player.id && advanced.needsDepthPosition(player))).map(p => p.posteam));

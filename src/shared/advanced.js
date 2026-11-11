@@ -23,11 +23,11 @@
   ];
   const CHARTING_COLUMNS = [
     'nflverse_game_id', 'nflverse_play_id', 'qb_location', 'n_offense_backfield', 'n_defense_box', 'is_no_huddle',
-    'is_motion', 'is_play_action', 'is_screen_pass', 'is_rpo', 'n_blitzers', 'n_pass_rushers',
+    'is_motion', 'is_play_action', 'is_screen_pass', 'is_rpo', 'is_qb_sneak', 'n_blitzers', 'n_pass_rushers',
   ];
 
-  const OFFENSE_GROUPS = { RB: 'RB', HB: 'RB', FB: 'RB', TE: 'TE', WR: 'WR', QB: 'QB', C: 'OL', G: 'OL', T: 'OL', OL: 'OL', OT: 'OL', OG: 'OL' };
-  const DEFENSE_GROUPS = { DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LB: 'LB', ILB: 'LB', OLB: 'LB', MLB: 'LB', DB: 'DB', CB: 'DB', S: 'DB', FS: 'DB', SS: 'DB', SAF: 'DB' };
+  const OFFENSE_GROUPS = { RB: 'RB', HB: 'RB', FB: 'RB', TE: 'TE', WR: 'WR', QB: 'QB', C: 'OL', G: 'OL', T: 'OL', OL: 'OL', OT: 'OL', OG: 'OL', LT: 'OL', LG: 'OL', RG: 'OL', RT: 'OL' };
+  const DEFENSE_GROUPS = { DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LB: 'LB', ILB: 'LB', OLB: 'LB', MLB: 'LB', DB: 'DB', CB: 'DB', WR: 'DB', S: 'DB', FS: 'DB', SS: 'DB', SAF: 'DB' };
   const SPECIALISTS = ['K', 'P', 'LS'];
 
   /** Display order for defensive packages (lightest coverage personnel last). */
@@ -84,13 +84,14 @@
     return SPECIALISTS.some((p) => counts[p]);
   }
 
-  /** Offensive personnel code: RB count then TE count, e.g. "11", "12", "21". '' when unknown. */
+  /** RB then TE count, counting extra OL as TEs and suffixing the total OL, e.g. "12 (6)". */
   function offenseCode(personnel) {
     const counts = parsePersonnel(personnel);
     if (hasSpecialists(counts)) return '';
     const g = group(counts, OFFENSE_GROUPS);
-    if (g.RB == null && g.TE == null && g.WR == null) return '';
-    return `${g.RB || 0}${g.TE || 0}`;
+    const extraOL = Math.max(0, (g.OL || 0) - 5);
+    if (g.RB == null && g.TE == null && g.WR == null && !extraOL) return '';
+    return `${g.RB || 0}${(g.TE || 0) + extraOL}${extraOL ? ` (${g.OL})` : ''}`;
   }
 
   function isJumbo(counts) {
@@ -187,6 +188,50 @@
     return !!(play.flags && (play.flags.pass || play.flags.qb_scramble || play.flags.sack));
   }
 
+  function directSnapTarget(play) {
+    if (!isScrimmage(play) || play.flags?.special_teams_play ||
+        /\b(?:punt|field goal) formation\b/i.test(play.desc || '')) return null;
+    const target = /\bdirect snap to\s+(?:(\d{1,2})-)?([a-z][a-z.'-]*)/i.exec(play.desc || '');
+    return target ? { number: target[1] || '', name: target[2].replace(/\.$/, '') } : null;
+  }
+
+  function directSnapPlayer(play, directory) {
+    const target = directSnapTarget(play);
+    if (!target) return null;
+    const normalize = name => str(name).replace(/\s+(?:Jr|Sr|II|III|IV)\.?$/i, '').replace(/[^a-z]/gi, '').toLowerCase();
+    const matchesName = player => {
+      const parts = str(player.name).split(/\s+/);
+      return normalize(player.name) === normalize(target.name) ||
+        normalize(`${parts[0]?.[0] || ''}.${parts.slice(1).join(' ')}`) === normalize(target.name);
+    };
+    const players = (play.onField?.offense || []).filter(player =>
+      target.number && str(player.number) !== '' ? int(player.number) === Number(target.number) : matchesName(player));
+    if (players.length > 1) return null;
+    if (players[0]?.position) return { ...players[0], target };
+    if (directory) {
+      const rusher = directory.get(play.playerIds?.rusher);
+      if (rusher && normalize(play.names?.rusher) === normalize(target.name)) return { ...rusher, target };
+      const matches = [...new Map([...directory.values()].filter(player => player.id)
+        .map(player => [player.id, player])).values()].filter(matchesName);
+      return matches.length === 1 ? { ...matches[0], target } : null;
+    }
+    return play.directSnap?.target?.number === target.number && play.directSnap.target.name === target.name ? play.directSnap : null;
+  }
+
+  function formationModifier(play) {
+    if (!isScrimmage(play) || play.flags?.special_teams_play ||
+        /\b(?:punt|field goal) formation\b/i.test(play.desc || '')) return '';
+    if (play.charting?.qbSneak === true) return 'Tush push';
+    const position = directSnapPlayer(play)?.position;
+    if (position === 'TE') return 'Tush push';
+    return ['RB', 'HB', 'FB', 'WR'].includes(position) ? 'Wildcat' : '';
+  }
+
+  function formatOffensePackage(label, play) {
+    const modifier = formationModifier(play);
+    return modifier ? `${label || 'Unknown'} ${modifier}` : label || '';
+  }
+
   function playerKey(player) {
     return player.id || (player.sourceId ? `nflpro:${player.sourceId}` : '');
   }
@@ -262,16 +307,17 @@
     if (!isScrimmage(play) || !play.onField) return;
     const offenseDetail = personnelDetail(play.onField.offense, OFFENSE_GROUPS);
     const offenseGroups = group(parsePersonnel(offenseDetail), OFFENSE_GROUPS);
-    const standardOffense = offenseGroups.QB === 1 && offenseGroups.OL === 5;
+    const knownOffense = offenseGroups.OL >= 5 &&
+      (offenseGroups.QB === 1 || (!offenseGroups.QB && !!formationModifier(play)));
     const defenseDetail = personnelDetail(play.onField.defense, DEFENSE_GROUPS);
     const defense = defenseDetail ? defensePackage(defenseDetail) : null;
     play.inferredPersonnel = {
-      offense: standardOffense ? offenseCode(offenseDetail) : '',
+      offense: knownOffense ? offenseCode(offenseDetail) : '',
       offenseDetail, defense: defense?.label || '', front: defense?.front || '', defenseDetail,
     };
     if (play.inferredPersonnel.offense || defense) {
       const personnel = { ...play.personnel };
-      if (!personnel.offense && play.inferredPersonnel.offense) {
+      if (play.inferredPersonnel.offense && (!personnel.offense || personnel.offenseInferred || offenseGroups.OL > 5)) {
         Object.assign(personnel, { offense: play.inferredPersonnel.offense, offenseDetail, offenseInferred: true });
       }
       if (defense && (!personnel.defense || compositionPackage(parsePersonnel(defenseDetail)))) {
@@ -316,7 +362,8 @@
       const offense = onFieldPlayers(part, 'offense', directory);
       const defense = onFieldPlayers(part, 'defense', directory);
       if (offense.length || defense.length) play.onField = { offense, defense };
-      if (compositionPackage(parsePersonnel(personnelDetail(defense, DEFENSE_GROUPS)))) inferPersonnel(play);
+      if (formationModifier(play) || group(parsePersonnel(personnelDetail(offense, OFFENSE_GROUPS)), OFFENSE_GROUPS).OL > 5 ||
+          compositionPackage(parsePersonnel(personnelDetail(defense, DEFENSE_GROUPS)))) inferPersonnel(play);
     }
     for (const key of Object.keys(charting)) sources[key] = 'nflverse participation';
     if (ftn) {
@@ -327,7 +374,7 @@
       if (backfield != null && qb) ftnCharting.backfield = backfield;
       const box = int(ftn.n_defense_box);
       if (box) ftnCharting.box = box;
-      for (const [key, col] of [['motion', 'is_motion'], ['playAction', 'is_play_action'], ['rpo', 'is_rpo'], ['screen', 'is_screen_pass'], ['noHuddle', 'is_no_huddle']]) {
+      for (const [key, col] of [['motion', 'is_motion'], ['playAction', 'is_play_action'], ['rpo', 'is_rpo'], ['screen', 'is_screen_pass'], ['noHuddle', 'is_no_huddle'], ['qbSneak', 'is_qb_sneak']]) {
         const b = bool(ftn[col]);
         if (b != null) ftnCharting[key] = b;
       }
@@ -344,6 +391,7 @@
       play.charting = charting;
       play.chartingSources = sources;
     }
+    if (charting.qbSneak === true) inferPersonnel(play);
     return play;
   }
 
@@ -381,7 +429,8 @@
     const out = [];
     const pers = play.personnel;
     const c = play.charting || {};
-    if (pers && pers.offense) out.push(`${pers.offense} personnel`);
+    if (pers && pers.offense) out.push(`${formatOffensePackage(pers.offense, play)} personnel`);
+    else if (formationModifier(play)) out.push(formationModifier(play));
     if (pers && pers.defense) out.push(['Jumbo', 'Jumbo nickel', '32 dime'].includes(pers.defense) ? `${pers.defense}${pers.defenseInferred ? '*' : ''}` :
       /-4$/.test(pers.front) ? `${pers.defense} base` : `${pers.defense} ${pers.front}`);
     if (c.qbLocation) out.push(c.qbLocation);
@@ -407,5 +456,6 @@
     PARTICIPATION_FIRST_SEASON, CHARTING_FIRST_SEASON, PARTICIPATION_COLUMNS, CHARTING_COLUMNS, DEFENSE_ORDER,
     parsePersonnel, offenseCode, defensePackage, compositionPackage, formatDefensePackage, coverageLabel, formationLabel, onFieldPlayers, attach, tags, playerKey, inferPersonnel, isScrimmage,
     needsDepthPosition, attachDepthPositions, annotateEligible, displayPosition, playerPositionRank, orderedPlayers, attachNFLProCharting,
+    directSnapTarget, directSnapPlayer, formationModifier, formatOffensePackage,
   };
 });

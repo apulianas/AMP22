@@ -109,6 +109,26 @@ test('big and standard nickel require complete unique position evidence, not jus
   assert.equal(A.composition(play(3, { onField: { defense: roster({ DL: 2, LB: 4, DB: 5 }) } })).CB, undefined);
 });
 
+test('WRs on defense count as CBs for default and custom packages, but still require complete unique lineups', () => {
+  for (const [counts, expected] of [
+    [{ DL: 2, OLB: 2, ILB: 2, CB: 2, S: 2, WR: 1 }, 'Standard nickel*'],
+    [{ DL: 2, OLB: 2, ILB: 2, S: 3, WR: 2 }, 'Big nickel*'],
+  ]) {
+    const p = play(1, { onField: { defense: roster(counts) } });
+    const composition = A.composition(p);
+    assert.equal(composition.CB, (counts.CB || 0) + counts.WR);
+    assert.equal(composition.WR, undefined);
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), expected);
+    assert.equal(A.defensivePackage(p, [{ name: 'Custom', counts: composition }]), 'Custom*');
+    assert.equal(p.onField.defense.filter(x => x.position === 'WR').length, counts.WR);
+    p.onField.defense.pop();
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), 'Unknown');
+    p.onField.defense = roster(counts);
+    p.onField.defense[0] = p.onField.defense[1];
+    assert.equal(A.defensivePackage(p, A.DEFAULT_PACKAGES), 'Unknown');
+  }
+});
+
 test('base packages use short front names without losing inference markers or other package detail', () => {
   for (const defense of ['3-4', '4-3']) {
     const p = play(1, { personnel: { defense, front: `${defense}-4`, offense: '11' } });
@@ -211,6 +231,26 @@ test('unknown charting and false stay separate; half splits preserve overtime', 
   assert.deepEqual(result.rows.map((r) => [r.label, r.series]), [
     ['First half', 'Motion: Yes'], ['Overtime', 'Unknown'], ['Second half', 'Motion: No'],
   ]);
+});
+
+test('Wildcat is an offensive-personnel modifier in groups, splits and matchups without inventing known counts', () => {
+  const ordinary = play(1, { personnel: { offense: '12 (6)' } });
+  const wildcat = play(2, { personnel: { offense: '12 (6)', offenseInferred: true },
+    onField: { offense: [{ position: 'RB', number: '22' }] },
+    desc: 'Direct snap to 22-D.Henry. 4-Z.Flowers left end for 7 yards.' });
+  const unknown = play(3, { desc: 'Direct snap to 22-D.Henry. Pass.',
+    onField: { offense: [{ position: 'RB', number: '22' }] } });
+  const summary = A.summarize([ordinary, wildcat, unknown], { group: 'offense', split: 'none' });
+  assert.deepEqual(summary.rows.map(r => r.label), ['12 (6)', '12 (6) Wildcat*', 'Unknown Wildcat']);
+  assert.equal(summary.knownOffense, 2);
+  assert.equal(A.summarize([wildcat], { split: 'offense' }).rows[0].series, '12 (6) Wildcat*');
+  assert.equal(A.summarize([wildcat], { group: 'matchup' }).rows[0].label, '12 (6) Wildcat* vs Unknown');
+  const tushPush = { ...wildcat, desc: 'Direct snap to 89-M.Andrews.',
+    onField: { offense: [{ position: 'TE', number: '89' }] } };
+  assert.equal(A.summarize([tushPush], { group: 'offense' }).rows[0].label, '12 (6) Tush push*');
+  assert.equal(A.summarize([tushPush], { split: 'offense' }).rows[0].series, '12 (6) Tush push*');
+  assert.match(A.csv({ title: 'Wildcat', subtitle: '', notes: '', rows: summary.rows, metric: 'ypp', chart: 'bars' }),
+    /"12 \(6\) Wildcat\*"/);
 });
 
 test('conversion uses first-down or touchdown credit and separates scramble run efficiency', () => {

@@ -30,7 +30,7 @@
   const POSITION_GROUPS = {
     DL: 'DL', DE: 'DL', DT: 'DL', NT: 'DL', LDE: 'DL', RDE: 'DL', LDT: 'DL', RDT: 'DL',
     OLB: 'OLB', LOLB: 'OLB', ROLB: 'OLB', ILB: 'ILB', MLB: 'ILB', LB: 'LB',
-    CB: 'CB', S: 'S', FS: 'S', SS: 'S', SAF: 'S', DB: 'DB',
+    CB: 'CB', WR: 'CB', S: 'S', FS: 'S', SS: 'S', SAF: 'S', DB: 'DB',
   };
   const known = (v) => typeof v === 'number' && Number.isFinite(v);
   const keyOf = (p) => p.id || (p.sourceId ? `nflpro:${p.sourceId}` : '');
@@ -94,7 +94,7 @@
   function groupValue(p, dimension, packages) {
     switch (dimension) {
       case 'defense': return defensivePackage(p, packages);
-      case 'offense': return p.personnel?.offense ? `${p.personnel.offense}${p.personnel.offenseInferred ? '*' : ''}` : UNKNOWN;
+      case 'offense': return `${advanced.formatOffensePackage(p.personnel?.offense || UNKNOWN, p)}${p.personnel?.offenseInferred ? '*' : ''}`;
       case 'matchup': return `${groupValue(p, 'offense', packages)} vs ${defensivePackage(p, packages)}`;
       case 'half': return half(p);
       case 'rushers': return known(p.charting?.rushers) ? `${p.charting.rushers} rushers` : UNKNOWN;
