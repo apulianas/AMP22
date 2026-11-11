@@ -94,7 +94,7 @@
   function groupValue(p, dimension, packages) {
     switch (dimension) {
       case 'defense': return defensivePackage(p, packages);
-      case 'offense': return p.personnel?.offense ? `${p.personnel.offense}${p.personnel.offenseInferred ? '*' : ''}` : UNKNOWN;
+      case 'offense': return `${advanced.formatOffensePackage(p.personnel?.offense || UNKNOWN, p)}${p.personnel?.offenseInferred ? '*' : ''}`;
       case 'matchup': return `${groupValue(p, 'offense', packages)} vs ${defensivePackage(p, packages)}`;
       case 'half': return half(p);
       case 'rushers': return known(p.charting?.rushers) ? `${p.charting.rushers} rushers` : UNKNOWN;

@@ -68,6 +68,21 @@ test('workspace film selection restores play IDs, including unlinked or filtered
   assert.equal(r.S.curPlay, 0, 'ordinary game loads keep their first-linked default');
 });
 
+test('offensive-personnel filters distinguish Wildcat, Tush push and extra-OL packages', () => {
+  const r = renderer();
+  for (const p of r.S.plays) p.personnel = { offense: '12 (6)' };
+  r.S.plays[1].desc = 'Direct snap to 22-D.Henry. 4-Z.Flowers runs.';
+  r.S.plays[1].onField = { offense: [{ position: 'RB', number: '22' }] };
+  r.S.plays[2].desc = 'Direct snap to 89-M.Andrews. 89-M.Andrews runs.';
+  r.S.plays[2].onField = { offense: [{ position: 'TE', number: '89' }] };
+  r.setAdvancedChoice('offPersonnel', '12 (6) Wildcat');
+  assert.deepEqual(r.visible(), [1]);
+  r.setAdvancedChoice('offPersonnel', '12 (6) Tush push');
+  assert.deepEqual(r.visible(), [2]);
+  r.setAdvancedChoice('offPersonnel', '12 (6)');
+  assert.deepEqual(r.visible(), [0, 3, 4]);
+});
+
 test('choice counts replace only their own filter and predict the displayed plays', () => {
   const r = contextualPlayers();
   Object.assign(r.S.plays[2], {

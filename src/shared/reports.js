@@ -11,7 +11,7 @@
   const ADVANCED_FIELDS = [
     { key: 'airYards', label: 'Air yards', get: (p) => p.airYards },
     { key: 'epa', label: 'EPA', get: (p) => p.epa },
-    { key: 'personnel', label: 'Offensive personnel', get: (p) => p.personnel?.offense },
+    { key: 'personnel', label: 'Offensive personnel', get: (p) => advanced.formatOffensePackage(p.personnel?.offense, p) },
     { key: 'defense', label: 'Defensive package', get: (p) => packageLabel(p) },
     { key: 'formation', label: 'Formation', get: (p) => p.charting?.formation },
     { key: 'qbLocation', label: 'QB alignment', get: (p) => p.charting?.qbLocation },
@@ -22,6 +22,7 @@
     { key: 'rpo', label: 'RPO', get: (p) => p.charting?.rpo },
     { key: 'screen', label: 'Screen', get: (p) => p.charting?.screen },
     { key: 'noHuddle', label: 'No-huddle', get: (p) => p.charting?.noHuddle },
+    { key: 'qbSneak', label: 'QB sneak (FTN)', get: (p) => p.charting?.qbSneak },
     { key: 'rushers', label: 'Pass rushers', get: (p) => p.charting?.rushers },
     { key: 'blitzers', label: 'Blitzers', get: (p) => p.charting?.blitzers },
     { key: 'coverage', label: 'Coverage', get: (p) => p.charting?.coverage },
@@ -52,7 +53,8 @@
     { key: 'capturedAt', label: 'Participation captured at', get: (p) => p.participation?.capturedAt },
     { key: 'offenseParticipationSource', label: 'Offense participation source', get: (p) => p.participation?.offenseSource || (p.onField?.offense?.length ? 'nflverse' : '') },
     { key: 'defenseParticipationSource', label: 'Defense participation source', get: (p) => p.participation?.defenseSource || (p.onField?.defense?.length ? 'nflverse' : '') },
-    { key: 'inferredOffense', label: 'Inferred offensive personnel', get: (p) => p.inferredPersonnel?.offense },
+    { key: 'inferredOffense', label: 'Inferred offensive personnel', get: (p) =>
+      p.inferredPersonnel?.offense ? advanced.formatOffensePackage(p.inferredPersonnel.offense, p) : '' },
     { key: 'inferredDefense', label: 'Inferred defensive package', get: (p) => inferredPackageLabel(p) },
     { key: 'personnelInferred', label: 'Personnel inferred from positions', get: (p) => personnelInferred(p) },
   ];

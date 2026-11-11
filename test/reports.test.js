@@ -73,6 +73,45 @@ test('CSV prevents formula execution without changing numeric losses', () => {
   assert.equal(parseCSV(reports.csv(input)).rows[1]['Yards gained'], '-3');
 });
 
+test('direct-snap modifiers reach play, player and breakdown exports without changing source personnel or alignment', () => {
+  const input = report({ includeAdvanced: true, fields: ['personnel', 'inferredOffense', 'qbLocation'] });
+  input.plays = [input.plays[0]];
+  const p = input.plays[0];
+  p.personnel.offense = '12 (6)';
+  p.inferredPersonnel = { offense: '12 (6)' };
+  p.desc = 'Direct snap to 22-D.Henry. 22-D.Henry pass short middle to 4-Z.Flowers.';
+  p.onField = { offense: [{ id: '00-0032764', position: 'RB', number: '22' }] };
+  for (const csv of [reports.csv(input), reports.analysisCsv(input), reports.analysisCsv(input, 'players')]) {
+    const row = parseCSV(csv).rows[0];
+    assert.equal(row['Offensive personnel'], '12 (6) Wildcat');
+    assert.equal(row['Inferred offensive personnel'], '12 (6) Wildcat');
+    assert.equal(row['QB alignment'], 'Shotgun');
+  }
+  assert.match(reports.text(input), /Offensive personnel: 12 \(6\) Wildcat/);
+  assert.match(reports.html(input), /<dd>12 \(6\) Wildcat<\/dd>/);
+  assert.equal(p.personnel.offense, '12 (6)');
+  p.desc = 'Direct snap to 89-M.Andrews. 4-Z.Flowers runs.';
+  p.onField.offense = [{ id: '00-0034753', position: 'TE', number: '89' }];
+  for (const csv of [reports.csv(input), reports.analysisCsv(input), reports.analysisCsv(input, 'players')]) {
+    const row = parseCSV(csv).rows[0];
+    assert.equal(row['Offensive personnel'], '12 (6) Tush push');
+    assert.equal(row['Inferred offensive personnel'], '12 (6) Tush push');
+  }
+  p.desc = '8-L.Jackson up the middle for 1 yard.';
+  p.charting.qbSneak = true;
+  assert.equal(parseCSV(reports.analysisCsv(input)).rows[0]['QB sneak (FTN)'], 'Yes');
+  assert.equal(parseCSV(reports.analysisCsv(input)).rows[0]['Offensive personnel'], '12 (6) Tush push');
+  p.charting.qbSneak = false;
+  assert.equal(parseCSV(reports.analysisCsv(input)).rows[0]['QB sneak (FTN)'], 'No');
+  assert.equal(parseCSV(reports.analysisCsv(input)).rows[0]['Offensive personnel'], '12 (6)');
+  p.charting.qbSneak = true;
+  p.personnel = undefined;
+  p.inferredPersonnel = undefined;
+  const missing = parseCSV(reports.analysisCsv(input)).rows[0];
+  assert.equal(missing['Offensive personnel'], 'Unknown Tush push');
+  assert.equal(missing['Inferred offensive personnel'], '');
+});
+
 test('package names omit redundant fronts consistently in play, player and breakdown exports', () => {
   for (const [defense, front, expected] of [
     ['3-4', '3-4-4', '3-4'], ['4-3', '4-3-4', '4-3'],

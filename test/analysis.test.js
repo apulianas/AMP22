@@ -233,6 +233,26 @@ test('unknown charting and false stay separate; half splits preserve overtime', 
   ]);
 });
 
+test('Wildcat is an offensive-personnel modifier in groups, splits and matchups without inventing known counts', () => {
+  const ordinary = play(1, { personnel: { offense: '12 (6)' } });
+  const wildcat = play(2, { personnel: { offense: '12 (6)', offenseInferred: true },
+    onField: { offense: [{ position: 'RB', number: '22' }] },
+    desc: 'Direct snap to 22-D.Henry. 4-Z.Flowers left end for 7 yards.' });
+  const unknown = play(3, { desc: 'Direct snap to 22-D.Henry. Pass.',
+    onField: { offense: [{ position: 'RB', number: '22' }] } });
+  const summary = A.summarize([ordinary, wildcat, unknown], { group: 'offense', split: 'none' });
+  assert.deepEqual(summary.rows.map(r => r.label), ['12 (6)', '12 (6) Wildcat*', 'Unknown Wildcat']);
+  assert.equal(summary.knownOffense, 2);
+  assert.equal(A.summarize([wildcat], { split: 'offense' }).rows[0].series, '12 (6) Wildcat*');
+  assert.equal(A.summarize([wildcat], { group: 'matchup' }).rows[0].label, '12 (6) Wildcat* vs Unknown');
+  const tushPush = { ...wildcat, desc: 'Direct snap to 89-M.Andrews.',
+    onField: { offense: [{ position: 'TE', number: '89' }] } };
+  assert.equal(A.summarize([tushPush], { group: 'offense' }).rows[0].label, '12 (6) Tush push*');
+  assert.equal(A.summarize([tushPush], { split: 'offense' }).rows[0].series, '12 (6) Tush push*');
+  assert.match(A.csv({ title: 'Wildcat', subtitle: '', notes: '', rows: summary.rows, metric: 'ypp', chart: 'bars' }),
+    /"12 \(6\) Wildcat\*"/);
+});
+
 test('conversion uses first-down or touchdown credit and separates scramble run efficiency', () => {
   const result = A.summarize([
     play(1, { playType: 'run', flags: { qb_scramble: true }, yards: 10 }),

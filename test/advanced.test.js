@@ -47,6 +47,80 @@ test('complete extra-OL lineups refine supplied packages without changing positi
   assert.equal(p.personnel.offense, '12 (6)', 'supplied counts work without individual participation');
 });
 
+test('direct-snap modifiers distinguish Wildcat from TE Tush push, including subsequent passes and handoffs', () => {
+  for (const [play_type, desc, position, number, modifier] of [
+    ['run', '(11:14) (Shotgun) Direct snap to 22-D.Henry. 22-D.Henry right end for 6 yards.', 'RB', '22', 'Wildcat'],
+    ['pass', '(7:38) (Shotgun) Direct snap to 22-D.Henry. 22-D.Henry pass short middle to 4-Z.Flowers.', 'RB', '22', 'Wildcat'],
+    ['run', '(5:56) (Shotgun) Direct snap to 22-D.Henry. 4-Z.Flowers left end for 7 yards.', 'RB', '22', 'Wildcat'],
+    ['run', '(5:20) Direct snap to 89-M.Andrews. 89-M.Andrews up the middle for no gain.', 'TE', '89', 'Tush push'],
+    ['run', 'Direct snap to 0-J.Gibbs. Run.', 'RB', 0, 'Wildcat'],
+  ]) {
+    const p = plays.normalizePlay({ play_type, desc });
+    p.onField = { offense: [{ position, number }] };
+    p.personnel = { offense: '12 (6)' };
+    assert.equal(advanced.formationModifier(p), modifier);
+    assert.equal(advanced.formatOffensePackage(p.personnel.offense, p), `12 (6) ${modifier}`);
+    assert.ok(advanced.tags(p).includes(`12 (6) ${modifier} personnel`));
+    assert.equal(p.personnel.offense, '12 (6)', 'formatting preserves the underlying personnel count');
+  }
+  for (const patch of [
+    { desc: '(Shotgun) 22-D.Henry left end for 6 yards.' },
+    { desc: 'Direct snap to 22-D.Henry.' },
+    { desc: 'Direct snap to 8-L.Jackson.', onField: { offense: [{ position: 'QB', number: '8' }] } },
+    { desc: 'Direct snap to 22-D.Henry.', onField: { offense: [{ number: '22' }, { number: '22' }] } },
+    { desc: '(Punt formation) Direct snap to 22-D.Henry.' },
+    { desc: '(Field Goal formation) Direct snap to 22-D.Henry.' },
+    { desc: 'Direct snap to 22-D.Henry.', flags: { special_teams_play: true } },
+    { desc: 'Direct snap to 22-D.Henry.', playType: 'punt' },
+  ]) assert.equal(advanced.formationModifier({ playType: 'run', ...patch }), '');
+});
+
+test('only a positive FTN QB-sneak flag labels an otherwise ordinary QB rush as Tush push', () => {
+  for (const [value, expected, modifier] of [['TRUE', true, 'Tush push'], ['FALSE', false, ''], ['', undefined, '']]) {
+    const p = plays.normalizePlay({ play_type: 'run', rush: '1', down: '3', ydstogo: '1',
+      desc: '8-L.Jackson up the middle for 1 yard.' });
+    advanced.attach(p, null, { is_qb_sneak: value });
+    assert.equal(p.charting?.qbSneak, expected);
+    assert.equal(advanced.formationModifier(p), modifier);
+    assert.equal(p.chartingSources?.qbSneak, expected === undefined ? undefined : 'FTN');
+  }
+  const kick = plays.normalizePlay({ play_type: 'run', special_teams_play: '1',
+    desc: '(Punt formation) Direct snap to 22-D.Henry.' });
+  kick.charting = { qbSneak: true };
+  assert.equal(advanced.formationModifier(kick), '');
+});
+
+test('complete direct-snap lineups can omit a QB without guessing missing personnel or changing player roles', () => {
+  const positions = ['RB', 'TE', 'TE', 'WR', 'WR', 'WR', 'C', 'G', 'G', 'T', 'T'];
+  const part = {
+    offense_players: positions.map((_p, i) => `id-${i}`).join(';'),
+    offense_names: positions.map((_p, i) => `Player ${i}`).join(';'),
+    offense_positions: positions.join(';'),
+    offense_numbers: positions.map((_p, i) => String(i + 1)).join(';'),
+    offense_formation: 'SHOTGUN',
+  };
+  const p = plays.normalizePlay({ play_type: 'run', desc: 'Direct snap to 1-Player. Run.' });
+  advanced.attach(p, part);
+  assert.equal(p.inferredPersonnel.offense, '12');
+  assert.equal(advanced.formatOffensePackage(p.personnel.offense, p), '12 Wildcat');
+  assert.equal(p.charting.qbLocation, 'Shotgun');
+  assert.deepEqual(p.onField.offense.map(x => x.position), positions);
+  p.onField.offense[3].position = 'T';
+  advanced.inferPersonnel(p);
+  assert.equal(advanced.formatOffensePackage(p.personnel.offense, p), '13 (6) Wildcat');
+  p.onField.offense[0].position = 'TE';
+  advanced.inferPersonnel(p);
+  assert.equal(advanced.formatOffensePackage(p.personnel.offense, p), '04 (6) Tush push');
+  const ordinary = plays.normalizePlay({ play_type: 'run', desc: '1-Player runs.' });
+  ordinary.onField = { offense: p.onField.offense };
+  advanced.inferPersonnel(ordinary);
+  assert.equal(ordinary.inferredPersonnel.offense, '');
+  const missing = plays.normalizePlay({ play_type: 'run', desc: 'Direct snap to 22-D.Henry.' });
+  missing.onField = { offense: [{ position: 'RB', number: '22' }] };
+  assert.equal(advanced.formatOffensePackage(undefined, missing), 'Unknown Wildcat');
+  assert.deepEqual(advanced.tags(missing), ['Wildcat']);
+});
+
 test('defensive packages use fronts for base personnel and DB counts for sub-packages', () => {
   assert.deepEqual(advanced.defensePackage('4 DL, 3 LB, 4 DB'), { label: '4-3', front: '4-3-4' });
   assert.deepEqual(advanced.defensePackage('3 DL, 4 LB, 4 DB'), { label: '3-4', front: '3-4-4' });
