@@ -106,10 +106,12 @@ test('only an explicitly reported unique eligible extra lineman moves between TE
   assert.equal(ordered.findIndex(p => p.position === 'QB'), ordered.findIndex(p => p.eligibleReceiver) + 1);
   assert.equal(play.onField.defense[0].eligibleReceiver, undefined);
   advanced.inferPersonnel(play);
-  assert.equal(play.inferredPersonnel.offense, '', 'six OL do not become an ordinary personnel package');
+  assert.equal(play.inferredPersonnel.offense, '22 (6)', 'RB and FB count as two backs; the sixth OL counts as a second TE');
   play.desc = 'No eligible announcement.';
   advanced.annotateEligible(play);
   assert.ok(play.onField.offense.every(p => !p.eligibleReceiver));
+  advanced.inferPersonnel(play);
+  assert.equal(play.inferredPersonnel.offense, '22 (6)', 'extra-OL personnel does not depend on reported eligibility');
   play.desc = '76-C.Vinson reported in as eligible.';
   play.onField.offense[1].number = '76';
   advanced.annotateEligible(play);
