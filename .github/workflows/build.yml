@@ -1,7 +1,5 @@
 name: build
 on:
-  push:
-    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -27,7 +25,7 @@ jobs:
       - id: version
         shell: bash
         env:
-          CREATE_RELEASE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+          CREATE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' }}
         run: |
           if [ "$CREATE_RELEASE" = "true" ]; then
             version=$(node scripts/release-version.js)
@@ -147,7 +145,7 @@ jobs:
           path: out/AMP22-NFL-Pro-Extension.zip
 
   release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
     needs: [version, build, extension]
     runs-on: ubuntu-latest
     permissions:

@@ -1533,12 +1533,7 @@ function openShare() {
   $('share-progress').hidden = true;
   $('share-reveal').hidden = true;
   S.exportDraft = null;
-  ++previewRevision;
-  clearTimeout(previewTimer);
-  $('share-preview-a').hidden = true;
-  $('share-preview-b').hidden = true;
-  $('share-preview-figure-a').hidden = true;
-  $('share-preview-figure-b').hidden = true;
+  highlightEditor?.select(null);
   $('share-preview-status').textContent = '';
   $('share-preview-play').innerHTML = '';
   $('share-overlay-seconds').value = S.settings.overlaySeconds;
@@ -1619,12 +1614,11 @@ function updateExportOptions() {
   }
 }
 
-let previewRevision = 0;
-let previewTimer = null;
 let sharePosition = { preset: 'original' };
 let positionFrames = null;
 let positionHeadshots = null;
 let positionHeadshotPromise = null;
+let positionCard = null;
 let positionBounds = null;
 let positionDrag = null;
 let positionSaving = false;
@@ -1714,7 +1708,7 @@ function updatePositionControls() {
   const custom = sharePosition.preset === 'custom';
   $('share-position-x').value = custom ? sharePosition.x * 100 : sharePosition.preset.endsWith('right') ? 100 : 0;
   $('share-position-y').value = custom ? sharePosition.y * 100 : sharePosition.preset.startsWith('top') ? 0 : 100;
-  $('share-position-preview').setAttribute('aria-disabled', String($('share-positioning').disabled));
+  $('highlight-canvas').setAttribute('aria-disabled', String($('share-positioning').disabled));
   renderPositionPreview();
 }
 
@@ -1738,36 +1732,44 @@ async function loadPositionHeadshots() {
 }
 
 function renderPositionPreview() {
+  positionCard = null;
   highlightEditor?.refresh();
-  const canvas = $('share-position-preview');
-  const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+}
+
+function drawCutupPreview({ canvas, clip, angle, video, otherVideo, time, drawTrack }) {
   const mode = $('share-angle').value;
   const clean = $('share-clean').checked;
-  canvas.hidden = !positionFrames || positionFrames.clip !== clip || positionFrames.mode !== mode;
   positionBounds = null;
-  if (canvas.hidden) return;
   const { width, height } = A22.clipExport.dimensions(mode);
   canvas.width = width;
   canvas.height = height;
-  canvas.style.width = mode === 'both' ? '236px' : '100%';
+  const previewHeight = Math.max(120, $('highlight-editor').clientHeight - ($('highlight-progress-panel').hidden ? 190 : 270));
+  canvas.style.width = `min(100%, ${previewHeight * width / height}px)`;
+  canvas.style.margin = '10px auto';
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = clean || sharePosition.preset !== 'original' ? 'black' : '#0d1117';
   ctx.fillRect(0, 0, width, height);
-  function drawFrame(image, x, y, w, h) {
-    const scale = Math.min(w / image.naturalWidth, h / image.naturalHeight);
-    const iw = image.naturalWidth * scale, ih = image.naturalHeight * scale;
-    ctx.drawImage(image, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+  const viewports = {};
+  function drawFrame(source, camera) {
+    const geometry = A22.tracking.geometry(mode === 'both' ? 'both' : camera, camera,
+      { width: source.videoWidth, height: source.videoHeight }, clean || sharePosition.preset !== 'original');
+    viewports[camera] = geometry;
+    ctx.drawImage(source, geometry.x, geometry.y, geometry.w, geometry.h);
+    const timestamp = (camera === 'sideline' ? clip.aStart : clip.bStart) + clip.trim + time;
+    drawTrack(ctx, geometry, camera, timestamp);
   }
   if (mode === 'both') {
-    const top = clean || sharePosition.preset !== 'original' ? 352 : 0;
-    drawFrame($('share-preview-a'), 0, top, 1080, 608);
-    drawFrame($('share-preview-b'), 0, top + 608, 1080, 608);
+    drawFrame(angle === 'sideline' ? video : otherVideo, 'sideline');
+    drawFrame(angle === 'endzone' ? video : otherVideo, 'endzone');
   } else {
-    drawFrame($(mode === 'endzone' || mode === 'endzone-first' ? 'share-preview-b' : 'share-preview-a'), 0, 0, width, height);
+    drawFrame(video, angle);
   }
-  if (!clean && $('share-overlay-seconds').valueAsNumber > 0) {
-    const card = buildPlayCard(clip.play, mode, S.exportDraft.matchup,
-      positionHeadshots?.images.get(P.primaryPlayer(clip.play)?.id), sharePosition);
+  if (!clean && time < $('share-overlay-seconds').valueAsNumber) {
+    if (!positionCard || positionCard.clip !== clip || positionCard.mode !== mode) {
+      positionCard = { clip, mode, ...buildPlayCard(clip.play, mode, S.exportDraft.matchup,
+        positionHeadshots?.images.get(P.primaryPlayer(clip.play)?.id), sharePosition) };
+    }
+    const card = positionCard;
     ctx.drawImage(card.canvas, 0, 0);
     positionBounds = card.bounds;
     if (sharePosition.preset !== 'custom') {
@@ -1777,8 +1779,11 @@ function renderPositionPreview() {
   }
   const warnings = positionHeadshots?.warnings;
   $('share-position-status').textContent = clean ? 'Clean export: overlays are disabled.'
-    : $('share-overlay-seconds').valueAsNumber === 0 ? 'Overlay duration is zero: overlays are hidden.'
-    : `First retained frame${mode.endsWith('-first') ? ' of the first angle block' : ''}. Drag the card or adjust its position below.${warnings?.size ? ` Headshot notices: ${[...warnings].join('; ')}` : ''}`;
+    : !positionBounds ? 'Play information is hidden at this time; player highlights keep their own timing.'
+    : `Choose Move play information to drag the card.${warnings?.size ? ` Headshot notices: ${[...warnings].join('; ')}` : ''}`;
+  $('share-preview-status').textContent = `${(clip.len - clip.trim).toFixed(2)} seconds retained${mode === 'both' ? ' per camera' : ''}.${mode.endsWith('-first') ? ' Preview camera changes do not change export block order.' : ''}`;
+  positionFrames = { clip, mode };
+  return viewports;
 }
 
 function setCustomPosition(x, y) {
@@ -1790,13 +1795,14 @@ function setCustomPosition(x, y) {
 }
 
 function positionPoint(event) {
-  const canvas = $('share-position-preview');
+  const canvas = $('highlight-canvas');
   const rect = canvas.getBoundingClientRect();
   return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
 }
 
 function startPositionDrag(event) {
-  if (event.button !== 0 || $('share-positioning').disabled || !positionBounds) return;
+  if (event.button !== 0 || $('highlight-tool').value !== 'overlay' || $('share-positioning').disabled || !positionBounds || !highlightEditor.ready()) return;
+  highlightEditor?.pause();
   const point = positionPoint(event);
   const bounds = positionBounds;
   if (point.x < bounds.x || point.x > bounds.x + bounds.width || point.y < bounds.y || point.y > bounds.y + bounds.height) return;
@@ -1809,13 +1815,13 @@ function startPositionDrag(event) {
     x: Math.min(positionBounds.width, point.x - positionBounds.x),
     y: Math.max(0, Math.min(positionBounds.height, point.y - positionBounds.y)),
   };
-  $('share-position-preview').setPointerCapture(event.pointerId);
+  $('highlight-canvas').setPointerCapture(event.pointerId);
 }
 
 function movePositionDrag(event) {
   if (!positionDrag || event.pointerId !== positionDrag.id || !positionBounds || $('share-positioning').disabled) return;
   const point = positionPoint(event);
-  const canvas = $('share-position-preview');
+  const canvas = $('highlight-canvas');
   setCustomPosition((point.x - positionDrag.x) / Math.max(1, canvas.width - positionBounds.width),
     (point.y - positionDrag.y) / Math.max(1, canvas.height - positionBounds.height));
 }
@@ -1868,56 +1874,22 @@ function selectTrimPlay() {
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   if (!clip) return;
   $('share-trim').value = clip.trim;
-  highlightEditor?.select($('highlight-section').open ? clip : null);
   queueTrimPreview();
 }
 
 function queueTrimPreview() {
-  const revision = ++previewRevision;
-  clearTimeout(previewTimer);
   positionFrames = null;
-  renderPositionPreview();
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
-  const sequence = clip ? A22.clipExport.exportSequence([clip], $('share-angle').value) : [];
-  const previews = [
-    { angle: 'sideline', image: 'share-preview-a', figure: 'share-preview-figure-a', start: 'aStart' },
-    { angle: 'endzone', image: 'share-preview-b', figure: 'share-preview-figure-b', start: 'bStart' },
-  ];
-  const selected = previews.filter(({ angle }) => sequence.some(({ mode }) => mode === 'both' || mode === angle));
-  for (const preview of previews) {
-    $(preview.image).hidden = true;
-    $(preview.figure).hidden = !selected.includes(preview);
+  try {
+    if (clip) A22.clipExport.trimRange(clip, clip.trim);
+    highlightEditor?.select(clip || null);
+    loadPositionHeadshots();
+  } catch (e) {
+    highlightEditor?.select(null);
+    $('share-preview-status').textContent = `Preview unavailable: ${e.message}`;
+    $('share-status').textContent = `Preview unavailable: ${e.message}`;
+    $('share-status').classList.add('error');
   }
-  if (!clip) {
-    $('share-preview-status').textContent = '';
-    $('share-position-status').textContent = '';
-    return;
-  }
-  $('share-position-status').textContent = 'Loading export preview…';
-  $('share-preview-status').textContent = `Loading first retained ${selected.length === 1 ? 'frame' : 'frames'}…`;
-  previewTimer = setTimeout(async () => {
-    if (revision !== previewRevision || $('share').hidden) return;
-    try {
-      const range = A22.clipExport.trimRange(clip, clip.trim);
-      const frames = await Promise.all(selected.map(({ start }) => window.api.previewFrame(clip.file, range[start])));
-      if (revision !== previewRevision || $('share').hidden) return;
-      for (const [i, { image }] of selected.entries()) {
-        $(image).src = frames[i];
-        await $(image).decode();
-        if (revision !== previewRevision || $('share').hidden) return;
-        $(image).hidden = false;
-      }
-      positionFrames = { clip, mode: $('share-angle').value };
-      renderPositionPreview();
-      loadPositionHeadshots();
-      $('share-preview-status').textContent = `${range.len.toFixed(2)} seconds retained${selected.length === 2 ? ' per angle' : ''}.`;
-    } catch (e) {
-      if (revision === previewRevision && !$('share').hidden) {
-        $('share-preview-status').textContent = `Preview unavailable: ${e.message}`;
-        $('share-position-status').textContent = `Preview unavailable: ${e.message}`;
-      }
-    }
-  }, 300);
 }
 
 function updateReportOptions() {
@@ -2485,9 +2457,35 @@ window.addEventListener('keydown', handleKeydown, true);
 /* ---------------- wiring ---------------- */
 
 function wire() {
+  window.addEventListener('resize', () => highlightEditor?.refresh());
   highlightEditor = A22.createHighlightEditor({
     defaults: () => S.settings?.highlightDefaults,
     appearance: currentOverlayAppearance,
+    mode: () => $('share-angle').value,
+    renderPreview: drawCutupPreview,
+    openPlayer: () => { $('highlight-section').open = true; },
+    themes: () => [
+      ...Object.keys(A22.teams.TEAMS).map(id => ({ value: `team-${id}`, label: A22.teams.teamName(id), theme: A22.overlay.teamTheme(id) })),
+      ...S.settings.overlayThemes.map((item, i) => ({ value: `saved-${i}`, label: item.name, theme: A22.overlay.theme(item) })),
+    ],
+    saveTheme: async ({ name, theme, remove }) => {
+      if (positionSaving || S.exporting) throw new Error('Wait for the current save or export to finish.');
+      const themes = S.settings.overlayThemes.slice();
+      if (remove !== null) themes.splice(remove, 1);
+      else {
+        const index = themes.findIndex(item => item.name === name);
+        themes[index < 0 ? themes.length : index] = { name, ...theme };
+      }
+      positionSaving = true;
+      updatePositionControls(); updateExportOptions();
+      try {
+        applySettings(await window.api.saveSettings({ ...S.settings, overlayThemes: themes }));
+        renderThemeOptions(shareTheme ? 'custom' : 'auto');
+      } finally {
+        positionSaving = false;
+        updatePositionControls(); updateExportOptions();
+      }
+    },
     isClean: () => $('share-clean').checked || S.exporting,
     preparePhoto: trimHeadshot,
     players: clip => {
@@ -2503,10 +2501,6 @@ function wire() {
     saveDefaults: async value => {
       applySettings(await window.api.saveSettings({ ...S.settings, highlightDefaults: value }));
     },
-  });
-  $('highlight-section').addEventListener('toggle', () => {
-    const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
-    highlightEditor.select($('highlight-section').open && !$('share').hidden ? clip : null);
   });
   window.createCloudAISettings();
   analysisLab = window.createAnalysisLab({
@@ -2641,7 +2635,11 @@ function wire() {
     renderFilmSetup();
     $('film-setup-toggle').focus();
   });
-  $('share-angle').addEventListener('change', queueTrimPreview);
+  $('share-angle').addEventListener('change', () => {
+    const mode = $('share-angle').value;
+    if (mode.endsWith('-first')) $('highlight-angle').value = mode === 'endzone-first' ? 'endzone' : 'sideline';
+    queueTrimPreview();
+  });
   $('share-clean').addEventListener('change', () => {
     $('share-overlay-description').hidden = $('share-clean').checked;
     $('share-clean-description').hidden = !$('share-clean').checked;
@@ -2670,10 +2668,10 @@ function wire() {
     $(`share-position-${axis}`).addEventListener('input', () =>
       setCustomPosition(Number($('share-position-x').value) / 100, Number($('share-position-y').value) / 100));
   }
-  $('share-position-preview').addEventListener('pointerdown', startPositionDrag);
-  $('share-position-preview').addEventListener('pointermove', movePositionDrag);
+  $('highlight-canvas').addEventListener('pointerdown', startPositionDrag);
+  $('highlight-canvas').addEventListener('pointermove', movePositionDrag);
   for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    $('share-position-preview').addEventListener(event, () => { positionDrag = null; });
+    $('highlight-canvas').addEventListener(event, () => { positionDrag = null; });
   }
   $('share-location-save').addEventListener('click', () => savePositionPreference('save'));
   $('share-location-delete').addEventListener('click', () => savePositionPreference('delete'));
@@ -2712,8 +2710,23 @@ function wire() {
     if (!clip) return;
     clip.trim = $('share-trim').valueAsNumber;
     updateExportOptions();
-    highlightEditor.select($('highlight-section').open && Number.isFinite(clip.trim) && clip.trim >= 0 && clip.trim < clip.len ? clip : null);
     queueTrimPreview();
+  });
+  $('share-trim-current').addEventListener('click', () => {
+    const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+    if (!clip || S.exporting) return;
+    if (!highlightEditor.ready()) {
+      $('share-preview-status').textContent = 'Wait for the selected video frame to finish loading before trimming here.';
+      return;
+    }
+    const trim = clip.trim + highlightEditor.relativeTime();
+    try {
+      A22.clipExport.trimRange(clip, trim);
+      $('share-trim').value = trim.toFixed(6);
+      $('share-trim').dispatchEvent(new Event('input'));
+    } catch (e) {
+      $('share-preview-status').textContent = `Cannot trim here: ${e.message}`;
+    }
   });
   $('share-overlay-seconds').addEventListener('input', () => {
     updateExportOptions();
@@ -2722,6 +2735,12 @@ function wire() {
   });
   $('share-report-format').addEventListener('change', updateReportOptions);
   $('share-report-advanced').addEventListener('change', updateReportOptions);
+  $('share-output').addEventListener('toggle', e => {
+    if (!e.currentTarget.open) return;
+    const tools = e.currentTarget.closest('.cutup-tools');
+    const scroller = getComputedStyle(tools).overflowY === 'visible' ? tools.closest('.panel') : tools;
+    scroller.scrollTop = scroller.scrollHeight;
+  });
   $('share-export').addEventListener('click', exportSelection);
   $('share-close').addEventListener('click', () => toggleOverlay('share', false));
   $('share-reveal').addEventListener('click', async () => {

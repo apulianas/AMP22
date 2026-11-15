@@ -236,7 +236,7 @@
 
   <div id="share" class="overlay" hidden>
     <div class="panel" role="dialog" aria-modal="true" aria-labelledby="share-title">
-      <h2 id="share-title">Export clips</h2>
+      <h2 id="share-title">Create cut up</h2>
       <p id="share-summary"></p>
       <label for="share-angle">Camera angle</label>
       <select id="share-angle">
@@ -246,123 +246,146 @@
         <option value="sideline-first">All sideline, then all end zone · landscape</option>
         <option value="endzone-first">All end zone, then all sideline · landscape</option>
       </select>
-      <fieldset id="share-trimming">
-        <legend>Trim clip starts</legend>
-        <p class="muted small">Starts with your Settings default. Override each play below.<br>Previews show the first retained frame, without overlays.</p>
-        <label for="share-preview-play">Play to preview and trim</label>
-        <select id="share-preview-play"></select>
-        <p><label>Remove from this play (seconds)
-          <input id="share-trim" type="number" min="0" step="any" />
-        </label></p>
-        <div class="trim-previews">
-          <figure id="share-preview-figure-a" hidden><figcaption>Sideline</figcaption><img id="share-preview-a" alt="First retained sideline frame" hidden /></figure>
-          <figure id="share-preview-figure-b" hidden><figcaption>End zone</figcaption><img id="share-preview-b" alt="First retained end zone frame" hidden /></figure>
-        </div>
-        <p id="share-preview-status" class="muted small" role="status" aria-live="polite"></p>
-      </fieldset>
-      <details id="highlight-section">
-        <summary>Player highlight (selected clip only)</summary>
-        <p class="muted small">Optional, local analysis only when you click Track. Nothing runs during import. Each angle needs its own player selection; roster identity is assigned by you, not recognized from film.</p>
-        <div id="highlight-editor" hidden>
+      <label for="share-preview-play">Play to edit</label>
+      <select id="share-preview-play"></select>
+      <div class="cutup-workspace">
+        <section id="highlight-editor" class="cutup-preview" aria-label="Live cut-up preview" hidden>
+          <div class="row">
+            <label>Preview camera <select id="highlight-angle"><option value="sideline">Sideline</option><option value="endzone">End zone</option></select></label>
+            <label>Edit on video <select id="highlight-tool"><option value="overlay">Move play information</option><option value="player">Place / correct highlighted player</option><option value="offense">Mark offensive targets for snap suggestion</option></select></label>
+          </div>
           <div id="highlight-progress-panel" hidden>
             <label id="highlight-progress-label" for="highlight-progress">Tracking in the background</label>
             <progress id="highlight-progress" max="1" value="0"></progress>
             <button id="highlight-cancel" type="button" hidden>Cancel tracking</button>
           </div>
-          <fieldset id="highlight-controls">
-            <legend>Highlight editor</legend>
-            <label>Camera <select id="highlight-angle"><option value="sideline">Sideline</option><option value="endzone">End zone</option></select></label>
-            <p><label><input id="highlight-enabled" type="checkbox" /> Highlight this player in this angle</label></p>
-            <div class="grid">
-              <label>Display <select id="highlight-mode"><option value="full">Through the play</option><option value="presnap">Before the snap only</option></select></label>
-              <label>Circle radius (% of film width) <input id="highlight-radius" type="number" min="1.5" max="10" step="0.5" /></label>
-            </div>
-            <label>Player identity <select id="highlight-player"></select></label>
-            <label>Name <input id="highlight-name" maxlength="100" /></label>
-            <div class="row">
-              <label><input id="highlight-show-name" type="checkbox" /> Show name</label>
-              <label><input id="highlight-show-photo" type="checkbox" /> Available headshot</label>
-            </div>
-            <p class="muted small">Uses the export's team/saved theme and opacity below, with a lightly filled circle. Changing identity or display options does not run tracking.</p>
-            <label>Click action <select id="highlight-tool"><option value="player">Place / correct highlighted player</option><option value="offense">Mark offensive targets for snap suggestion</option></select></label>
-            <video id="highlight-video" preload="metadata" muted playsinline hidden></video>
-            <canvas id="highlight-canvas" role="img" aria-label="Player highlight film preview. Click a player's torso to start background tracking or correct the highlight."></canvas>
-            <label>Time from trimmed clip start <input id="highlight-time" type="range" min="0" max="1" step="0.1" /></label>
-            <p id="highlight-time-label" class="mono"></p>
-            <p id="highlight-preview-state" class="muted small" role="status"></p>
-            <div class="row">
-              <button id="highlight-back" type="button">Back 1 frame</button>
-              <button id="highlight-play" type="button">Play preview</button>
-              <button id="highlight-forward" type="button">Forward 1 frame</button>
-            </div>
-            <p class="muted small">Click the player's torso to start tracking in the background. Keep previewing or editing while it runs; click again to replace a pending track. If tracking loses the player, click to correct. Corrections replace later positions, not earlier work. Review for identity switches during overlaps and camera zooms.</p>
-            <p id="highlight-coverage" class="muted small"></p>
-            <div class="row"><button id="highlight-run" type="button">Track from this frame</button><button id="highlight-review-stop" type="button">Go to last tracked frame</button><button id="highlight-clear-track" type="button">Remove this angle's highlight</button></div>
-            <p><span id="highlight-offense-count"></span> <button id="highlight-clear-offense" type="button">Clear offensive markers</button></p>
-            <p class="muted small">Optional snap suggestion: mark at least 3 stationary offensive players on this same frame before tracking. Camera-compensated movement is a heuristic, not verified ball movement. Missing/ambiguous evidence yields no suggestion. Offensive markers are temporary and do not add exported circles.</p>
-            <p id="highlight-suggestion" class="muted small"></p>
-            <button id="highlight-accept-snap" type="button" disabled>Accept suggested snap</button>
-            <p><label>Snap (seconds from trimmed start) <input id="highlight-snap" type="number" min="0" step="0.001" /></label></p>
-            <div class="row"><button id="highlight-set-snap" type="button">Set snap to current frame</button><button id="highlight-defaults" type="button">Make display options default</button></div>
+          <video id="highlight-video" preload="auto" muted playsinline hidden></video>
+          <video id="highlight-other-video" preload="auto" muted playsinline hidden></video>
+          <canvas id="highlight-canvas" tabindex="0" role="img" aria-label="Live cut-up preview. Move play information or select a player's torso using the Edit on video control." hidden></canvas>
+          <label for="highlight-time">Time from trimmed clip start</label>
+          <input id="highlight-time" type="range" min="0" max="1" step="0.1" />
+          <div class="row cutup-transport">
+            <button id="highlight-back" type="button" aria-label="Back 1 frame">Back 1 frame</button>
+            <button id="highlight-play" type="button">Play preview</button>
+            <button id="highlight-forward" type="button" aria-label="Forward 1 frame">Forward 1 frame</button>
+            <span id="highlight-time-label" class="mono"></span>
+          </div>
+          <p id="share-preview-status" class="muted small" role="status" aria-live="polite"></p>
+          <p id="share-position-status" class="muted small" role="status"></p>
+          <p id="highlight-preview-state" class="muted small" role="status"></p>
+          <p id="highlight-status" class="small" role="status" aria-live="polite"></p>
+        </section>
+        <div class="cutup-tools" tabindex="0" role="region" aria-label="Scrollable clip controls">
+          <fieldset id="share-trimming">
+            <legend>Trim start · this play</legend>
+            <p><label>Remove from this play (seconds)
+                <input id="share-trim" type="number" min="0" step="any" />
+            </label></p>
+            <button id="share-trim-current" type="button">Start clip at current frame</button>
+            <p class="muted small">Applies to both cameras. Each play starts with your Settings default.</p>
           </fieldset>
-          <p id="highlight-status" role="status" aria-live="polite"></p>
+          <details id="highlight-section">
+            <summary>Player highlight · this play / camera</summary>
+            <fieldset id="highlight-controls">
+              <legend>Player display</legend>
+              <p><label><input id="highlight-enabled" type="checkbox" /> Highlight this player in this angle</label></p>
+              <div class="grid">
+                <label>Display <select id="highlight-mode"><option value="full">Through the play</option><option value="presnap">Before the snap only</option></select></label>
+                <label>Circle radius (% of film width) <input id="highlight-radius" type="number" min="1.5" max="10" step="0.5" /></label>
+              </div>
+              <label>Player identity <select id="highlight-player"></select></label>
+              <label>Name <input id="highlight-name" maxlength="100" /></label>
+              <div class="row">
+                <label><input id="highlight-show-name" type="checkbox" /> Show name</label>
+                <label><input id="highlight-show-photo" type="checkbox" /> Available headshot</label>
+              </div>
+              <label>Player theme <select id="highlight-theme"></select></label>
+              <div class="grid">
+                <label>Background <input id="highlight-theme-background" type="color" /></label>
+                <label>Accent <input id="highlight-theme-accent" type="color" /></label>
+              </div>
+              <label><input id="highlight-opacity-match" type="checkbox" /> Match play-information opacity</label>
+              <label for="highlight-opacity">Background opacity: <output id="highlight-opacity-value"></output></label>
+              <input id="highlight-opacity" type="range" min="0" max="100" step="1" />
+              <p class="row"><input id="highlight-theme-name" maxlength="60" aria-label="Player theme name" placeholder="Theme name" /><button id="highlight-theme-save" type="button">Save / replace theme</button></p>
+              <button id="highlight-theme-delete" type="button" disabled>Delete saved theme</button>
+              <p class="muted small">Team and saved themes are shared with play information. Player colors and opacity can be independent. Text automatically contrasts with the background.</p>
+              <p class="muted small">Choose Place / correct highlighted player above, then click the torso to track locally in the background. Review for drift; clicking again keeps earlier positions and replaces later work. Identity and display edits never run tracking.</p>
+              <p id="highlight-coverage" class="muted small"></p>
+              <div class="row"><button id="highlight-run" type="button">Track from this frame</button><button id="highlight-review-stop" type="button">Go to last tracked frame</button><button id="highlight-clear-track" type="button">Remove this angle's highlight</button></div>
+              <details>
+                <summary>Snap timing and suggestions</summary>
+                <p><span id="highlight-offense-count"></span> <button id="highlight-clear-offense" type="button">Clear offensive markers</button></p>
+                <p class="muted small">Optional snap suggestion: mark at least 3 stationary offensive players on this same frame before tracking. Camera-compensated movement is a heuristic, not verified ball movement. Missing/ambiguous evidence yields no suggestion. Offensive markers are temporary and do not add exported circles.</p>
+                <p id="highlight-suggestion" class="muted small"></p>
+                <button id="highlight-accept-snap" type="button" disabled>Accept suggested snap</button>
+                <p><label>Snap (seconds from trimmed start) <input id="highlight-snap" type="number" min="0" step="0.001" /></label></p>
+                <button id="highlight-set-snap" type="button">Set snap to current frame</button>
+              </details>
+              <p><button id="highlight-defaults" type="button">Make display options default</button></p>
+            </fieldset>
+          </details>
+          <p><label><input id="share-clean" type="checkbox" /> Clean export (no overlays)</label></p>
+          <details id="share-play-information" open>
+            <summary>Play information · all plays / cameras</summary>
+            <p><label>Overlay duration (seconds from each trimmed start)
+                <input id="share-overlay-seconds" type="number" min="0" step="any" />
+            </label></p>
+            <p id="share-overlay-description" class="muted">Applies to play information in every angle and play. Zero hides the information card, not player highlights.<br>Original portrait layout keeps its lower panel when the card ends.<br>Cards include the primary player's headshot when available.</p>
+            <fieldset id="share-theming">
+              <legend>Overlay theme</legend>
+              <label for="share-theme">Team or saved theme</label>
+              <select id="share-theme"></select>
+              <div class="grid">
+                <label>Background <input id="share-theme-background" type="color" /></label>
+                <label>Accent <input id="share-theme-accent" type="color" /></label>
+              </div>
+              <p><label for="share-opacity">Background opacity: <output id="share-opacity-value" for="share-opacity"></output></label>
+                <input id="share-opacity" type="range" min="0" max="100" step="1" /></p>
+              <p class="muted small">Text stays opaque, automatically contrasts with the background, and has an outline for legibility over turf. Low opacity reduces panel contrast. Preview changes below.</p>
+              <p class="row"><input id="share-theme-name" type="text" maxlength="60" aria-label="Custom theme name" placeholder="Custom theme name" /><button id="share-theme-save">Save / replace theme</button></p>
+              <div class="row"><button id="share-theme-delete" disabled>Delete saved theme</button><button id="share-theme-default">Make theme / opacity default</button></div>
+              <p id="share-theme-status" class="muted small" role="status" aria-live="polite"></p>
+            </fieldset>
+            <fieldset id="share-positioning">
+              <legend>Overlay position</legend>
+              <label for="share-position">Location</label>
+              <select id="share-position"></select>
+              <p class="muted small">Applies to every play and angle. Corner presets and custom locations use a compact card; the original portrait layout keeps its lower panel.</p>
+              <div class="grid">
+                <label>Horizontal position (%)
+                  <input id="share-position-x" type="range" min="0" max="100" step="0.1" />
+                </label>
+                <label>Vertical position (%)
+                  <input id="share-position-y" type="range" min="0" max="100" step="0.1" />
+                </label>
+              </div>
+              <p class="row"><input id="share-location-name" type="text" maxlength="60" aria-label="Custom location name" placeholder="Custom location name" /><button id="share-location-save">Save / replace location</button></p>
+              <div class="row"><button id="share-location-delete" disabled>Delete saved location</button><button id="share-position-default">Make default</button></div>
+              <p id="share-position-saved" class="muted small" role="status" aria-live="polite"></p>
+            </fieldset>
+          </details>
+          <p id="share-clean-description" class="muted" hidden>Clean exports omit all added text and graphics. Both-angle clean<br>exports center the stacked footage in the portrait frame.</p>
+          <details id="share-output">
+            <summary>Play breakdown and output</summary>
+            <fieldset>
+              <legend>Play breakdown</legend>
+              <label for="share-report-format">Save alongside the video</label>
+              <select id="share-report-format">
+                <option value="csv">CSV spreadsheet</option>
+                <option value="txt">Plain text</option>
+                <option value="pdf">PDF · team colors</option>
+                <option value="none">No breakdown</option>
+              </select>
+              <p><label><input id="share-report-advanced" type="checkbox" /> Include advanced statistics</label></p>
+              <p id="share-report-fields" class="muted small"></p>
+              <p class="muted small">PDF breakdowns include available player headshots, even with clean video.</p>
+              <p class="muted small">One entry per video clip, in video order (plays repeat for grouped angles).<br>Change defaults and advanced fields in Settings → Play breakdown defaults.</p>
+            </fieldset>
+            <p class="muted">MP4 video at normal speed, with audio from the selected angle<br>(sideline audio when exporting both).</p>
+          </details>
         </div>
-      </details>
-      <p><label><input id="share-clean" type="checkbox" /> Clean export (no overlays)</label></p>
-      <p><label>Overlay duration (seconds from each trimmed start)
-        <input id="share-overlay-seconds" type="number" min="0" step="any" />
-      </label></p>
-      <p id="share-overlay-description" class="muted">Applies to play information in every angle and play. Zero hides the information card, not player highlights.<br>Original portrait layout keeps its lower panel when the card ends.<br>Cards include the primary player's headshot when available.</p>
-      <fieldset id="share-theming">
-        <legend>Overlay theme</legend>
-        <label for="share-theme">Team or saved theme</label>
-        <select id="share-theme"></select>
-        <div class="grid">
-          <label>Background <input id="share-theme-background" type="color" /></label>
-          <label>Accent <input id="share-theme-accent" type="color" /></label>
-        </div>
-        <p><label for="share-opacity">Background opacity: <output id="share-opacity-value" for="share-opacity"></output></label>
-          <input id="share-opacity" type="range" min="0" max="100" step="1" /></p>
-        <p class="muted small">Text stays opaque, automatically contrasts with the background, and has an outline for legibility over turf. Low opacity reduces panel contrast. Preview changes below.</p>
-        <p class="row"><input id="share-theme-name" type="text" maxlength="60" aria-label="Custom theme name" placeholder="Custom theme name" /><button id="share-theme-save">Save / replace theme</button></p>
-        <div class="row"><button id="share-theme-delete" disabled>Delete saved theme</button><button id="share-theme-default">Make theme / opacity default</button></div>
-        <p id="share-theme-status" class="muted small" role="status" aria-live="polite"></p>
-      </fieldset>
-      <fieldset id="share-positioning">
-        <legend>Overlay position</legend>
-        <label for="share-position">Location</label>
-        <select id="share-position"></select>
-        <p class="muted small">Applies to every play and angle. Corner presets and custom locations use a compact card; the original portrait layout keeps its lower panel.</p>
-        <canvas id="share-position-preview" tabindex="0" role="img" aria-label="Export overlay preview. Drag the card to move it, or use the horizontal and vertical position controls." hidden></canvas>
-        <p id="share-position-status" class="muted small" role="status" aria-live="polite"></p>
-        <div class="grid">
-          <label>Horizontal position (%)
-            <input id="share-position-x" type="range" min="0" max="100" step="0.1" />
-          </label>
-          <label>Vertical position (%)
-            <input id="share-position-y" type="range" min="0" max="100" step="0.1" />
-          </label>
-        </div>
-        <p class="row"><input id="share-location-name" type="text" maxlength="60" aria-label="Custom location name" placeholder="Custom location name" /><button id="share-location-save">Save / replace location</button></p>
-        <div class="row"><button id="share-location-delete" disabled>Delete saved location</button><button id="share-position-default">Make default</button></div>
-        <p id="share-position-saved" class="muted small" role="status" aria-live="polite"></p>
-      </fieldset>
-      <p id="share-clean-description" class="muted" hidden>Clean exports omit all added text and graphics. Both-angle clean<br>exports center the stacked footage in the portrait frame.</p>
-      <fieldset>
-        <legend>Play breakdown</legend>
-        <label for="share-report-format">Save alongside the video</label>
-        <select id="share-report-format">
-          <option value="csv">CSV spreadsheet</option>
-          <option value="txt">Plain text</option>
-          <option value="pdf">PDF · team colors</option>
-          <option value="none">No breakdown</option>
-        </select>
-        <p><label><input id="share-report-advanced" type="checkbox" /> Include advanced statistics</label></p>
-        <p id="share-report-fields" class="muted small"></p>
-        <p class="muted small">PDF breakdowns include available player headshots, even with clean video.</p>
-        <p class="muted small">One entry per video clip, in video order (plays repeat for grouped angles).<br>Change defaults and advanced fields in Settings → Play breakdown defaults.</p>
-      </fieldset>
-      <p class="muted">MP4 video at normal speed, with audio from the selected angle<br>(sideline audio when exporting both).</p>
+      </div>
       <p id="share-status" role="status" aria-live="polite"></p>
       <progress id="share-progress" max="1" value="0" hidden></progress>
       <div class="actions">

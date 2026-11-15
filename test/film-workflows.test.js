@@ -39,7 +39,13 @@ async function exerciseWorkflows({ app, win }) {
       if (await js(source)) return;
       await wait(25);
     }
-    throw new Error(`Timed out: ${source}`);
+    const preview = await js(`JSON.stringify({
+      mode: positionFrames?.mode,
+      primary: {ready: $('highlight-video').readyState, time: $('highlight-video').currentTime, seeking: $('highlight-video').seeking},
+      other: {ready: $('highlight-other-video').readyState, time: $('highlight-other-video').currentTime, seeking: $('highlight-other-video').seeking},
+      status: $('highlight-status').textContent
+    })`);
+    throw new Error(`Timed out: ${source}; preview: ${preview}`);
   };
   if (win.webContents.isLoading()) await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
   await until(`$('status').textContent.includes('Offline workflow test')`);
@@ -162,33 +168,91 @@ async function exerciseWorkflows({ app, win }) {
   await js(`S.selected = new Set([2, 0, 1]); updateSelection(); $('btn-share').click(); $('share-clean').checked = true;`);
   assert.equal(await js(`$('share-trim').value`), '0.25');
   assert.equal(await js(`$('share-overlay-seconds').value`), '1.75');
-  await until(`!$('share-preview-a').hidden`);
-  assert.match(await js(`$('share-preview-a').src`), /^data:image\/jpeg;base64,/);
-  assert.equal(await js(`$('share-preview-figure-a').hidden`), false);
-  assert.equal(await js(`$('share-preview-figure-b').hidden`), true);
-  assert.equal(await js(`getComputedStyle($('share-preview-figure-b')).display`), 'none');
-  assert.ok(await js(`Math.abs($('share-preview-figure-a').getBoundingClientRect().width - $('share-preview-figure-a').parentElement.getBoundingClientRect().width) < 1`));
-  for (const [mode, a, b] of [
-    ['endzone', false, true], ['both', true, true],
-    ['sideline-first', true, true], ['endzone-first', true, true], ['sideline', true, false],
-  ]) {
+  await until(`!$('highlight-canvas').hidden && positionFrames !== null`);
+  assert.equal(await js(`document.querySelectorAll('#share canvas').length`), 1, 'all editing uses one video canvas');
+  assert.equal(await js(`$('highlight-section').open`), false, 'player controls do not have to be open to preview');
+  assert.equal(await js(`(() => {
+    const preview = $('highlight-editor').getBoundingClientRect(), button = $('highlight-play').getBoundingClientRect();
+    const tools = document.querySelector('.cutup-tools');
+    tools.scrollTop = 100;
+    return button.top >= preview.top && button.bottom <= preview.bottom &&
+      $('highlight-canvas').getBoundingClientRect().top >= preview.top && tools.scrollTop > 0;
+  })()`), true, 'editing tools scroll independently while video playback controls stay visible');
+  assert.equal(await js(`(() => {
+    const tools = document.querySelector('.cutup-tools'), style = getComputedStyle(tools);
+    return style.backgroundColor !== getComputedStyle($('highlight-editor')).backgroundColor &&
+      style.borderTopWidth === '0px' && style.paddingTop === '0px' && style.overflowY === 'auto' &&
+      !document.querySelector('.cutup-tools-heading') &&
+      tools.tabIndex === 0;
+  })()`), true, 'scrollable controls have a distinct surface without extra header or frame spacing');
+  assert.equal(await js(`(() => {
+    const tools = document.querySelector('.cutup-tools');
+    const actions = document.querySelector('#share .actions');
+    return Math.abs(tools.getBoundingClientRect().bottom - actions.getBoundingClientRect().top) <= 1 &&
+      getComputedStyle(tools).borderRadius === getComputedStyle($('share-close')).borderRadius;
+  })()`), true, 'controls reach the action divider and use the button corner radius');
+  await js(`document.querySelector('.cutup-tools').scrollTop = document.querySelector('.cutup-tools').scrollHeight;
+    $('share-output').querySelector('summary').click();`);
+  await until(`$('share-output').open && (() => {
+    const tools = document.querySelector('.cutup-tools');
+    return tools.scrollHeight - tools.clientHeight - tools.scrollTop <= 1;
+  })()`);
+  assert.equal(await js(`$('share-output').getBoundingClientRect().bottom <= document.querySelector('.cutup-tools').getBoundingClientRect().bottom + 1`),
+    true, 'expanding output scrolls its newly revealed content into view');
+  await js(`document.querySelector('.cutup-tools').scrollTop = 0; $('share-output').open = false;`);
+  await until(`!$('share-output').open && document.querySelector('.cutup-tools').scrollTop === 0`);
+  assert.equal(await js(`getComputedStyle($('share-status')).display`), 'none', 'an empty status does not reserve footer space');
+  await js(`$('share-status').textContent = 'Export notice';`);
+  assert.notEqual(await js(`getComputedStyle($('share-status')).display`), 'none', 'nonempty export notices remain visible');
+  await js(`$('share-status').textContent = '';`);
+  const desktopBounds = win.getBounds(), minimumSize = win.getMinimumSize();
+  try {
+    win.setMinimumSize(480, 480);
+    win.setSize(800, 800);
+    await until(`getComputedStyle(document.querySelector('.cutup-tools')).overflowY === 'visible'`);
+    await js(`$('share-output').querySelector('summary').click();`);
+    await until(`$('share-output').open && (() => {
+      const panel = document.querySelector('#share .panel');
+      return panel.scrollHeight - panel.clientHeight - panel.scrollTop <= 1;
+    })()`);
+    assert.equal(await js(`$('share-output').getBoundingClientRect().bottom <= document.querySelector('#share .panel').getBoundingClientRect().bottom + 1`),
+      true, 'output expansion scrolls the whole dialog in the narrow layout');
+    await js(`$('share-output').open = false;`);
+  } finally {
+    win.setBounds(desktopBounds);
+    win.setMinimumSize(...minimumSize);
+  }
+  await until(`getComputedStyle(document.querySelector('.cutup-tools')).overflowY === 'auto'`);
+  for (const mode of ['endzone', 'both', 'sideline-first', 'endzone-first', 'sideline']) {
     await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'))`);
-    assert.equal(await js(`$('share-preview-figure-a').hidden`), !a, mode);
-    assert.equal(await js(`$('share-preview-figure-b').hidden`), !b, mode);
-    await until(`${a ? "!$('share-preview-a').hidden" : "$('share-preview-a').hidden"} && ${b ? "!$('share-preview-b').hidden" : "$('share-preview-b').hidden"}`);
-    if (b) assert.match(await js(`$('share-preview-b').src`), /^data:image\/jpeg;base64,/);
+    await until(`positionFrames?.mode === '${mode}' && !$('highlight-video').seeking && !$('highlight-other-video').seeking`);
+    assert.deepEqual(await js(`({width: $('highlight-canvas').width, height: $('highlight-canvas').height})`), require('../src/shared/export').dimensions(mode));
+    assert.equal(await js(`$('highlight-angle').disabled`), ['sideline', 'endzone'].includes(mode));
   }
   await js(`$('share-trim').value = '0.5'; $('share-trim').dispatchEvent(new Event('input'))`);
-  await until(`!$('share-preview-a').hidden`);
+  await until(`!$('highlight-canvas').hidden && !$('highlight-video').seeking`);
   assert.equal(await js(`S.exportDraft.clips[0].trim`), 0.5);
   assert.ok(Math.abs(await js(`trimmedExportClips()[0].aStart - S.exportDraft.clips[0].aStart`) - 0.5) < 1e-9);
   assert.equal(await js(`$('share-report-format').value`), 'pdf');
   assert.equal(await js(`$('share-report-advanced').checked`), true);
+  await js(`$('highlight-time').value = '0.25'; $('highlight-time').dispatchEvent(new Event('input'))`);
+  await until(`!$('highlight-video').seeking`);
+  const trimAtFrame = await js(`Number((S.exportDraft.clips[0].trim + highlightEditor.relativeTime()).toFixed(6))`);
+  await js(`$('share-trim-current').click()`);
+  await until(`!$('highlight-video').seeking`);
+  assert.equal(await js(`S.exportDraft.clips[0].trim`), trimAtFrame, 'trim at the current decoded frame includes the existing trim');
+  await js(`$('share-trim').value = '0.5'; $('share-trim').dispatchEvent(new Event('input'))`);
+  await until(`!$('highlight-video').seeking`);
 
   await js(`$('share-clean').checked = false; $('share-clean').dispatchEvent(new Event('change'));`);
-  await until(`!$('share-position-preview').hidden && positionHeadshots !== null`);
+  await until(`!$('highlight-canvas').hidden && positionHeadshots !== null`);
   assert.equal(await js(`$('share-theme').value`), 'auto');
   assert.deepEqual(await js(`A22.overlay.theme(currentOverlayAppearance())`), require('../src/shared/overlay').teamTheme('BAL'));
+  await js(`$('share-overlay-seconds').value = '0.25'; $('share-overlay-seconds').dispatchEvent(new Event('input')); $('highlight-time').value = '0.5'; $('highlight-time').dispatchEvent(new Event('input'))`);
+  await until(`!$('highlight-video').seeking && positionBounds === null`);
+  assert.equal(await js(`$('share-position-status').textContent.includes('hidden at this time')`), true, 'the shared preview respects play-overlay duration');
+  await js(`$('share-overlay-seconds').value = '1.75'; $('share-overlay-seconds').dispatchEvent(new Event('input')); $('highlight-time').value = '0'; $('highlight-time').dispatchEvent(new Event('input'))`);
+  await until(`!$('highlight-video').seeking && positionBounds !== null`);
   await js(`$('share-theme').value = 'team-CIN'; $('share-theme').dispatchEvent(new Event('change'))`);
   assert.deepEqual(await js(`A22.overlay.theme(currentOverlayAppearance())`), require('../src/shared/overlay').teamTheme('CIN'));
   await js(`
@@ -198,12 +262,13 @@ async function exerciseWorkflows({ app, win }) {
     $('share-theme-name').value = '<Custom theme>'; $('share-theme-save').click();
   `);
   await until(`!positionSaving && S.settings.overlayThemes.length === 1`);
+  assert.equal(await js(`(() => {const tools = document.querySelector('.cutup-tools'); return tools.scrollWidth <= tools.clientWidth;})()`), true, 'player controls fit without horizontal clipping');
   assert.equal(await js(`$('share-theme').selectedOptions[0].textContent`), '<Custom theme>');
   assert.equal(await js(`S.settings.overlayTheme`), null, 'named themes do not implicitly replace the default');
   await js(`$('share-theme-default').click()`);
   await until(`!positionSaving && S.settings.overlayOpacity === 0.65`);
   await js(`$('share-close').click(); $('btn-share').click()`);
-  await until(`!$('share-position-preview').hidden`);
+  await until(`!$('highlight-canvas').hidden`);
   assert.equal(await js(`$('share-opacity-value').textContent`), '65%');
   assert.equal(await js(`currentOverlayAppearance().background`), '#123456');
   for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
@@ -228,6 +293,34 @@ async function exerciseWorkflows({ app, win }) {
   await js(`$('share-theme').value = 'saved-0'; $('share-theme').dispatchEvent(new Event('change')); $('share-theme-delete').click()`);
   await until(`!positionSaving && S.settings.overlayThemes.length === 0`);
   assert.equal(await js(`S.settings.overlayTheme.background`), '#123456', 'deletion does not change defaults');
+  await js(`(() => {
+    $('highlight-section').open = true;
+    $('highlight-name').value = 'Fixture player'; $('highlight-name').dispatchEvent(new Event('change'));
+    $('highlight-theme-background').value = '#ffffff'; $('highlight-theme-background').dispatchEvent(new Event('input')); $('highlight-theme-background').dispatchEvent(new Event('change'));
+    $('highlight-theme-accent').value = '#ff8800'; $('highlight-theme-accent').dispatchEvent(new Event('input')); $('highlight-theme-accent').dispatchEvent(new Event('change'));
+    $('highlight-opacity').value = 40; $('highlight-opacity').dispatchEvent(new Event('input')); $('highlight-opacity').dispatchEvent(new Event('change'));
+    S.exportDraft.clips[0].highlights.sideline.points = [{t: $('highlight-video').currentTime, x: 0.5, y: 0.5}];
+    $('highlight-theme-name').value = '<Player theme>'; $('highlight-theme-save').click();
+  })()`);
+  await until(`!positionSaving && S.settings.overlayThemes.length === 1`);
+  assert.equal(await js(`$('highlight-theme').selectedOptions[0].textContent`), '<Player theme>');
+  assert.equal(await js(`(() => {const tools = document.querySelector('.cutup-tools'); return tools.scrollWidth <= tools.clientWidth;})()`), true, 'expanded player theme controls fit without horizontal clipping');
+  assert.equal(await js(`[...$('share-theme').options].some(o => o.textContent === '<Player theme>')`), true);
+  const playerPixels = await js(`(async () => {
+    const result = await highlightEditor.export([S.exportDraft.clips[0]], 'sideline', currentOverlayAppearance(), false);
+    const image = new Image(); image.src = result.clips[0].highlights.sideline.graphic.dataUrl; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    return [...ctx.getImageData(2, 2, 1, 1).data];
+  })()`);
+  assert.deepEqual(playerPixels, [255, 255, 255, 102], 'exported player labels use independent colors and opacity, not the play card theme');
+  assert.equal(await js(`currentOverlayAppearance().background`), '#123456', 'player edits leave play information unchanged');
+  await js(`$('highlight-defaults').click()`);
+  await until(`S.settings.highlightDefaults.opacity === 0.4`);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'settings.json'))).highlightDefaults.theme.background, '#ffffff');
+  await js(`$('highlight-theme-delete').click()`);
+  await until(`!positionSaving && S.settings.overlayThemes.length === 0`);
+  await js(`$('highlight-clear-track').click(); $('highlight-section').open = false`);
   await js(`$('share-theme').value = 'auto'; $('share-theme').dispatchEvent(new Event('change')); $('share-theme-default').click()`);
   await until(`!positionSaving && S.settings.overlayTheme === null`);
   for (const mode of ['sideline', 'endzone', 'sideline-first', 'endzone-first', 'both']) {
@@ -266,16 +359,16 @@ async function exerciseWorkflows({ app, win }) {
   assert.deepEqual(positionSaved.overlayPosition, { preset: 'custom', x: 0.25, y: 0.4 });
   assert.deepEqual(positionSaved.overlayLocations, [{ name: '<Custom>', position: positionSaved.overlayPosition }]);
   await js(`$('share-close').click(); $('btn-share').click();`);
-  await until(`!$('share-position-preview').hidden`);
+  await until(`!$('highlight-canvas').hidden`);
   assert.deepEqual(await js('sharePosition'), positionSaved.overlayPosition);
   await js(`$('share-position').value = 'saved-0'; $('share-position').dispatchEvent(new Event('change'));`);
   assert.equal(await js(`$('share-location-delete').disabled`), false);
   await js(`$('share-location-delete').click()`);
   await until(`!positionSaving && S.settings.overlayLocations.length === 0`);
   assert.deepEqual(await js('S.settings.overlayPosition'), positionSaved.overlayPosition);
-  await js(`$('share-position-preview').scrollIntoView({block: 'center'})`);
+  await js(`$('highlight-canvas').scrollIntoView({block: 'center'})`);
   const drag = await js(`(() => {
-    const canvas = $('share-position-preview'), rect = canvas.getBoundingClientRect(), b = positionBounds;
+    const canvas = $('highlight-canvas'), rect = canvas.getBoundingClientRect(), b = positionBounds;
     return {x: Math.round(rect.left + (b.x + b.width / 2) / canvas.width * rect.width),
       y: Math.round(rect.top + (b.y + b.height / 2) / canvas.height * rect.height)};
   })()`);

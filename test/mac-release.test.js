@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const config = require('../package.json');
 const { verifySignature, verifyApp, verifyRelease } = require('../scripts/verify-mac-release');
 const { notice, addNotice } = require('../scripts/mac-release-notice');
@@ -176,18 +177,33 @@ switch (args[1]) {
   }
 });
 
-test('release workflow gates uploads on final DMG verification without any Apple secrets', () => {
+test('release workflow requires explicit master dispatch and final DMG verification without any Apple secrets', () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/build.yml'), 'utf8');
+  assert.match(workflow, /^  pull_request:/m);
+  assert.match(workflow, /^  workflow_dispatch:/m);
+  assert.doesNotMatch(workflow, /^  push:/m);
+  for (const newline of ['\n', '\r\n']) {
+    const checkout = workflow.replace(/\r?\n/g, newline);
+    const versionGuard = checkout.match(/CREATE_RELEASE: \$\{\{ (.+) \}\}/)[1];
+    const releaseGuard = checkout.match(/^  release:\r?\n    if: (.+)/m)[1];
+    for (const [event, ref, expected] of [
+      ['push', 'refs/heads/master', false],
+      ['pull_request', 'refs/heads/master', false],
+      ['workflow_dispatch', 'refs/heads/feature', false],
+      ['workflow_dispatch', 'refs/heads/master', true],
+    ]) {
+      for (const guard of [versionGuard, releaseGuard]) {
+        assert.equal(vm.runInNewContext(guard, { github: { event_name: event, ref } }), expected,
+          `${event} on ${ref}: ${guard}`);
+      }
+    }
+    assert.match(checkout, /--notes-file release-notes\.md \\\r?\n\s+--generate-notes/);
+  }
   assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: false/);
   assert.match(workflow, /CSC_FOR_PULL_REQUEST: true/);
   assert.doesNotMatch(workflow, /secrets\.|pull_request_target|notarize-mac-release/);
   assert.ok(workflow.indexOf('node scripts/verify-mac-release.js') < workflow.indexOf('actions/upload-artifact'));
   assert.match(workflow, /needs: \[version, build, extension\]/);
-  assert.match(workflow, /if: github\.event_name != 'pull_request' && github\.ref == 'refs\/heads\/master'/);
-  for (const newline of ['\n', '\r\n']) {
-    const checkout = workflow.replace(/\r?\n/g, newline);
-    assert.match(checkout, /--notes-file release-notes\.md \\\r?\n\s+--generate-notes/);
-  }
   assert.match(workflow, /gh release view "\$tag" --json body > release-notes\.json/);
   assert.match(workflow, /node scripts\/mac-release-notice\.js --release-json release-notes\.json > release-notes\.md/);
 });
