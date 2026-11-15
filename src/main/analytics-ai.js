@@ -99,6 +99,14 @@ class AnalyticsAI {
     native = nativeRequest, exists = fs.existsSync, log = console.warn, cloud = null } = {}) {
     this.platform = platform;
     this.apple = platform === 'darwin' && arch === 'arm64' && Number(release.split('.')[0]) >= 25;
+    this.packaged = packaged;
+    this.localStatus = {
+      label: platform === 'darwin' ? 'Apple Intelligence' : 'Local intelligence',
+      available: false,
+      reason: platform === 'darwin' ? 'Apple Intelligence requires Apple silicon and macOS 26 or later.' :
+        platform === 'win32' ? 'Start Ollama with a supported, downloaded local model, then check again.' :
+          'On-device questions are supported on compatible Macs and Windows PCs.',
+    };
     this.binary = packaged ? path.join(resourcesPath, 'native', 'amp22-foundation-models') :
       path.join(__dirname, '../../build/native/amp22-foundation-models');
     this.request = request;
@@ -122,18 +130,26 @@ class AnalyticsAI {
   }
 
   async discoverLocal(signal) {
+    this.localStatus.available = false;
     if (this.apple) {
       if (!this.exists(this.binary)) {
         this.log('Analytics AI: Apple helper is missing; build it with npm run build:ai.');
+        this.localStatus.reason = this.packaged ?
+          'The Apple on-device helper is missing from this installation. Reinstall AMP22 to restore it.' :
+          'The Apple on-device helper has not been built. Start AMP22 with npm start, or run npm run build:ai, then check again.';
         return this.models = [];
       }
       try {
         const status = await this.native(this.binary, true, null, signal);
-        return this.models = status.available === true ?
-          [{ id: 'apple', runtime: 'apple', label: 'Apple on-device model' }] : [];
+        this.localStatus.available = status.available === true;
+        this.localStatus.reason = this.localStatus.available ? '' :
+          'Apple Intelligence is not available right now. Check Apple Intelligence in System Settings and allow its on-device model to finish downloading, then check again.';
+        return this.models = this.localStatus.available ?
+          [{ id: 'apple', runtime: 'apple', label: 'Apple Intelligence (on device)' }] : [];
       } catch (error) {
         if (signal?.aborted) throw error;
         this.log(`Analytics AI discovery: ${error.message}`);
+        this.localStatus.reason = `Could not check Apple Intelligence: ${error.message}`;
         return this.models = [];
       }
     }
@@ -146,7 +162,9 @@ class AnalyticsAI {
         return [];
       }
     }));
-    return this.models = results.flat();
+    this.models = results.flat();
+    this.localStatus.available = this.models.length > 0;
+    return this.models;
   }
 
   async runtimeModels(runtime, signal) {
@@ -263,7 +281,8 @@ function registerAnalyticsAI({ ipcMain, app, getWindow, dialog, safeStorage, cli
   };
   ipcMain.handle('analysis-ai:discover', async event => {
     authorize(event);
-    return (await service.discover()).map(({ id, label, cloud }) => ({ id, label, cloud: cloud === true }));
+    const models = (await service.discover()).map(({ id, label, cloud }) => ({ id, label, cloud: cloud === true }));
+    return { models, local: service.localStatus };
   });
   ipcMain.handle('analysis-ai:plan', (event, request) => { authorize(event); return service.plan(request); });
   ipcMain.handle('analysis-ai:cancel', event => { authorize(event); service.cancel(); });

@@ -16,6 +16,26 @@ test('player dropdown ordering defaults to alphabetical and persists only suppor
     assert.equal(s.mergeSettings({ playerFilterSort }).playerFilterSort, 'name');
   }
 });
+
+test('cut detection defaults to automatic and keeps a valid manual threshold', () => {
+  assert.equal(s.mergeSettings({}).cutMode, 'auto');
+  assert.equal(s.mergeSettings({ cutThreshold: 0.03 }).cutMode, 'auto', 'older manual workarounds upgrade to automatic');
+  const manual = s.mergeSettings({ cutMode: 'manual', cutThreshold: 0.06 });
+  assert.deepEqual([manual.cutMode, manual.cutThreshold], ['manual', 0.06]);
+  assert.equal(s.mergeSettings({ cutMode: 'other' }).cutMode, 'auto');
+  assert.equal(s.mergeSettings({ cutThreshold: 0.01 }).cutThreshold, 0.1);
+});
+
+test('appearance, text size, and sidebar width validate and round-trip', () => {
+  const saved = s.mergeSettings({ uiTheme: 'light', textScale: 1.1, sidebarWidth: 480 });
+  assert.deepEqual(
+    (({ uiTheme, textScale, sidebarWidth }) => ({ uiTheme, textScale, sidebarWidth }))(s.mergeSettings(JSON.parse(JSON.stringify(saved)))),
+    { uiTheme: 'light', textScale: 1.1, sidebarWidth: 480 },
+  );
+  assert.equal(s.mergeSettings({ uiTheme: 'invalid' }).uiTheme, 'dark');
+  assert.equal(s.mergeSettings({ textScale: 2 }).textScale, 1);
+  assert.equal(s.mergeSettings({ sidebarWidth: 200 }).sidebarWidth, 380);
+});
 test('overlay defaults and named locations round-trip without accepting malformed positions', () => {
   const position = { preset: 'custom', x: 0.125, y: 0.75 };
   const saved = s.mergeSettings({

@@ -27,6 +27,7 @@
     { id: 'clearFix', label: 'Fix: clear correction on selected play', keys: ['Shift+C'] },
     { id: 'search', label: 'Search plays', keys: ['/'] },
     { id: 'help', label: 'Show / hide shortcuts', keys: ['?'] },
+    { id: 'commandPalette', label: 'Search games and actions', keys: ['Meta+K', 'Ctrl+K'] },
   ];
 
   const DEFAULT_SETTINGS = {
@@ -34,11 +35,15 @@
     endOfPlay: 'stop', // 'stop' | 'advance' | 'loop'
     speeds: [1, 0.5, 0.25],
     defaultTeam: 'BAL',
+    uiTheme: 'dark',
+    textScale: 1,
+    sidebarWidth: 380,
     playerFilterSort: 'name',
     filterPresets: [],
     filmRoot: '',
     participationRoot: '',
     autoAnalyze: true,
+    cutMode: 'auto', // 'auto' matches cut sensitivity to the play-by-play; 'manual' uses cutThreshold
     cutThreshold: 0.1,
     skipNoFilm: true,
     exportTrim: 0,
@@ -101,7 +106,15 @@
     const jf = Math.round(Number(out.jumpFrames));
     out.jumpFrames = jf >= 1 && jf <= 600 ? jf : DEFAULT_SETTINGS.jumpFrames;
     if (!['stop', 'advance', 'loop'].includes(out.endOfPlay)) out.endOfPlay = 'stop';
+    if (!['auto', 'manual'].includes(out.cutMode)) out.cutMode = DEFAULT_SETTINGS.cutMode;
+    const cut = Number(out.cutThreshold);
+    out.cutThreshold = Number.isFinite(cut) && cut >= 0.03 && cut <= 0.5 ? cut : DEFAULT_SETTINGS.cutThreshold;
     if (!['name', 'plays', 'position'].includes(out.playerFilterSort)) out.playerFilterSort = DEFAULT_SETTINGS.playerFilterSort;
+    if (!['dark', 'light', 'system'].includes(out.uiTheme)) out.uiTheme = DEFAULT_SETTINGS.uiTheme;
+    const textScale = Number(out.textScale);
+    out.textScale = Number.isFinite(textScale) && textScale >= 0.9 && textScale <= 1.25 ? textScale : DEFAULT_SETTINGS.textScale;
+    const sidebarWidth = Math.round(Number(out.sidebarWidth));
+    out.sidebarWidth = Number.isFinite(sidebarWidth) && sidebarWidth >= 300 && sidebarWidth <= 560 ? sidebarWidth : DEFAULT_SETTINGS.sidebarWidth;
     if (!Array.isArray(out.speeds) || !out.speeds.length || out.speeds.some((x) => !(x > 0 && x <= 4))) out.speeds = DEFAULT_SETTINGS.speeds.slice();
     return out;
   }

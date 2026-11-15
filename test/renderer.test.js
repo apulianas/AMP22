@@ -16,6 +16,9 @@ function renderer() {
   const elements = new Map();
   const context = vm.createContext({
     structuredClone,
+    setTimeout: () => 1,
+    clearTimeout() {},
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     A22: { plays, settings, clipExport, advanced, reports, filterPresets, analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {
@@ -37,7 +40,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, ADV_CHOICES, choiceOptions };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, filmWeightsFor, filmCoverage, checkFilmCoverage, syncFilterControls, setResultFilter, prepareAnalysisEntry, ADV_CHOICES, choiceOptions };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -68,6 +71,60 @@ test('workspace film selection restores play IDs, including unlinked or filtered
   assert.equal(r.S.curPlay, 0, 'ordinary game loads keep their first-linked default');
 });
 
+test('film coverage alerts once per analysis when more than 5% of expected plays are unmatched', () => {
+  const r = renderer();
+  const store = new Map();
+  r.context.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value), removeItem: (key) => store.delete(key) };
+  const el = (id) => r.context.document.getElementById(id);
+  r.S.plays = Array.from({ length: 20 }, (_, i) => plays.normalizePlay({ play_id: String(i + 1), desc: 'A run', play_type: 'run', posteam: 'BAL', yrdln: 'BAL 25' }));
+  r.derivePlays();
+  Object.assign(r.S, {
+    mode: 'film', sel: { gameId: 'g1', team: 'BAL' }, gameData: {}, settings: { ...r.S.settings, autoAnalyze: true },
+    film: { path: '/film.mp4', analysis: { createdAt: 'a1', cutMode: 'manual' } }, pairs: Array(20).fill({}),
+  });
+  r.S.mapping = r.S.plays.map((_, i) => i);
+  r.S.mapping[3] = null;
+  r.checkFilmCoverage();
+  assert.notEqual(el('film-coverage-dialog').hidden, false, 'exactly 5% unmatched is tolerated');
+
+  r.S.mapping[4] = null;
+  r.checkFilmCoverage();
+  assert.equal(el('film-coverage-dialog').hidden, false);
+  assert.equal(el('film-coverage-summary').textContent, "2 of 20 plays (10%) didn't match a film clip.");
+  assert.equal(el('film-coverage-reanalyze').hidden, false, 'fixed-sensitivity film offers automatic re-analysis');
+
+  el('film-coverage-dialog').hidden = true;
+  r.checkFilmCoverage();
+  assert.equal(el('film-coverage-dialog').hidden, true, 'each analysis alerts only once');
+
+  r.S.film.analysis = { createdAt: 'a2', cutMode: 'auto' };
+  r.checkFilmCoverage();
+  assert.equal(el('film-coverage-dialog').hidden, false);
+  assert.equal(el('film-coverage-reanalyze').hidden, true, 'auto-tuned film offers review instead');
+
+  el('film-coverage-dialog').hidden = true;
+  r.S.film.analysis = { createdAt: 'a3', cutMode: 'auto' };
+  r.S.gameData.anchors = { [r.S.plays[3].playId]: null, [r.S.plays[4].playId]: null };
+  assert.deepEqual([r.filmCoverage().expected, r.filmCoverage().unmatched.length], [18, 0], 'plays marked No film are not expected');
+  r.checkFilmCoverage();
+  assert.equal(el('film-coverage-dialog').hidden, true);
+});
+
+test('automatic cut detection receives play-by-play weights for each split film', () => {
+  const r = renderer();
+  const offense = { path: '/offense.mp4' };
+  const defense = { path: '/defense.mp4' };
+  r.S.plays[2].defteam = 'BAL';
+  Object.assign(r.S, {
+    sel: { team: 'BAL' }, splitFilms: { offense, defense },
+    gameData: { filmFormat: 'split', splitCorrections: { BAL: { anchors: { [r.S.plays[0].playId]: null } } } },
+  });
+  assert.deepEqual(Array.from(r.filmWeightsFor(offense)), [1, 1, 1], 'offense film excludes defense and No film plays');
+  assert.deepEqual(Array.from(r.filmWeightsFor(defense)), [1]);
+  r.S.gameData = {};
+  assert.equal(r.filmWeightsFor({ path: '/game.mp4' }).length, 5);
+});
+
 test('offensive-personnel filters distinguish Wildcat, Tush push and extra-OL packages', () => {
   const r = renderer();
   for (const p of r.S.plays) p.personnel = { offense: '12 (6)' };
@@ -81,6 +138,109 @@ test('offensive-personnel filters distinguish Wildcat, Tush push and extra-OL pa
   assert.deepEqual(r.visible(), [2]);
   r.setAdvancedChoice('offPersonnel', '12 (6)');
   assert.deepEqual(r.visible(), [0, 3, 4]);
+});
+
+test('incompletions filter uses recorded outcomes, excludes no-plays, and combines with other filters', () => {
+  const r = renderer();
+  r.S.plays = [
+    { incomplete_pass: '1', air_yards: '8' },
+    { complete_pass: '1', yards_gained: '0' },
+    { sack: '1' },
+    { interception: '1' },
+    {},
+    { incomplete_pass: '1', play_type: 'no_play', penalty: '1', pass: '1' },
+    { incomplete_pass: '1', posteam: 'BUF', qtr: '2', air_yards: '20' },
+    { incomplete_pass: '1', play_type: 'qb_spike', qb_spike: '1' },
+  ].map((row, i) => plays.normalizePlay({
+    play_id: String(i + 1), desc: 'A passing play', play_type: 'pass', posteam: 'BAL', qtr: '1', ...row,
+  }));
+  r.derivePlays();
+  r.S.filter.result = 'incomplete';
+  r.renderList();
+  assert.deepEqual(r.visible(), [0, 6, 7], 'only recorded incompletions, including recorded spikes, match');
+  assert.equal(r.filterChoiceCount('result', 'incomplete'), 3);
+
+  Object.assign(r.S.filter, { offense: 'BAL', qtr: '1', airMin: 0 });
+  r.renderList();
+  assert.deepEqual(r.visible(), [0]);
+  assert.equal(r.filterChoiceCount('result', 'incomplete'), 1);
+  r.S.filter.type = 'run';
+  r.renderList();
+  assert.deepEqual(r.visible(), []);
+  assert.equal(r.filterChoiceCount('result', 'incomplete'), 0);
+});
+
+test('both result dropdowns stay synchronized and show counts using the same filter choices', () => {
+  const r = renderer();
+  r.S.plays = [
+    { incomplete_pass: '1' },
+    { complete_pass: '1' },
+    { incomplete_pass: '1' },
+  ].map((row, i) => plays.normalizePlay({
+    play_id: String(i + 1), desc: 'A pass', play_type: 'pass', posteam: 'BAL', ...row,
+  }));
+  r.derivePlays();
+  const options = [
+    ['', 'All results'],
+    ['incomplete', 'Incompletions'],
+    ['sack', 'Sacks'],
+  ].map(([value, textContent]) => ({ value, textContent, dataset: {} }));
+  for (const id of ['sel-result', 'adv-result-filter']) {
+    r.context.document.getElementById(id).options = structuredClone(options);
+  }
+
+  r.S.filter.result = 'incomplete';
+  r.syncFilterControls();
+  r.renderFilterCounts();
+  for (const id of ['sel-result', 'adv-result-filter']) {
+    const select = r.context.document.getElementById(id);
+    assert.equal(select.value, 'incomplete');
+    assert.deepEqual(select.options.map(option => option.textContent), [
+      'All results (3)', 'Incompletions (2)', 'Sacks (0)',
+    ]);
+  }
+
+  r.setResultFilter('');
+  assert.equal(r.context.document.getElementById('sel-result').value, '');
+  assert.equal(r.context.document.getElementById('adv-result-filter').value, '');
+  assert.equal(r.S.filter.result, '');
+  assert.deepEqual(r.visible(), [0, 1, 2]);
+});
+
+test('Analysis Lab entry clears quick filters unless advanced filtering or a preset is active', () => {
+  const r = renderer();
+  Object.assign(r.S.filter, { type: 'pass', offense: 'BUF', qtr: '2', result: 'incomplete', text: 'pass' });
+  let entry = r.prepareAnalysisEntry();
+  assert.equal(entry.playIds.length, 0);
+  assert.equal(entry.preserveFilters, false);
+  assert.equal(JSON.stringify(r.S.filter), JSON.stringify(filterPresets.emptyFilter()));
+
+  Object.assign(r.S.filter, {
+    type: 'pass', offense: 'BUF', qtr: '2', result: 'incomplete', yardsMin: 5,
+    choices: { down: '3' },
+  });
+  entry = r.prepareAnalysisEntry();
+  assert.equal(entry.preserveFilters, true);
+  assert.equal(r.S.filter.result, 'incomplete');
+  assert.equal(r.S.filter.yardsMin, 5);
+  assert.equal(r.S.filter.choices.down, '3');
+
+  r.S.filter = { ...filterPresets.emptyFilter(), result: 'incomplete' };
+  r.S.appliedPreset = { name: 'Incomplete passes' };
+  entry = r.prepareAnalysisEntry();
+  assert.equal(entry.preserveFilters, true, 'an explicitly applied preset keeps its filters');
+  assert.equal(r.S.filter.result, 'incomplete');
+});
+
+test('Analysis Lab entry carries active Film Room multi-selection and clears quick filters', () => {
+  const r = renderer();
+  r.S.filter.result = 'incomplete';
+  r.S.multiSelect = true;
+  r.S.selected = new Set([1, 3]);
+  const entry = r.prepareAnalysisEntry();
+  assert.deepEqual(Array.from(entry.playIds), [r.S.plays[1].playId, r.S.plays[3].playId]);
+  assert.equal(entry.preserveFilters, false);
+  assert.equal(JSON.stringify(r.S.filter), JSON.stringify(filterPresets.emptyFilter()));
 });
 
 test('choice counts replace only their own filter and predict the displayed plays', () => {
@@ -103,7 +263,7 @@ test('choice counts replace only their own filter and predict the displayed play
   const options = [
     ['type', ['all', 'run', 'pass', 'special']],
     ['offense', ['', 'BAL', 'JAX']], ['qtr', ['', '1', '2']],
-    ['result', ['', 'key', 'negative', 'sack', 'turnover', 'score', 'big', 'firstdown', 'penalty']],
+    ['result', ['', 'key', 'negative', 'sack', 'incomplete', 'turnover', 'score', 'big', 'firstdown', 'penalty']],
     ...r.ADV_CHOICES.filter(spec => spec.key !== 'player').map(spec =>
       [spec.key, ['', ...r.choiceOptions(spec).map(([value]) => value)]]),
   ];
@@ -235,6 +395,7 @@ test('clear all is visible for every active filter and resets controls without d
   assert.deepEqual(Array.from(r.S.selected), [2]);
   assert.equal(r.elements.get('search').value, '');
   assert.equal(r.elements.get('sel-result').value, '');
+  assert.equal(r.elements.get('adv-result-filter').value, '');
   assert.equal(r.elements.get('air-yards-min').value, '');
   assert.equal(r.elements.get('filter-preset-team').hidden, true);
   assert.equal(r.elements.get('filter-preset-status').textContent, '');
@@ -303,7 +464,7 @@ test('preset application replaces all controls and keeps unavailable choices exp
   assert.match(r.elements.get('sel-qtr').innerHTML, /unavailable/);
   assert.deepEqual(r.visible(), []);
   assert.equal(r.S.filter.choices.offPersonnel, '11');
-  assert.match(r.elements.get('adv-choices').innerHTML, /11 \(unavailable this game\)/);
+  assert.match(r.elements.get('adv-presnap').innerHTML, /11 \(unavailable this game\)/);
   assert.match(r.elements.get('player-choice').innerHTML, /Saved Player/);
   assert.match(r.elements.get('filter-data-warning').textContent, /NFL Pro extension \(subscription required\)/);
   assert.match(r.elements.get('filter-data-warning').textContent, /filters remain applied/);
@@ -1070,10 +1231,19 @@ test('yardage and distance bounds apply to scrimmage plays and combine with adva
   r.S.mapping = r.S.plays.map(() => null);
   r.derivePlays();
   r.renderAdvancedFilters();
-  const filters = r.elements.get('adv-choices').innerHTML;
+  const filters = ['adv-situation', 'adv-presnap', 'adv-passing', 'adv-defense', 'adv-players']
+    .map(id => r.elements.get(id).innerHTML).join('');
   for (const label of ['Down', 'Off. personnel', 'Def. package', 'Box count', 'Blitzers', 'Motion', 'Coverage']) assert.ok(filters.includes(`>${label}<`), label);
+  assert.match(r.elements.get('adv-situation').innerHTML, />Down</);
+  assert.match(r.elements.get('adv-presnap').innerHTML, />Off\. personnel</);
+  assert.match(r.elements.get('adv-passing').innerHTML, />Pass rushers</);
+  assert.match(r.elements.get('adv-defense').innerHTML, />Def\. package</);
   assert.ok(!filters.includes('>RPO<'), 'filters without data are hidden');
   assert.ok(filters.indexOf('>4-3<') < filters.indexOf('>Nickel<') && filters.indexOf('>Nickel<') < filters.indexOf('>Dime<'));
+  assert.equal(r.elements.get('filter-presnap').hidden, false);
+  assert.equal(r.elements.get('filter-passing').hidden, false);
+  assert.equal(r.elements.get('filter-defense').hidden, false);
+  assert.equal(r.elements.get('filter-players').hidden, true, 'empty groups are not shown');
   assert.equal(r.elements.get('adv-note').hidden, true);
 
   const visible = (patch) => {

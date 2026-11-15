@@ -6,6 +6,7 @@ const { ffmpegPath, ffprobePath } = require('./ffpaths');
 const scenes = require('../shared/scenes');
 const orientation = require('../shared/orientation');
 const { pairClips } = require('../shared/pairing');
+const detection = require('../shared/detection');
 
 const ANALYSIS_VERSION = 1;
 const GRAB_W = 320;
@@ -145,25 +146,38 @@ function buildPairs(candidates, clipsWithOrient, duration, cutThreshold) {
 
 /**
  * Full analysis: probe, scene scan, per-clip orientation, pairing.
+ * With filmWeights (one 0–1 weight per play expected on this film), the cut threshold is
+ * chosen automatically by matching film pairs to the play-by-play.
  * onProgress({phase, fraction, message})
  */
-async function analyzeFilm(file, { onProgress = () => {}, signal, cutThreshold = 0.1 } = {}) {
+async function analyzeFilm(file, { onProgress = () => {}, signal, cutThreshold = 0.1, filmWeights = null } = {}) {
+  const auto = detection.validWeights(filmWeights);
+  const candidateThreshold = auto ? detection.MIN_CUT_THRESHOLD : Math.min(0.06, cutThreshold);
   const st = fs.statSync(file);
   onProgress({ phase: 'probe', fraction: 0, message: 'Reading film info' });
   const info = await probe(file);
   onProgress({ phase: 'scan', fraction: 0, message: 'Detecting camera cuts' });
   const candidates = await detectScenes(file, info.duration, {
-    candidateThreshold: Math.min(0.06, cutThreshold),
+    candidateThreshold,
     signal,
     onProgress: (f) => onProgress({ phase: 'scan', fraction: f, message: 'Detecting camera cuts' }),
   });
-  const cuts = scenes.cutsFromScores(candidates, { threshold: cutThreshold, minGap: 0.4 });
-  const clips = scenes.clipsFromCuts(cuts.map((c) => c.time), info.duration);
+  let clips = detection.clipsAtThreshold(candidates, info.duration, auto ? candidateThreshold : cutThreshold);
   onProgress({ phase: 'classify', fraction: 0, message: `Classifying ${clips.length} clips` });
   await classifyClips(file, clips, {
     signal,
     onProgress: (f) => onProgress({ phase: 'classify', fraction: f, message: `Classifying ${clips.length} clips` }),
   });
+  let tuning = null;
+  if (auto) {
+    onProgress({ phase: 'classify', fraction: 1, message: 'Matching cuts to the play-by-play' });
+    const chosen = detection.chooseCutThreshold({ candidates, fineClips: clips, duration: info.duration, filmWeights, minThreshold: candidateThreshold });
+    cutThreshold = chosen.threshold;
+    tuning = chosen.tuning;
+    const merged = chosen.clips.filter((c) => c.estimated);
+    if (merged.length) await classifyClips(file, merged, { signal });
+    clips = chosen.clips.map(({ estimated, ...clip }) => clip);
+  }
   const pairs = pairClips(clips);
   onProgress({ phase: 'done', fraction: 1, message: `Found ${pairs.length} plays` });
   return {
@@ -172,7 +186,10 @@ async function analyzeFilm(file, { onProgress = () => {}, signal, cutThreshold =
     size: st.size,
     mtimeMs: st.mtimeMs,
     createdAt: new Date().toISOString(),
+    cutMode: auto ? 'auto' : 'manual',
     cutThreshold,
+    candidateThreshold,
+    ...(tuning ? { tuning } : {}),
     info,
     candidates: candidates.map((c) => ({ time: Math.round(c.time * 1e5) / 1e5, score: Math.round(c.score * 1e4) / 1e4 })),
     clips,
