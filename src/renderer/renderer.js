@@ -7,6 +7,12 @@ const ADV = A22.advanced;
 const PRESETS = A22.filterPresets;
 const REPORT = A22.reports;
 const $ = (id) => document.getElementById(id);
+const REPORT_FIELD_PRESETS = {
+  basic: ['airYards', 'epa'],
+  coach: ['airYards', 'epa', 'personnel', 'defense', 'formation', 'qbLocation', 'backfield', 'box', 'motion',
+    'playAction', 'rpo', 'screen', 'noHuddle', 'qbSneak', 'rushers', 'blitzers', 'coverage', 'manZone'],
+  everything: REPORT.ADVANCED_FIELDS.map((field) => field.key),
+};
 
 // Cut times are frame timestamps rounded to ~0.01 s, and the frame grid's phase changes from
 // clip to clip (A22 files are stitched together), so positions are kept on a grid relative to
@@ -27,7 +33,10 @@ const S = {
   splitFilms: {},
   filmRevision: 0,
   filmSetupOpen: false,
+  suggestedFilms: [],
   analyzing: false,
+  batchAnalyzing: false,
+  coverageRetune: [],
   fps: 59.94,
   pairs: [],
   curPlay: -1,
@@ -52,12 +61,185 @@ let analysisLab = null;
 let analysisFilterSource = null;
 let analysisSelectionMatches = null;
 let highlightEditor = null;
+let statusToastTimer = null;
+
+function persistLastSelection() {
+  try { localStorage.setItem('amp22.lastSelection', JSON.stringify(S.sel)); }
+  catch (error) { setStatus(`Game selection could not be saved: ${error.message}`, true); }
+}
+
+function renderAlignmentTimeline() {
+  const anchors = corrections().anchors || {};
+  const entries = Object.entries(anchors).filter(([, key]) => key !== null);
+  const mapped = new Map();
+  for (const [playId, key] of entries) {
+    const index = S.plays.findIndex(play => String(play.playId) === String(playId));
+    const pair = pairIndexForKey(key);
+    if (index >= 0 && pair >= 0) mapped.set(pair, index);
+  }
+  $('alignment-summary').textContent = `${entries.length} corrections · ${S.pairs.length} clips`;
+  $('alignment-timeline').innerHTML = S.pairs.map((pair, index) => {
+    const playIndex = mapped.get(index);
+    const corrected = playIndex != null;
+    const title = corrected ? `${P.clockLabel(S.plays[playIndex])} linked to clip ${index + 1}` : `Clip ${index + 1}`;
+    return `<button type="button" class="${corrected ? 'corrected ' : ''}${index === S.curPair ? 'current' : ''}" data-alignment-pair="${index}" aria-label="${esc(title)}" title="${esc(title)}"></button>`;
+  }).join('');
+}
+
+function renderSuggestedFilms() {
+  const host = $('film-suggestions');
+  if (!host) return;
+  const candidates = S.suggestedFilms.slice(0, 5);
+  host.hidden = !candidates.length;
+  host.innerHTML = candidates.length
+    ? `<strong>Suggested files</strong>${candidates.map((candidate, index) => {
+      const name = candidate.path.split(/[\\/]/).pop();
+      const why = `${candidate.a22 ? 'A22 name' : 'video'} · match score ${candidate.score}`;
+      return `<button type="button" data-film-suggestion="${index}">${esc(name)}<span class="suggestion-reason">${why}</span></button>`;
+    }).join('')}`
+    : '';
+}
+
+async function chooseSuggestedFilm(index) {
+  const candidate = S.suggestedFilms[index];
+  if (!candidate || isSplitFilm()) return;
+  const revision = S.filmRevision;
+  await saveGame({ filmPath: candidate.path });
+  if (revision !== S.filmRevision) return;
+  closeFilm();
+  await openFilm(candidate.path);
+  selectFirstLinked();
+}
+
+function renderCommandResults(query = '') {
+  const q = query.trim().toLowerCase();
+  const actions = [
+    ['Open film…', 'Choose or change this game’s film', 'open-film'],
+    ['Game library', 'Browse scheduled games and saved film', 'game-library'],
+    ['Settings', 'Playback, folders, export, and accessibility', 'settings'],
+    ['Film Room', 'Watch synced film', 'mode-film'],
+    ['Analysis Lab', 'Explore personnel and efficiency', 'mode-analysis'],
+    ['Export clip', 'Export the selected play or plays', 'export-clip'],
+    ['Export stats', 'Export game statistics and participation', 'export-stats'],
+    ['Keyboard shortcuts', 'View and remap shortcuts', 'help'],
+  ].filter(([label, hint]) => `${label} ${hint}`.toLowerCase().includes(q));
+  const games = teamGames(S.sel.season, S.sel.team).map((game) =>
+    ({ label: gameLabel(game, S.sel.team), hint: `${game.season} ${S.sel.team}`, kind: 'game', value: game.gameId }))
+    .filter(item => `${item.label} ${item.hint}`.toLowerCase().includes(q))
+    .map(item => `<li role="option" tabindex="-1" data-command-kind="game" data-command-value="${esc(item.value)}"><strong>${esc(item.label)}</strong><span class="muted">${esc(item.hint)}</span></li>`);
+  $('command-results').innerHTML = actions.map(([label, hint, value]) =>
+    `<li role="option" tabindex="-1" data-command-kind="action" data-command-value="${value}"><strong>${label}</strong><span class="muted">${hint}</span></li>`).join('') + games.join('');
+  const first = $('command-results').querySelector('[role=option]');
+  first?.setAttribute('aria-selected', 'true');
+}
+
+function openCommandPalette() {
+  toggleOverlay('command-palette', true);
+  $('command-search').value = '';
+  renderCommandResults();
+  $('command-search').focus();
+}
+
+async function openGameLibrary() {
+  toggleOverlay('game-library', true);
+  const host = $('library-games');
+  host.textContent = 'Checking saved film and suggestions…';
+  const games = teamGames(S.sel.season, S.sel.team);
+  try {
+    const summaries = await window.api.getFilmLibrary(games.map(game => ({
+      gameId: game.gameId, season: game.season, week: game.week, team: S.sel.team,
+      opponent: game.homeTeam === S.sel.team ? game.awayTeam : game.homeTeam,
+    })));
+    if ($('game-library').hidden) return;
+    host.innerHTML = games.map((game, index) => ({ game, summary: summaries[index] }))
+      .sort((a, b) => Number(b.summary.hasFilm) - Number(a.summary.hasFilm) || a.game.week - b.game.week)
+      .map(({ game, summary }) => {
+      const state = !summary.hasFilm ? 'No film found' : summary.analyzed ? 'Analyzed' :
+        summary.suggested ? 'Film suggested' : 'Film saved · not analyzed';
+      return `<div class="library-game"><button type="button" data-library-game="${esc(game.gameId)}">${esc(gameLabel(game, S.sel.team))}</button><span class="muted">${esc(summary.filmNames.join(', ') || state)}</span><strong>${state}</strong></div>`;
+    }).join('');
+  } catch (error) {
+    host.textContent = `Could not load game library: ${error.message}`;
+  }
+}
+
+async function analyzeNewLibraryFilms() {
+  const button = $('library-analyze-new');
+  if (button.disabled) return;
+  button.disabled = true;
+  S.batchAnalyzing = true;
+  const original = { ...S.sel };
+  const originalMode = S.mode;
+  let completed = 0;
+  let attempted = 0;
+  try {
+    if (S.mode !== 'film') await setWorkspaceMode('film', false);
+    const games = teamGames(S.sel.season, S.sel.team);
+    const summaries = await window.api.getFilmLibrary(games.map(game => ({
+      gameId: game.gameId, season: game.season, week: game.week, team: S.sel.team,
+      opponent: game.homeTeam === S.sel.team ? game.awayTeam : game.homeTeam,
+    })));
+    const pending = games.filter((_game, index) => summaries[index].hasFilm && !summaries[index].analyzed && !summaries[index].suggested);
+    for (const game of pending) {
+      attempted++;
+      $('library-status').textContent = `Analyzing ${gameLabel(game, S.sel.team)} (${attempted}/${pending.length})…`;
+      S.sel = { season: game.season, team: original.team, week: game.week, gameId: game.gameId };
+      renderSelectors();
+      await loadGame(false);
+      if (S.film && !S.film.analysis && !S.analyzing) await analyze(false);
+      while (S.analyzing) await new Promise(resolve => setTimeout(resolve, 250));
+      if (S.film?.analysis || S.pairs.length) completed++;
+    }
+    $('library-status').textContent = `Analyzed ${completed} of ${pending.length} saved games.`;
+  } catch (error) {
+    $('library-status').textContent = `Batch analysis stopped: ${error.message}`;
+  } finally {
+    S.sel = original;
+    if (S.mode !== originalMode) await setWorkspaceMode(originalMode, false);
+    renderSelectors();
+    try { await loadGame(false); } finally { S.batchAnalyzing = false; }
+    button.disabled = false;
+    openGameLibrary();
+  }
+}
+
+function runCommand(action) {
+  toggleOverlay('command-palette', false);
+  if (action === 'open-film') {
+    $('btn-film').click();
+  } else if (action === 'game-library') openGameLibrary();
+  else if (action === 'settings') { draft = null; toggleOverlay('settings', true); }
+  else if (action === 'mode-film') setWorkspaceMode('film');
+  else if (action === 'mode-analysis') setWorkspaceMode('analysis');
+  else if (action === 'export-clip') {
+    if (!$('btn-share').disabled) openShare();
+    else setStatus('Select a play with linked film before exporting a clip.', false);
+  } else if (action === 'export-stats') {
+    if (!$('btn-export-data').disabled) $('btn-export-data').click();
+    else setStatus('Load a game before exporting statistics.', false);
+  } else if (action === 'help') toggleOverlay('help', true);
+}
+
+function applyComfortSettings(settings) {
+  document.body.dataset.theme = settings.uiTheme === 'system'
+    ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : settings.uiTheme;
+  document.documentElement.style.setProperty('--ui-scale', String(settings.textScale));
+  document.documentElement.style.setProperty('--sidebar-width', `${settings.sidebarWidth}px`);
+  $('sidebar-resizer')?.setAttribute('aria-valuenow', String(settings.sidebarWidth));
+}
+
+function lastPlayId() {
+  try { return localStorage.getItem(`amp22.lastPlay.${S.sel.gameId}.${S.sel.team}`); }
+  catch (error) { setStatus(`Last-play preference could not be read: ${error.message}`, true); return null; }
+}
 
 function filterSource() {
   return S.mode === 'analysis' && analysisFilterSource !== null ? analysisFilterSource : S.plays;
 }
 
 async function setWorkspaceMode(mode, reload = true) {
+  const analysisEntry = mode === 'analysis' && S.mode === 'film' ? prepareAnalysisEntry() : null;
   S.mode = mode;
   document.body.classList.toggle('analysis-mode', mode === 'analysis');
   $('viewer').hidden = mode === 'analysis';
@@ -66,9 +248,32 @@ async function setWorkspaceMode(mode, reload = true) {
   $('mode-analysis').setAttribute('aria-pressed', String(mode === 'analysis'));
   $('analysis-sidebar-note').hidden = mode !== 'analysis';
   $('analysis-perspective').hidden = mode !== 'analysis';
+  $('lab-selection-controls').hidden = mode !== 'analysis';
   try { localStorage.setItem('amp22.workspace', mode); }
   catch (error) { setStatus(`Workspace preference could not be saved: ${error.message}`, true); }
-  if (reload && S.sel.gameId) await loadGame(undefined, { preserveFilters: true, preservePlay: true });
+  if (reload && S.sel.gameId) {
+    await loadGame(undefined, { preserveFilters: true, preservePlay: true });
+    if (analysisEntry) {
+      if (analysisEntry.playIds.length) {
+        const playIds = new Set(analysisEntry.playIds);
+        analysisLab?.selectFilmPlays(S.plays.filter(play => playIds.has(play.playId)));
+      } else if (!analysisEntry.preserveFilters) {
+        analysisLab?.clearSelectionFilter();
+      }
+    }
+  }
+}
+
+function prepareAnalysisEntry() {
+  const playIds = S.multiSelect
+    ? [...S.selected].map(index => S.plays[index]?.playId).filter(playId => playId != null)
+    : [];
+  const preserveFilters = activeAdvancedCount() > 0 || !!S.appliedPreset;
+  if (!preserveFilters) {
+    S.filter = PRESETS.emptyFilter();
+    S.appliedPreset = null;
+  }
+  return { playIds, preserveFilters };
 }
 
 function analysisFilterDescription() {
@@ -102,9 +307,20 @@ function esc(s) {
 }
 function setStatus(msg, isErr) {
   const el = $('status');
-  el.textContent = msg || '';
-  el.title = msg || '';
-  el.style.color = isErr ? 'var(--bad)' : '';
+  if (isErr && msg) {
+    const toast = $('app-toast');
+    if (toast) {
+      toast.textContent = msg;
+      toast.hidden = false;
+      clearTimeout(statusToastTimer);
+      statusToastTimer = setTimeout(() => { toast.hidden = true; }, 9000);
+    }
+    el.textContent = '';
+    el.title = '';
+  } else {
+    el.textContent = msg || '';
+    el.title = msg || '';
+  }
 }
 function showMessage(html) {
   $('message').innerHTML = html ? `<div>${html}</div>` : '';
@@ -146,6 +362,7 @@ async function saveCorrections(patch) {
 
 function applySettings(s) {
   S.settings = mergeSettings(s);
+  applyComfortSettings(S.settings);
   S.keymap = buildKeymap(S.settings.shortcuts);
   S.speedIdx = Math.min(S.speedIdx, S.settings.speeds.length - 1);
   updateSpeedLabel();
@@ -211,6 +428,7 @@ function onSelectorChange(which) {
     gameId = g ? g.gameId : null;
   }
   S.sel = { season, team, gameId };
+  persistLastSelection();
   renderSelectors();
   document.activeElement.blur();
   loadGame();
@@ -221,8 +439,20 @@ async function loadSchedule(force) {
   try {
     const r = await window.api.getSchedule({ force });
     S.games = r.games;
-    if (!S.sel.gameId) S.sel = { ...r.defaultSelection };
-    setStatus(r.warning || '', !!r.warning);
+    if (!S.sel.gameId) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('amp22.lastSelection') || 'null');
+        const game = saved && S.games.find((item) => item.gameId === saved.gameId &&
+          item.season === Number(saved.season) && [item.homeTeam, item.awayTeam].includes(saved.team));
+        if (game) S.sel = { season: game.season, team: saved.team, week: game.week, gameId: game.gameId };
+        else S.sel = { ...r.defaultSelection };
+      } catch (error) {
+        setStatus(`Last-game preference could not be loaded: ${error.message}`, true);
+        S.sel = { ...r.defaultSelection };
+      }
+      persistLastSelection();
+    }
+    setStatus(S.mode === 'analysis' ? '' : r.warning || '', false);
     renderSelectors();
     return true;
   } catch (e) {
@@ -235,7 +465,7 @@ async function loadSchedule(force) {
 /* ---------------- game loading ---------------- */
 
 async function loadGame(force, { preserveFilters = false, preservePlay = false } = {}) {
-  const playId = preservePlay ? S.plays[S.curPlay]?.playId : null;
+  const playId = preservePlay ? S.plays[S.curPlay]?.playId : lastPlayId();
   analysisLab?.invalidate();
   const gameId = S.sel.gameId;
   const team = S.sel.team;
@@ -264,6 +494,8 @@ async function loadGame(force, { preserveFilters = false, preservePlay = false }
   const gameData = gameId ? await window.api.getGame(gameId) : {};
   if (revision !== S.filmRevision) return;
   S.gameData = gameData;
+  S.suggestedFilms = [];
+  renderSuggestedFilms();
   renderFilmControls();
   const opp = S.game ? (S.game.homeTeam === S.sel.team ? S.game.awayTeam : S.game.homeTeam) : '';
   if (S.mode !== 'analysis' && !preserveFilters) S.filter.offense = '';
@@ -277,7 +509,7 @@ async function loadGame(force, { preserveFilters = false, preservePlay = false }
       if (S.sel.gameId !== gameId || S.sel.team !== team || revision !== S.filmRevision) return;
       S.plays = r.plays;
       S.participationWarning = r.warning || '';
-      setStatus(r.warning || '', !!r.warning);
+      setStatus(S.mode === 'analysis' ? '' : r.warning || '', false);
     } catch (e) {
       if (revision !== S.filmRevision) return;
       S.participationWarning = e.message;
@@ -304,6 +536,8 @@ async function loadGame(force, { preserveFilters = false, preservePlay = false }
   if (!filmPath && S.game) {
     const s = await window.api.suggestFilm({ week: S.game.week, opponent: opp, season: S.game.season, team: S.sel.team });
     if (revision !== S.filmRevision) return;
+    S.suggestedFilms = s.ranked || [];
+    renderSuggestedFilms();
     if (s.auto) {
       filmPath = s.auto;
       await saveGame({ filmPath });
@@ -313,7 +547,7 @@ async function loadGame(force, { preserveFilters = false, preservePlay = false }
   if (filmPath) await openFilm(filmPath);
   else {
     closeFilm();
-    showMessage('Choose an All-22 file containing both sideline and end zone angles.<br><span class="muted">Tip: set a film folder in Settings ⚙ to find files automatically.</span>');
+    showMessage('Choose an All-22 file containing both sideline and end zone angles.<br><span class="muted">Drop a video here, choose a file, or set a film folder to see suggestions.</span>');
   }
   selectFirstLinked({ playId });
 }
@@ -334,7 +568,8 @@ function derivePlays(list = S.plays) {
     p.neg = P.negativeReasons(p, S.settings.keyPlays);
     p.box = P.boxScore(p);
     const players = [...(p.onField?.offense || []), ...(p.onField?.defense || [])];
-    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat} ${ADV.tags(p).join(' ')} ${players.map((x) => `${x.name} ${x.position} ${x.number}`).join(' ')}`.toLowerCase();
+    const annotation = S.gameData.playAnnotations?.[p.playId];
+    p.searchText = `${p.desc} ${p.posteam} ${P.downDistance(p)} ${p.key.join(' ')} ${p.neg.join(' ')} ${p.cat} ${ADV.tags(p).join(' ')} ${players.map((x) => `${x.name} ${x.position} ${x.number}`).join(' ')} ${annotation?.note || ''} ${(annotation?.tags || []).join(' ')}`.toLowerCase();
   }
 }
 
@@ -394,6 +629,11 @@ function renderFilmSetup() {
   $('film-setup-toggle').hidden = !ready || open;
   $('film-setup-toggle').setAttribute('aria-expanded', String(open));
   $('film-setup-close').hidden = !ready || !!S.analyzing;
+  $('timeline').hidden = !ready;
+  $('transport').hidden = !ready;
+  $('alignment-tools').hidden = !ready;
+  $('film-folder-clear').hidden = !S.settings?.filmRoot;
+  $('film-folder-choose').textContent = S.settings?.filmRoot ? 'Change folder…' : 'Choose folder…';
   $('film-setup-game').textContent = S.game ? gameLabel(S.game, S.sel.team) : '';
   $('film-setup-message').innerHTML = $('message').innerHTML;
   $('message').hidden = open;
@@ -431,6 +671,7 @@ function selectFirstLinked({ playId = null } = {}) {
   const first = preferred >= 0 ? preferred : S.visible.find((i) => S.mapping[i] != null);
   if (first != null) selectPlay(first, { autoplay: false });
   else renderInfo();
+  checkFilmCoverage();
 }
 
 async function openSplitFilms({ playId = null } = {}) {
@@ -495,12 +736,15 @@ function setAnalysis(analysis) {
   renderFilmSetup();
 }
 
-async function analyze(force) {
+async function analyze(force, { auto = false, films: only = null } = {}) {
   if (!S.film || S.analyzing) return;
   const revision = S.filmRevision;
   const split = isSplitFilm();
-  const films = split ? Object.values(S.splitFilms).filter((film) => force || !film.analysis) : [S.film];
+  const current = split ? Object.values(S.splitFilms) : [S.film];
+  const films = only ? only.filter((film) => current.includes(film)) : split ? current.filter((film) => force || !film.analysis) : current;
+  if (!films.length) return;
   const run = {};
+  let finished = false;
   S.analyzing = run;
   $('progress').hidden = false;
   $('btn-analyze').hidden = true;
@@ -509,7 +753,7 @@ async function analyze(force) {
     for (const film of films) {
       if (revision !== S.filmRevision) return;
       S.progressFile = film.path;
-      const a = await window.api.analyzeFilm(film.path, force);
+      const a = await window.api.analyzeFilm(film.path, force, { filmWeights: filmWeightsFor(film), auto });
       if (revision !== S.filmRevision) return;
       film.analysis = a;
       if (split) rebuildSplitPairs();
@@ -517,7 +761,9 @@ async function analyze(force) {
       selectFirstLinked();
       if (S.curPair < 0 && S.pairs.length) loadPair(0, { autoplay: false });
     }
-    setStatus(`Found ${S.pairs.length} plays on film`);
+    const coverage = filmCoverage();
+    setStatus(`Found ${S.pairs.length} plays on film${coverage.expected ? ` · ${coverage.expected - coverage.unmatched.length} of ${coverage.expected} expected plays linked` : ''}`);
+    finished = true;
   } catch (e) {
     if (revision === S.filmRevision) {
       $('btn-analyze').hidden = false;
@@ -530,8 +776,78 @@ async function analyze(force) {
       $('progress').hidden = true;
       if (isSplitFilm()) rebuildSplitPairs();
       renderFilmSetup();
+      if (finished) checkFilmCoverage();
     }
   }
+}
+
+/* ---------------- film coverage ---------------- */
+
+const COVERAGE_ALERT_RATIO = 0.05;
+const COVERAGE_ALERTS_KEY = 'amp22.coverageAlerts';
+
+/** Film weight (0–1 chance of being on film) of each play this film should contain, in game order. */
+function filmWeightsFor(film) {
+  const anchors = corrections().anchors || {};
+  const role = isSplitFilm() ? Object.keys(S.splitFilms).find((key) => S.splitFilms[key] === film) : null;
+  const weights = S.plays
+    .filter((p) => anchors[p.playId] !== null && (!role || A22.align.filmRole(p, S.sel.team) === role))
+    .map((p) => p.filmWeight);
+  return weights.some((w) => w > 0) ? weights : null;
+}
+
+/** Plays that should be on analyzed film but have no linked clip (plays marked "No film" are excluded). */
+function filmCoverage() {
+  const anchors = corrections().anchors || {};
+  const split = isSplitFilm();
+  let expected = 0;
+  const unmatched = [];
+  S.plays.forEach((p, i) => {
+    if (p.filmWeight < 1 || anchors[p.playId] === null) return;
+    if (split && !S.splitFilms[A22.align.filmRole(p, S.sel.team)]?.analysis) return;
+    expected++;
+    if (S.mapping[i] == null) unmatched.push(i);
+  });
+  return { expected, unmatched, ratio: expected ? unmatched.length / expected : 0 };
+}
+
+/** Offers recovery once per analysis when more than 5% of expected plays have no film. */
+function checkFilmCoverage() {
+  if (!S.film || !S.pairs.length || S.analyzing || S.batchAnalyzing || S.mode !== 'film') return;
+  const films = (isSplitFilm() ? Object.values(S.splitFilms) : [S.film]).filter(Boolean);
+  if (S.settings.autoAnalyze && films.some((film) => !film.analysis)) return;
+  if ([...document.querySelectorAll('.overlay')].some((overlay) => !overlay.hidden)) return;
+  const coverage = filmCoverage();
+  if (!coverage.expected || coverage.ratio <= COVERAGE_ALERT_RATIO) return;
+  const key = [S.sel.gameId, S.sel.team, ...films.filter((film) => film.analysis)
+    .map((film) => `${film.path}@${film.analysis.createdAt}`)].join('|');
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem(COVERAGE_ALERTS_KEY) || '[]'); } catch { /* Treat unreadable history as empty. */ }
+  if (!Array.isArray(seen)) seen = [];
+  if (seen.includes(key)) return;
+  try { localStorage.setItem(COVERAGE_ALERTS_KEY, JSON.stringify([...seen, key].slice(-100))); } catch { /* Best effort. */ }
+  S.coverageRetune = films.filter((film) => film.analysis && film.analysis.cutMode !== 'auto');
+  const n = coverage.unmatched.length;
+  $('film-coverage-title').textContent = `${n} ${n === 1 ? 'play has' : 'plays have'} no film`;
+  $('film-coverage-summary').textContent = `${n} of ${coverage.expected} plays (${Math.round(coverage.ratio * 100)}%) didn't match a film clip.`;
+  $('film-coverage-detail').textContent = S.coverageRetune.length
+    ? 'This film was analyzed with a fixed cut sensitivity. Automatic detection uses the play-by-play to choose the sensitivity that finds the most plays. It takes about 3–5 minutes per film.'
+    : 'Cut detection was already matched to the play-by-play, so these plays may be missing from the film or may need to be linked by hand.';
+  $('film-coverage-reanalyze').hidden = !S.coverageRetune.length;
+  $('film-coverage-review').classList.toggle('primary', !S.coverageRetune.length);
+  toggleOverlay('film-coverage-dialog', true);
+}
+
+function reviewUnmatchedPlays() {
+  toggleOverlay('film-coverage-dialog', false);
+  const { unmatched } = filmCoverage();
+  const visible = new Set(S.visible);
+  const first = unmatched.find((i) => visible.has(i)) ?? unmatched[0];
+  if (first == null) return;
+  selectPlay(first, { autoplay: false });
+  $('alignment-tools').open = true;
+  $('alignment-tools').scrollIntoView?.({ block: 'nearest' });
+  setStatus(`${unmatched.length} unmatched plays · browse with ◀ clip / clip ▶, then Link clip ↔ play`);
 }
 
 /* ---------------- play list ---------------- */
@@ -540,11 +856,13 @@ const RESULT_FILTERS = {
   key: (p) => p.key.length > 0,
   negative: (p) => p.neg.length > 0,
   sack: (p) => p.flags.sack && p.playType !== 'no_play',
+  incomplete: (p) => p.flags.incomplete_pass && p.playType !== 'no_play',
   turnover: (p) => p.key.some((k) => ['INT', 'FUM', 'TOD'].includes(k)) || (p.playType !== 'no_play' && (p.flags.interception || p.flags.fumble_lost)),
   score: (p) => p.key.some((k) => ['TD', 'FG', 'SAF', '2PT'].includes(k)) || (p.playType !== 'no_play' && (p.flags.touchdown || p.fieldGoalResult === 'made')),
   big: (p) => p.key.includes('BIG'),
   firstdown: (p) => p.flags.first_down && p.playType !== 'no_play',
   penalty: (p) => p.flags.penalty,
+  bookmark: (p) => !!S.gameData.playAnnotations?.[p.playId]?.bookmarked,
 };
 
 /** Inclusive numeric bounds (S.filter[`${key}Min`/`${key}Max`]); plays without a value are excluded while a bound is set. */
@@ -585,11 +903,19 @@ function syncFilterControls() {
   $('search').value = S.filter.text;
   $('sel-offense').value = S.filter.offense;
   $('sel-result').value = S.filter.result;
+  $('adv-result-filter').value = S.filter.result;
   renderQuarters();
   document.querySelectorAll('#type-chips button').forEach(button => button.classList.toggle('on', button.dataset.type === S.filter.type));
   for (const [prefix, key] of [['air-yards', 'air'], ['yards', 'yards'], ['dist', 'dist']]) {
     for (const bound of ['min', 'max']) $(`${prefix}-${bound}`).value = S.filter[`${key}${bound === 'min' ? 'Min' : 'Max'}`] ?? '';
   }
+}
+
+function setResultFilter(value) {
+  S.filter.result = value;
+  $('sel-result').value = value;
+  $('adv-result-filter').value = value;
+  renderList();
 }
 
 function chooseFilterPreset(name, withoutPlayers = false) {
@@ -694,27 +1020,27 @@ const YES_NO = [['true', 'Yes'], ['false', 'No']];
  * the values present in the game.
  */
 const ADV_CHOICES = [
-  { key: 'down', label: 'Down', get: (p) => p.down, options: [['1', '1st'], ['2', '2nd'], ['3', '3rd'], ['4', '4th']] },
-  { key: 'player', label: 'On-field player', get: (p) => [...(p.onField?.offense || []), ...(p.onField?.defense || [])].map(ADV.playerKey).filter(Boolean), options: 'players' },
-  { key: 'offPersonnel', label: 'Off. personnel', get: (p) => ADV.formatOffensePackage(p.personnel?.offense, p), options: 'values', title: 'RB count then TE count; extra OL count as TEs, with total OL in parentheses. Direct snaps to backs/WRs append Wildcat; TE snaps or FTN QB sneaks append Tush push.' },
-  { key: 'defPackage', label: 'Def. package', get: (p) => p.personnel?.defense, options: 'values', order: ADV.DEFENSE_ORDER, title: 'Jumbo: 4+ DL, 2+ OLB and at most 4 DBs. Jumbo nickel: 3 DL, 1 OLB, 2 ILB/MLB and 5 DBs. 32 dime: 3 DL/OLB combined, 2 ILB/MLB and 6 DBs. Complete listed-position estimates. Otherwise 4 DBs: front (DL-LB); 5: Nickel; 6: Dime; 7+: Quarter; 3 or fewer: Goal line' },
-  { key: 'qbLocation', label: 'QB alignment', get: (p) => p.charting?.qbLocation, options: 'values' },
-  { key: 'formation', label: 'Formation', get: (p) => p.charting?.formation, options: 'values' },
-  { key: 'backfield', label: 'Backfield', get: (p) => p.charting?.backfield, options: [['0', '0 (empty)'], ['1', '1'], ['2', '2'], ['3+', '3+']], title: 'Offensive players in the backfield, excluding the QB' },
-  { key: 'box', label: 'Box count', get: (p) => p.charting?.box, options: [['<=5', '5 or fewer'], ['6', '6'], ['7', '7'], ['8+', '8+']], title: 'Defenders in the box at the snap' },
-  { key: 'rushers', label: 'Pass rushers', get: (p) => p.charting?.rushers, options: [['<=3', '3 or fewer'], ['4', '4'], ['5+', '5+'], ['6+', '6+']] },
-  { key: 'blitzers', label: 'Blitzers', get: (p) => p.charting?.blitzers, options: [['0', 'No blitz'], ['1+', 'Blitz (1+)'], ['2+', '2+']] },
-  { key: 'blitz', label: 'NGS blitz', get: (p) => p.charting?.blitz, options: YES_NO, title: 'NFL Pro / Next Gen Stats flag, not an FTN blitzer count' },
-  { key: 'pressure', label: 'NGS pressure', get: (p) => p.charting?.pressure, options: YES_NO },
-  { key: 'boxCategory', label: 'NGS box', get: (p) => p.charting?.boxCategory, options: 'values', title: 'NFL Pro categories: Light (<7), Neutral (7), Stacked (8+). Does not supply an exact FTN box count.' },
-  { key: 'defPersonnelGroup', label: 'NGS personnel', get: (p) => p.charting?.defPersonnelGroup, options: 'values', title: 'NFL Pro Base/Nickel/Dime group, not a confirmed defensive front or inferred player-position package' },
-  { key: 'motion', label: 'Motion', get: (p) => p.charting?.motion, options: YES_NO },
-  { key: 'playAction', label: 'Play action', get: (p) => p.charting?.playAction, options: YES_NO },
-  { key: 'rpo', label: 'RPO', get: (p) => p.charting?.rpo, options: YES_NO },
-  { key: 'screen', label: 'Screen', get: (p) => p.charting?.screen, options: YES_NO },
-  { key: 'noHuddle', label: 'No-huddle', get: (p) => p.charting?.noHuddle, options: YES_NO },
-  { key: 'coverage', label: 'Coverage', get: (p) => p.charting?.coverage, options: 'values' },
-  { key: 'manZone', label: 'Man/zone', get: (p) => p.charting?.manZone, options: 'values' },
+  { key: 'down', group: 'situation', label: 'Down', get: (p) => p.down, options: [['1', '1st'], ['2', '2nd'], ['3', '3rd'], ['4', '4th']] },
+  { key: 'player', group: 'players', label: 'On-field player', get: (p) => [...(p.onField?.offense || []), ...(p.onField?.defense || [])].map(ADV.playerKey).filter(Boolean), options: 'players' },
+  { key: 'offPersonnel', group: 'presnap', label: 'Off. personnel', get: (p) => ADV.formatOffensePackage(p.personnel?.offense, p), options: 'values', title: 'RB count then TE count; extra OL count as TEs, with total OL in parentheses. Direct snaps to backs/WRs append Wildcat; TE snaps or FTN QB sneaks append Tush push.' },
+  { key: 'defPackage', group: 'defense', label: 'Def. package', get: (p) => p.personnel?.defense, options: 'values', order: ADV.DEFENSE_ORDER, title: 'Jumbo: 4+ DL, 2+ OLB and at most 4 DBs. Jumbo nickel: 3 DL, 1 OLB, 2 ILB/MLB and 5 DBs. 32 dime: 3 DL/OLB combined, 2 ILB/MLB and 6 DBs. Complete listed-position estimates. Otherwise 4 DBs: front (DL-LB); 5: Nickel; 6: Dime; 7+: Quarter; 3 or fewer: Goal line' },
+  { key: 'qbLocation', group: 'presnap', label: 'QB alignment', get: (p) => p.charting?.qbLocation, options: 'values' },
+  { key: 'formation', group: 'presnap', label: 'Formation', get: (p) => p.charting?.formation, options: 'values' },
+  { key: 'backfield', group: 'presnap', label: 'Backfield', get: (p) => p.charting?.backfield, options: [['0', '0 (empty)'], ['1', '1'], ['2', '2'], ['3+', '3+']], title: 'Offensive players in the backfield, excluding the QB' },
+  { key: 'box', group: 'defense', label: 'Box count', get: (p) => p.charting?.box, options: [['<=5', '5 or fewer'], ['6', '6'], ['7', '7'], ['8+', '8+']], title: 'Defenders in the box at the snap' },
+  { key: 'rushers', group: 'passing', label: 'Pass rushers', get: (p) => p.charting?.rushers, options: [['<=3', '3 or fewer'], ['4', '4'], ['5+', '5+'], ['6+', '6+']] },
+  { key: 'blitzers', group: 'passing', label: 'Blitzers', get: (p) => p.charting?.blitzers, options: [['0', 'No blitz'], ['1+', 'Blitz (1+)'], ['2+', '2+']] },
+  { key: 'blitz', group: 'defense', label: 'NGS blitz', get: (p) => p.charting?.blitz, options: YES_NO, title: 'NFL Pro / Next Gen Stats flag, not an FTN blitzer count' },
+  { key: 'pressure', group: 'defense', label: 'NGS pressure', get: (p) => p.charting?.pressure, options: YES_NO },
+  { key: 'boxCategory', group: 'defense', label: 'NGS box', get: (p) => p.charting?.boxCategory, options: 'values', title: 'NFL Pro categories: Light (<7), Neutral (7), Stacked (8+). Does not supply an exact FTN box count.' },
+  { key: 'defPersonnelGroup', group: 'defense', label: 'NGS personnel', get: (p) => p.charting?.defPersonnelGroup, options: 'values', title: 'NFL Pro Base/Nickel/Dime group, not a confirmed defensive front or inferred player-position package' },
+  { key: 'motion', group: 'presnap', label: 'Motion', get: (p) => p.charting?.motion, options: YES_NO },
+  { key: 'playAction', group: 'presnap', label: 'Play action', get: (p) => p.charting?.playAction, options: YES_NO },
+  { key: 'rpo', group: 'presnap', label: 'RPO', get: (p) => p.charting?.rpo, options: YES_NO },
+  { key: 'screen', group: 'presnap', label: 'Screen', get: (p) => p.charting?.screen, options: YES_NO },
+  { key: 'noHuddle', group: 'presnap', label: 'No-huddle', get: (p) => p.charting?.noHuddle, options: YES_NO },
+  { key: 'coverage', group: 'passing', label: 'Coverage', get: (p) => p.charting?.coverage, options: 'values' },
+  { key: 'manZone', group: 'passing', label: 'Man/zone', get: (p) => p.charting?.manZone, options: 'values' },
 ];
 
 function hasValue(v) {
@@ -821,29 +1147,33 @@ function renderPlayerFilter() {
 
 /** Preset selections stay explicit even when the game cannot satisfy them. */
 function renderAdvancedFilters() {
-  const html = [];
+  const groups = { situation: [], presnap: [], passing: [], defense: [], players: [] };
   const choices = {};
   const source = filterSource();
   const preserve = S.mode === 'analysis' || !!S.appliedPreset;
   for (const spec of ADV_CHOICES) {
+    const group = spec.group;
     const cur = S.filter.choices[spec.key];
     if (!source.some((p) => hasValue(spec.get(p))) && !(preserve && hasValue(cur))) continue;
     const opts = choiceOptions(spec).slice();
     if (spec.options === 'players') {
       const selected = [...new Set(Array.isArray(cur) ? cur : cur ? [cur] : [])].filter((id) => preserve || opts.some(([v]) => v === id));
       if (selected.length) choices[spec.key] = selected;
-      html.push('<div id="player-choice" class="player-choice"></div>');
+      groups[group].push('<div id="player-choice" class="player-choice"></div>');
       continue;
     }
     if (cur && (preserve || opts.some(([v]) => v === cur))) choices[spec.key] = cur;
     if (preserve && cur && !opts.some(([v]) => v === cur)) {
       opts.push([cur, `${cur} (${S.mode === 'analysis' ? 'not in scope' : 'unavailable this game'})`]);
     }
-    html.push(`<label${spec.title ? ` title="${esc(spec.title)}"` : ''}>${esc(spec.label)}<select data-choice="${spec.key}">` +
+    groups[group].push(`<label${spec.title ? ` title="${esc(spec.title)}"` : ''}>${esc(spec.label)}<select data-choice="${spec.key}">` +
       `<option value="">Any</option>${opts.map(([v, l]) => `<option value="${esc(v)}"${choices[spec.key] === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`);
   }
   S.filter.choices = choices;
-  $('adv-choices').innerHTML = html.join('');
+  for (const [key, html] of Object.entries(groups)) {
+      $(`adv-${key}`).innerHTML = html.join('');
+      if (key !== 'situation') $(`filter-${key}`).hidden = !html.length;
+  }
   renderPlayerFilter();
   renderFilterCounts();
   $('adv-note').hidden = !source.length || source.some((p) => p.personnel || p.charting);
@@ -931,8 +1261,8 @@ function filterChoiceCount(key, value, source = filterSource()) {
 function renderFilterCounts() {
   const source = filterSource();
   const selects = [
-    [$('sel-offense'), 'offense'], [$('sel-qtr'), 'qtr'], [$('sel-result'), 'result'],
-    ...Array.from(document.querySelectorAll('#adv-choices select:not([data-choice="player"])'),
+    [$('sel-offense'), 'offense'], [$('sel-qtr'), 'qtr'], [$('sel-result'), 'result'], [$('adv-result-filter'), 'result'],
+    ...Array.from(document.querySelectorAll('#adv-choices select:not([data-choice="player"]):not([data-result-filter])'),
       select => [select, select.dataset.choice]),
   ];
   for (const [select, key] of selects) {
@@ -954,6 +1284,52 @@ function renderFilterCounts() {
   $('clear-filters').hidden = !(S.filter.text || ['run', 'pass', 'special'].includes(S.filter.type) ||
     S.filter.offense || S.filter.qtr || S.filter.result || activeAdvancedCount() ||
     (S.mode === 'analysis' && analysisLab?.hasSelectionFilter()));
+  renderActiveFilterChips();
+}
+
+function renderActiveFilterChips() {
+  const chips = [];
+  const add = (key, label, value = '') => chips.push(`<span class="active-filter-chip">${esc(label)}<button type="button" data-clear-filter="${esc(key)}" data-filter-value="${esc(value)}" aria-label="Remove ${esc(label)} filter">&times;</button></span>`);
+  const f = S.filter;
+  if (f.text) add('text', `Search: ${f.text}`);
+  if (f.type !== 'all') add('type', f.type === 'special' ? 'Special teams' : f.type);
+  if (f.offense) add('offense', `Offense: ${f.offense}`);
+  if (f.qtr) add('qtr', `Quarter: ${f.qtr}`);
+  if (f.result) add('result', `Result: ${f.result}`);
+  for (const key of Object.keys(RANGE_FILTERS)) {
+    for (const bound of ['Min', 'Max']) {
+      const value = f[`${key}${bound}`];
+      if (value != null) add(`${key}${bound}`, `${key === 'air' ? 'Air yards' : key === 'dist' ? 'Yards to go' : 'Yards'} ${bound === 'Min' ? '≥' : '≤'} ${value}`);
+    }
+  }
+  for (const [key, value] of Object.entries(f.choices)) {
+    for (const selected of Array.isArray(value) ? value : value ? [value] : []) {
+      const name = key === 'player'
+        ? choiceOptions(ADV_CHOICES.find(spec => spec.key === key)).find(([id]) => id === selected)?.[2] || selected
+        : `${ADV_CHOICES.find(spec => spec.key === key)?.label || key}: ${selected}`;
+      add(`choice:${key}`, name, selected);
+    }
+  }
+  $('active-filter-chips').innerHTML = chips.join('');
+}
+
+function clearOneFilter(key, value) {
+  if (key === 'text') S.filter.text = '';
+  else if (key === 'type') S.filter.type = 'all';
+  else if (key === 'offense' || key === 'qtr' || key === 'result') S.filter[key] = '';
+  else if (/^(yards|air|dist)(Min|Max)$/.test(key)) S.filter[key] = null;
+  else if (key.startsWith('choice:')) {
+    const choice = key.slice(7);
+    const current = S.filter.choices[choice];
+    if (Array.isArray(current)) {
+      const next = current.filter(item => item !== value);
+      if (next.length) S.filter.choices[choice] = next;
+      else delete S.filter.choices[choice];
+    } else delete S.filter.choices[choice];
+  }
+  syncFilterControls();
+  renderAdvancedFilters();
+  renderList();
 }
 
 function renderQuarters() {
@@ -970,7 +1346,7 @@ function renderQuarters() {
 function renderParticipationStatus() {
   const imported = S.plays.filter((p) => p.participation?.source === 'NFL Pro');
   const el = $('participation-status');
-  el.hidden = !S.game || (!S.settings.participationRoot && !imported.length);
+  el.hidden = S.mode === 'analysis' || !S.game || (!S.settings.participationRoot && !imported.length);
   if (el.hidden) return;
   const complete = imported.filter((p) => p.participation.status === 'complete').length;
   const charted = S.plays.filter(p => p.nflProCharting).length;
@@ -1006,10 +1382,13 @@ function renderList({ refreshAnalysis = true } = {}) {
     const noFilm = S.pairs.length && S.mapping[i] == null;
     const cls = [p.cat, p.key.length ? 'key' : '', p.neg.length ? 'neg' : '', noFilm ? 'nofilm' : '', i === S.curPlay ? 'sel' : '', shade ? 'shade' : ''].join(' ');
     const badges = p.key.concat(p.neg).map((k) => `<span class="badge ${k}">${k}</span>`);
+    const annotation = S.gameData.playAnnotations?.[p.playId];
+    if (annotation?.bookmarked) badges.push('<span class="badge bookmark" title="Bookmarked play">★</span>');
+    if (annotation?.note || annotation?.tags?.length) badges.push('<span class="badge note" title="Has a private note or tags">Note</span>');
     if (String(p.playId) in anchors) badges.push('<span class="badge fix" title="Manually corrected">✎</span>');
     if (noFilm) badges.push('<span class="badge nofilm">no film</span>');
     html.push(
-      `<li data-i="${i}" class="${cls}"><div class="r1"><input class="play-check" type="checkbox" hidden aria-label="Select ${esc(P.clockLabel(p))} for export"${S.selected.has(i) ? ' checked' : ''} /><span class="clock">${esc(P.clockLabel(p))}</span>` +
+      `<li data-i="${i}" class="${cls}" tabindex="0" role="option" aria-selected="${i === S.curPlay}"><div class="r1"><input class="play-check" type="checkbox" hidden aria-label="Select ${esc(P.clockLabel(p))} for export"${S.selected.has(i) ? ' checked' : ''} /><span class="clock">${esc(P.clockLabel(p))}</span>` +
         `<span class="dd">${esc(P.downDistance(p))}</span><span class="team">${esc(p.yrdln)}</span>${personnelHtml(p)}` +
         `<span class="badges">${badges.join('')}</span></div>${boxHtml(p)}<div class="desc">${esc(p.desc)}</div></li>`
     );
@@ -1103,6 +1482,7 @@ function markSelected() {
 
 function renderInfo() {
   const p = S.plays[S.curPlay];
+  $('play-info').hidden = !S.game || !S.plays.length;
   const head = $('play-head');
   if (p) {
     const swatch = `<i class="sw ${p.cat === 'other' ? 'penalty' : p.cat}"></i>`;
@@ -1116,12 +1496,60 @@ function renderInfo() {
     head.textContent = S.curPair >= 0 ? `Film clip ${S.curPair + 1}` : '';
     $('play-desc').textContent = '';
   }
+  renderPlayActions(p);
+  renderAlignmentTimeline();
   const pairInfo = S.curPair >= 0 && S.pairs[S.curPair]
     ? `Clip ${S.curPair + 1} / ${S.pairs.length} @ ${fmtTime(S.pairs[S.curPair].sideline.start)}`
     : S.pairs.length ? 'No clip' : '';
   const linked = p && S.mapping[S.curPlay] === S.curPair;
   $('clip-label').textContent = pairInfo + (p && S.curPair >= 0 && !linked ? '  (browsing — not linked to this play)' : '');
   updateOffsetLabel();
+}
+
+function playAnnotation(play = S.plays[S.curPlay]) {
+  return play ? S.gameData.playAnnotations?.[play.playId] || { bookmarked: false, note: '', tags: [] } : null;
+}
+
+function renderPlayActions(play) {
+  const annotation = playAnnotation(play);
+  const disabled = !play || !S.sel.gameId;
+  $('play-bookmark').disabled = disabled;
+  $('play-note').disabled = disabled;
+  $('play-playlist').disabled = disabled;
+  $('play-playlist-manage').disabled = disabled;
+  $('play-export-playlist').disabled = disabled || !(S.gameData.playlists || []).some(list => list.playIds?.length);
+  $('play-bookmark').setAttribute('aria-pressed', String(!!annotation?.bookmarked));
+  $('play-bookmark').textContent = annotation?.bookmarked ? '★ Bookmarked' : '☆ Bookmark';
+  $('play-note').textContent = annotation?.note || annotation?.tags?.length ? 'Edit note' : 'Add note';
+  const lists = S.gameData.playlists || [];
+  const selectedList = lists.find(list => list.playIds?.includes(String(play?.playId)))?.name || '';
+  $('play-playlist').innerHTML = `<option value="">No playlist</option>${lists.map(list =>
+    `<option value="${esc(list.name)}"${list.name === selectedList ? ' selected' : ''}>${esc(list.name)}</option>`).join('')}`;
+}
+
+async function savePlayAnnotation(playId, patch) {
+  const current = S.gameData.playAnnotations?.[playId] || { bookmarked: false, note: '', tags: [] };
+  await saveGame({ playAnnotations: {
+    ...S.gameData.playAnnotations, [playId]: { ...current, ...patch },
+  } });
+  derivePlays();
+  renderList();
+  renderInfo();
+}
+
+async function setPlayPlaylist(name) {
+  const play = S.plays[S.curPlay];
+  if (!play) return;
+  const id = String(play.playId);
+  const playlists = (S.gameData.playlists || []).map(list => ({
+    ...list, playIds: (list.playIds || []).filter(playId => playId !== id),
+  }));
+  if (name) {
+    const target = playlists.find(list => list.name === name);
+    if (target) target.playIds.push(id);
+  }
+  await saveGame({ playlists });
+  renderPlayActions(play);
 }
 
 /* ---------------- playback ---------------- */
@@ -1300,12 +1728,16 @@ function loadPair(pairIdx, { autoplay = false, keepRel = false } = {}) {
 
 function selectPlay(i, { autoplay = true, keepSelection = false } = {}) {
   if (!S.plays[i]) return;
-  if (!keepSelection && S.mode !== 'analysis') {
-    S.selected = new Set([i]);
+  if (!keepSelection) {
     S.selectionAnchor = i;
-    S.multiSelect = false;
+    if (S.mode !== 'analysis') {
+      S.selected = new Set([i]);
+      S.multiSelect = false;
+    }
   }
   S.curPlay = i;
+  try { localStorage.setItem(`amp22.lastPlay.${S.sel.gameId}.${S.sel.team}`, String(S.plays[i].playId)); }
+  catch (error) { setStatus(`Last-play preference could not be saved: ${error.message}`, true); }
   markSelected();
   updateSelection();
   const pi = S.mapping[i];
@@ -1342,8 +1774,13 @@ function updateSelection() {
   $('btn-multi-select').setAttribute('aria-pressed', String(multi));
   $('btn-share').disabled = S.exporting || !S.selected.size || !S.film || !S.pairs.length;
   $('btn-export-data').disabled = !S.plays.length;
+  $('btn-share').title = $('btn-share').disabled
+    ? 'Select at least one play with linked film to export a clip'
+    : `Export ${S.selected.size} selected play${S.selected.size === 1 ? '' : 's'} as a video clip`;
+  $('btn-export-data').title = S.plays.length ? 'Export play statistics and participation without film' : 'Load a game before exporting statistics';
   $('play-list').querySelectorAll('li[data-i]').forEach((el) => {
     const selected = S.selected.has(Number(el.dataset.i));
+    el.setAttribute('aria-selected', String(Number(el.dataset.i) === S.curPlay));
     el.classList.toggle('export-selected', selected && multi);
     el.querySelector('.play-check').hidden = !multi;
     el.querySelector('.play-check').checked = selected;
@@ -1533,6 +1970,19 @@ function openShare() {
   $('share-progress').hidden = true;
   $('share-reveal').hidden = true;
   S.exportDraft = null;
+  $('export-preset').value = 'custom';
+  try {
+    const savedMode = localStorage.getItem('amp22.export.mode') || 'quick';
+    setExportMode(savedMode === 'customize' ? 'customize' : 'quick', false);
+    const preset = localStorage.getItem('amp22.export.preset');
+    if (preset && ['social', 'coach', 'review'].includes(preset)) {
+      $('export-preset').value = preset;
+      applyExportPreset(preset, false);
+    } else {
+      const angle = localStorage.getItem('amp22.export.angle');
+      if (['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first'].includes(angle)) $('share-angle').value = angle;
+    }
+  } catch (error) { setStatus(`Export preferences could not be loaded: ${error.message}`, true); }
   highlightEditor?.select(null);
   $('share-preview-status').textContent = '';
   $('share-preview-play').innerHTML = '';
@@ -1584,6 +2034,42 @@ function openShare() {
   }
   updateExportOptions();
   $('share-angle').focus();
+}
+
+function setExportMode(mode, persist = true) {
+  const customized = mode === 'customize';
+  $('share-advanced').hidden = !customized;
+  $('export-customize-mode').setAttribute('aria-pressed', String(customized));
+  $('export-quick-mode').setAttribute('aria-pressed', String(!customized));
+  if (persist) {
+    try { localStorage.setItem('amp22.export.mode', mode); }
+    catch (error) { setStatus(`Export preference could not be saved: ${error.message}`, true); }
+  }
+}
+
+function applyExportPreset(preset, persist = true) {
+  if (preset === 'social') {
+    $('share-angle').value = 'both';
+    $('share-clean').checked = false;
+    $('share-overlay-seconds').value = S.settings.overlaySeconds;
+    $('share-report-format').value = 'none';
+  } else if (preset === 'coach') {
+    $('share-angle').value = 'sideline';
+    $('share-clean').checked = true;
+    $('share-report-format').value = 'none';
+  } else if (preset === 'review') {
+    $('share-angle').value = 'both';
+    $('share-clean').checked = false;
+    $('share-overlay-seconds').value = S.settings.overlaySeconds;
+    $('share-report-format').value = 'pdf';
+  }
+  $('share-clean').dispatchEvent(new Event('change'));
+  updateReportOptions();
+  queueTrimPreview();
+  if (persist) {
+    try { localStorage.setItem('amp22.export.preset', preset); }
+    catch (error) { setStatus(`Export preset could not be saved: ${error.message}`, true); }
+  }
 }
 
 function trimmedExportClips() {
@@ -2237,6 +2723,7 @@ const actions = {
   },
   search: () => { $('search').focus(); $('search').select(); },
   help: () => toggleOverlay('help'),
+  commandPalette: openCommandPalette,
 };
 
 function runAction(id) {
@@ -2333,24 +2820,40 @@ function renderHelp() {
 let draft = null;
 let capture = null; // {id, index}
 
+function updateCutDetectionField() {
+  const preset = $('set-cut-preset').value;
+  $('set-cut').hidden = preset !== 'custom';
+  $('set-cut-hint').textContent = preset === 'auto'
+    ? 'Tries several sensitivities and keeps the one that best matches the game’s play-by-play.'
+    : 'Uses one fixed sensitivity for every film. Lower values find subtler camera cuts.';
+}
+
 function renderSettings() {
   if (!draft) draft = JSON.parse(JSON.stringify(S.settings));
   $('set-jump').value = draft.jumpFrames;
   $('set-end').value = draft.endOfPlay;
   $('set-speeds').value = draft.speeds.join(', ');
   $('set-player-sort').value = draft.playerFilterSort;
+  $('set-ui-theme').value = draft.uiTheme;
+  $('set-text-scale').value = String(draft.textScale);
+  $('set-sidebar-width').value = draft.sidebarWidth;
   fillSelect($('set-team'), Object.keys(A22.teams.TEAMS).filter((t) => !['OAK', 'SD', 'STL'].includes(t)).sort().map((t) => ({ value: t, label: `${t} – ${A22.teams.teamName(t)}` })), draft.defaultTeam);
   $('set-root').value = draft.filmRoot || '';
   $('set-participation-root').value = draft.participationRoot || '';
   $('set-auto').checked = draft.autoAnalyze;
   $('set-skipnofilm').checked = draft.skipNoFilm;
   $('set-cut').value = draft.cutThreshold;
+  $('set-cut-preset').value = draft.cutMode === 'auto' ? 'auto' : [0.1, 0.06].includes(draft.cutThreshold) ? String(draft.cutThreshold) : 'custom';
+  updateCutDetectionField();
   $('set-export-trim').value = draft.exportTrim;
   $('set-overlay-seconds').value = draft.overlaySeconds;
   $('set-report-format').value = draft.playReport.format;
   $('set-report-advanced').checked = draft.playReport.includeAdvanced;
   $('set-report-fields').innerHTML = REPORT.ADVANCED_FIELDS.map((f) =>
     `<label><input id="set-report-${f.key}" type="checkbox"${draft.playReport.fields.includes(f.key) ? ' checked' : ''} /> ${esc(f.label)}</label>`).join('');
+  const savedFields = new Set(draft.playReport.fields);
+  $('set-report-preset').value = Object.entries(REPORT_FIELD_PRESETS).find(([, fields]) =>
+    fields.length === savedFields.size && fields.every((key) => savedFields.has(key)))?.[0] || 'custom';
   const kp = draft.keyPlays;
   $('kp-turnovers').checked = kp.turnovers;
   $('kp-scores').checked = kp.scores;
@@ -2381,6 +2884,9 @@ function readSettingsForm() {
   d.speeds = $('set-speeds').value.split(/[,\s]+/).map(Number).filter((x) => x > 0 && x <= 4);
   d.defaultTeam = $('set-team').value;
   d.playerFilterSort = $('set-player-sort').value;
+  d.uiTheme = $('set-ui-theme').value;
+  d.textScale = Number($('set-text-scale').value);
+  d.sidebarWidth = Number($('set-sidebar-width').value);
   d.filmRoot = $('set-root').value;
   d.participationRoot = $('set-participation-root').value;
   d.autoAnalyze = $('set-auto').checked;
@@ -2392,7 +2898,9 @@ function readSettingsForm() {
     includeAdvanced: $('set-report-advanced').checked,
     fields: REPORT.ADVANCED_FIELDS.filter((f) => $(`set-report-${f.key}`).checked).map((f) => f.key),
   };
-  const cut = Number($('set-cut').value);
+  const preset = $('set-cut-preset').value;
+  d.cutMode = preset === 'auto' ? 'auto' : 'manual';
+  const cut = preset === 'custom' ? Number($('set-cut').value) : preset === 'auto' ? Number(d.cutThreshold) : Number(preset);
   d.cutThreshold = cut >= 0.03 && cut <= 0.5 ? cut : DEFAULT_SETTINGS.cutThreshold;
   d.keyPlays = {
     turnovers: $('kp-turnovers').checked,
@@ -2430,9 +2938,35 @@ function handleKeydown(e) {
     renderShortcutTable();
     return;
   }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openCommandPalette();
+    return;
+  }
+  if (!$('command-palette').hidden && ['ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) {
+    const options = [...$('command-results').querySelectorAll('[role=option]')];
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      $('command-results').querySelector('[aria-selected="true"]')?.click();
+    } else {
+      e.preventDefault();
+      const current = options.findIndex(item => item.getAttribute('aria-selected') === 'true');
+      const next = options[(current + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length];
+      options.forEach(item => item.setAttribute('aria-selected', String(item === next)));
+      next?.scrollIntoView({ block: 'nearest' });
+    }
+    return;
+  }
   if (e.key === 'Escape') {
     if (S.exporting) return;
-    if (!$('help').hidden || !$('settings').hidden || !$('share').hidden) { toggleOverlay('help', false); draft = null; return; }
+    const activeOverlay = [...document.querySelectorAll('.overlay')].find((overlay) => !overlay.hidden);
+    if (activeOverlay) {
+      if (!$('settings').hidden) applyComfortSettings(S.settings);
+      document.querySelectorAll('.overlay').forEach((overlay) => { overlay.hidden = true; });
+      if (!$('play-note-dialog').hidden) $('play-note-dialog').hidden = true;
+      draft = null;
+      return;
+    }
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     return;
   }
@@ -2458,6 +2992,48 @@ window.addEventListener('keydown', handleKeydown, true);
 
 function wire() {
   window.addEventListener('resize', () => highlightEditor?.refresh());
+  window.api.onMenuAction((action) => {
+    if (action === 'open-film') $('btn-film').click();
+    else if (action === 'game-library') openGameLibrary();
+    else if (action === 'export-clip') $('btn-share').click();
+    else if (action === 'command-palette') openCommandPalette();
+    else if (action === 'settings') $('btn-settings').click();
+    else if (action === 'help') $('btn-help').click();
+  });
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (S.settings?.uiTheme === 'system') applyComfortSettings(S.settings);
+  });
+  const resizer = $('sidebar-resizer');
+  let resizePointer = null;
+  const setSidebarWidth = (width) => {
+    const value = Math.max(300, Math.min(560, Math.round(width)));
+    document.documentElement.style.setProperty('--sidebar-width', `${value}px`);
+    resizer.setAttribute('aria-valuenow', String(value));
+  };
+  resizer.addEventListener('pointerdown', (event) => {
+    resizePointer = event.pointerId;
+    resizer.setPointerCapture(event.pointerId);
+  });
+  resizer.addEventListener('pointermove', (event) => {
+    if (resizePointer === event.pointerId) setSidebarWidth(event.clientX - $('sidebar').getBoundingClientRect().left);
+  });
+  resizer.addEventListener('pointerup', async (event) => {
+    if (resizePointer !== event.pointerId) return;
+    resizePointer = null;
+    try {
+      const width = Number(resizer.getAttribute('aria-valuenow'));
+      applySettings(await window.api.saveSettings({ ...S.settings, sidebarWidth: width }));
+    } catch (error) { setStatus(`Sidebar width could not be saved: ${error.message}`, true); }
+  });
+  resizer.addEventListener('keydown', async (event) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const delta = event.key === 'ArrowLeft' ? -20 : 20;
+    const width = Math.max(300, Math.min(560, Number(resizer.getAttribute('aria-valuenow')) + delta));
+    setSidebarWidth(width);
+    try { applySettings(await window.api.saveSettings({ ...S.settings, sidebarWidth: width })); }
+    catch (error) { setStatus(`Sidebar width could not be saved: ${error.message}`, true); }
+  });
   highlightEditor = A22.createHighlightEditor({
     defaults: () => S.settings?.highlightDefaults,
     appearance: currentOverlayAppearance,
@@ -2594,10 +3170,127 @@ function wire() {
   $('btn-defense-film').addEventListener('click', () => chooseFilm('defense'));
   $('btn-special-film').addEventListener('click', () => chooseFilm('special'));
   $('btn-analyze').addEventListener('click', () => analyze(false));
+  $('film-coverage-dismiss').addEventListener('click', () => toggleOverlay('film-coverage-dialog', false));
+  $('film-coverage-review').addEventListener('click', reviewUnmatchedPlays);
+  $('film-coverage-reanalyze').addEventListener('click', () => {
+    toggleOverlay('film-coverage-dialog', false);
+    analyze(true, { auto: true, films: S.coverageRetune });
+  });
   $('btn-cancel').addEventListener('click', () => S.progressFile && window.api.cancelAnalysis(S.progressFile));
   $('btn-refresh').addEventListener('click', async () => { await loadSchedule(true); await loadGame(true); });
   $('btn-settings').addEventListener('click', () => { draft = null; toggleOverlay('settings', true); });
   $('btn-help').addEventListener('click', () => toggleOverlay('help'));
+  $('btn-command').addEventListener('click', openCommandPalette);
+  $('btn-library').addEventListener('click', openGameLibrary);
+  $('library-analyze-new').addEventListener('click', analyzeNewLibraryFilms);
+  $('library-close').addEventListener('click', () => toggleOverlay('game-library', false));
+  $('library-games').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-library-game]');
+    if (!button) return;
+    const game = S.games.find(item => item.gameId === button.dataset.libraryGame);
+    if (!game) return;
+    S.sel = { season: game.season, team: S.sel.team, week: game.week, gameId: game.gameId };
+    persistLastSelection();
+    renderSelectors();
+    toggleOverlay('game-library', false);
+    await loadGame();
+  });
+  $('command-search').addEventListener('input', (event) => renderCommandResults(event.target.value));
+  $('command-results').addEventListener('click', (event) => {
+    const item = event.target.closest('[data-command-kind]');
+    if (!item) return;
+    if (item.dataset.commandKind === 'game') {
+      const game = S.games.find(candidate => candidate.gameId === item.dataset.commandValue);
+      if (!game) return;
+      S.sel = { season: game.season, team: S.sel.team, week: game.week, gameId: game.gameId };
+      persistLastSelection();
+      renderSelectors();
+      toggleOverlay('command-palette', false);
+      loadGame();
+    } else runCommand(item.dataset.commandValue);
+  });
+  $('settings-nav').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-settings-target]');
+    if (!button) return;
+    const target = $(button.dataset.settingsTarget);
+    const parentDetails = target.closest('details');
+    if (parentDetails) parentDetails.open = true;
+    target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+  $('first-run-dismiss').addEventListener('click', () => {
+    try { localStorage.setItem('amp22.onboarding.dismissed', 'true'); }
+    catch (error) { setStatus(`Welcome checklist preference could not be saved: ${error.message}`, true); }
+    $('first-run').hidden = true;
+  });
+  $('first-run-skip').addEventListener('click', () => $('first-run-dismiss').click());
+  $('play-bookmark').addEventListener('click', async () => {
+    const play = S.plays[S.curPlay];
+    if (play) await savePlayAnnotation(play.playId, { bookmarked: !playAnnotation(play).bookmarked });
+  });
+  $('play-note').addEventListener('click', () => {
+    const annotation = playAnnotation();
+    if (!annotation) return;
+    $('play-note-text').value = annotation.note || '';
+    $('play-note-tags').value = (annotation.tags || []).join(', ');
+    $('play-note-dialog').hidden = false;
+    $('play-note-text').focus();
+  });
+  $('play-note-cancel').addEventListener('click', () => { $('play-note-dialog').hidden = true; });
+  $('play-note-save').addEventListener('click', async () => {
+    const play = S.plays[S.curPlay];
+    if (!play) return;
+    $('play-note-save').disabled = true;
+    try {
+      const tags = [...new Set($('play-note-tags').value.split(',').map(tag => tag.trim()).filter(Boolean))].slice(0, 20);
+      await savePlayAnnotation(play.playId, { note: $('play-note-text').value.trim(), tags });
+      $('play-note-dialog').hidden = true;
+    } catch (error) {
+      $('play-note-status').textContent = `Note could not be saved: ${error.message}`;
+    } finally { $('play-note-save').disabled = false; }
+  });
+  $('play-playlist').addEventListener('change', (event) => setPlayPlaylist(event.target.value).catch(error => setStatus(`Playlist could not be saved: ${error.message}`, true)));
+  $('play-playlist-manage').addEventListener('click', async () => {
+    const name = prompt('Name this playlist:');
+    if (!name?.trim()) return;
+    const normalized = name.trim().slice(0, 60);
+    if ((S.gameData.playlists || []).some(list => list.name.toLowerCase() === normalized.toLowerCase())) {
+      setStatus('A playlist with that name already exists.', true);
+      return;
+    }
+    await saveGame({ playlists: [...(S.gameData.playlists || []), { name: normalized, playIds: [] }] });
+    renderPlayActions();
+    $('play-playlist').value = normalized;
+    await setPlayPlaylist(normalized);
+  });
+  $('play-export-playlist').addEventListener('click', () => {
+    const lists = S.gameData.playlists || [];
+    const name = prompt(`Export which playlist?\n${lists.map(list => list.name).join('\n')}`);
+    const list = lists.find(item => item.name === name);
+    if (!list) return;
+    S.selected = new Set(S.plays.flatMap((play, index) => list.playIds.includes(String(play.playId)) && S.mapping[index] != null ? [index] : []));
+    S.multiSelect = true;
+    updateSelection();
+    if (!S.selected.size) setStatus('No plays in that playlist have linked film in this game.', false);
+    else openShare();
+  });
+  $('play-list').addEventListener('keydown', (event) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' '].includes(event.key)) return;
+    const currentItem = event.target.closest('li[data-i]');
+    if (!currentItem && !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const currentIndex = currentItem ? Number(currentItem.dataset.i) : S.curPlay;
+    const position = S.visible.indexOf(currentIndex);
+    const nextPosition = event.key === 'Home' ? 0 : event.key === 'End' ? S.visible.length - 1 :
+      event.key === 'ArrowDown' ? Math.min(S.visible.length - 1, position + 1) : Math.max(0, position - 1);
+    const index = ['Enter', ' '].includes(event.key) ? currentIndex : S.visible[nextPosition];
+    if (index == null || index < 0) return;
+    event.preventDefault();
+    selectPlay(index, { autoplay: false });
+    $('play-list').querySelector(`li[data-i="${index}"]`)?.focus();
+  });
+  $('active-filter-chips').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-clear-filter]');
+    if (button) clearOneFilter(button.dataset.clearFilter, button.dataset.filterValue);
+  });
   $('btn-share').addEventListener('click', openShare);
   $('btn-export-data').addEventListener('click', () => {
     $('data-export-status').textContent = '';
@@ -2635,10 +3328,80 @@ function wire() {
     renderFilmSetup();
     $('film-setup-toggle').focus();
   });
+  $('film-folder-choose').addEventListener('click', async () => {
+    const filmRoot = await window.api.chooseFolder();
+    if (!filmRoot) return;
+    try {
+      applySettings(await window.api.saveSettings({ ...S.settings, filmRoot }));
+      await loadGame();
+    } catch (error) { setStatus(`Film folder could not be saved: ${error.message}`, true); }
+  });
+  $('film-folder-clear').addEventListener('click', async () => {
+    try {
+      applySettings(await window.api.saveSettings({ ...S.settings, filmRoot: '' }));
+      S.suggestedFilms = [];
+      renderSuggestedFilms();
+    } catch (error) { setStatus(`Film folder could not be cleared: ${error.message}`, true); }
+  });
+  $('film-suggestions').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-film-suggestion]');
+    if (button) chooseSuggestedFilm(Number(button.dataset.filmSuggestion));
+  });
+  window.addEventListener('dragover', (event) => {
+    if (event.dataTransfer?.types.includes('Files')) {
+      event.preventDefault();
+      document.body.classList.add('file-dragging');
+    }
+  });
+  window.addEventListener('dragleave', (event) => {
+    if (event.relatedTarget == null) document.body.classList.remove('file-dragging');
+  });
+  window.addEventListener('drop', async (event) => {
+    if (!event.dataTransfer?.files.length) return;
+    event.preventDefault();
+    document.body.classList.remove('file-dragging');
+    if (isSplitFilm()) {
+      setStatus('Switch to Single file mode before dropping a film file; split files are assigned by game unit.', true);
+      return;
+    }
+    if (event.dataTransfer.files.length !== 1) {
+      setStatus('Drop one video file at a time.', true);
+      return;
+    }
+    const file = event.dataTransfer.files[0];
+    let filePath;
+    try { filePath = window.api.getPathForFile(file); }
+    catch (error) {
+      setStatus(`The dropped file path is unavailable: ${error.message}`, true);
+      return;
+    }
+    if (!filePath || !/\.(mp4|m4v|mov|mkv)$/i.test(file.name)) {
+      setStatus('Drop an MP4, M4V, MOV, or MKV film file.', true);
+      return;
+    }
+    try {
+      await saveGame({ filmPath: filePath });
+      closeFilm();
+      await openFilm(filePath);
+      selectFirstLinked({ playId: lastPlayId() });
+    } catch (error) { setStatus(`Dropped film could not be opened: ${error.message}`, true); }
+  });
   $('share-angle').addEventListener('change', () => {
     const mode = $('share-angle').value;
+    try { localStorage.setItem('amp22.export.angle', mode); }
+    catch (error) { setStatus(`Export angle preference could not be saved: ${error.message}`, true); }
     if (mode.endsWith('-first')) $('highlight-angle').value = mode === 'endzone-first' ? 'endzone' : 'sideline';
     queueTrimPreview();
+  });
+  $('export-quick-mode').addEventListener('click', () => setExportMode('quick'));
+  $('export-customize-mode').addEventListener('click', () => setExportMode('customize'));
+  $('export-preset').addEventListener('change', (event) => {
+    if (event.target.value === 'custom') {
+      try { localStorage.removeItem('amp22.export.preset'); }
+      catch (error) { setStatus(`Export preset could not be reset: ${error.message}`, true); }
+      return;
+    }
+    applyExportPreset(event.target.value);
   });
   $('share-clean').addEventListener('change', () => {
     $('share-overlay-description').hidden = $('share-clean').checked;
@@ -2824,6 +3587,7 @@ function wire() {
     if (e.shiftKey) {
       if (!S.visible.includes(S.selectionAnchor)) S.selectionAnchor = i;
       S.selected = new Set(A22.clipExport.selectionRange(S.visible, S.selectionAnchor, i));
+      if (S.mode === 'analysis') S.multiSelect = true;
       selectPlay(i, { autoplay: false, keepSelection: true });
     } else if (e.target.classList.contains('play-check') || S.multiSelect) {
       const checked = e.target.classList.contains('play-check') ? e.target.checked : !S.selected.has(i);
@@ -2851,7 +3615,8 @@ function wire() {
   });
   $('sel-offense').addEventListener('change', (e) => { S.filter.offense = e.target.value; e.target.blur(); renderList(); });
   $('sel-qtr').addEventListener('change', (e) => { S.filter.qtr = e.target.value; e.target.blur(); renderList(); });
-  $('sel-result').addEventListener('change', (e) => { S.filter.result = e.target.value; e.target.blur(); renderList(); });
+  $('sel-result').addEventListener('change', (e) => { e.target.blur(); setResultFilter(e.target.value); });
+  $('adv-result-filter').addEventListener('change', (e) => { e.target.blur(); setResultFilter(e.target.value); });
   $('filter-preset').addEventListener('change', (e) => chooseFilterPreset(e.target.value));
   $('filter-preset-save').addEventListener('click', () => saveFilterPreset());
   $('filter-preset-delete').addEventListener('click', () => saveFilterPreset(true));
@@ -2932,6 +3697,31 @@ function wire() {
     if (folder) $('set-participation-root').value = folder;
   });
   $('set-participation-clear').addEventListener('click', () => { $('set-participation-root').value = ''; });
+  $('set-cut-preset').addEventListener('change', () => {
+    const preset = $('set-cut-preset').value;
+    if (!['auto', 'custom'].includes(preset)) $('set-cut').value = preset;
+    updateCutDetectionField();
+  });
+  $('set-cut').addEventListener('input', () => {
+    if (!$('set-cut').hidden) $('set-cut-preset').value = 'custom';
+  });
+  $('set-report-preset').addEventListener('change', (event) => {
+    const fields = REPORT_FIELD_PRESETS[event.target.value];
+    if (!fields) return;
+    const selected = new Set(fields);
+    for (const field of REPORT.ADVANCED_FIELDS) $(`set-report-${field.key}`).checked = selected.has(field.key);
+  });
+  $('set-report-fields').addEventListener('change', () => { $('set-report-preset').value = 'custom'; });
+  $('set-ui-theme').addEventListener('change', () => {
+    const settings = { ...S.settings, uiTheme: $('set-ui-theme').value };
+    applyComfortSettings(settings);
+  });
+  $('set-text-scale').addEventListener('change', () => {
+    document.documentElement.style.setProperty('--ui-scale', $('set-text-scale').value);
+  });
+  $('set-sidebar-width').addEventListener('input', () => {
+    setSidebarWidth(Number($('set-sidebar-width').value));
+  });
   $('shortcut-table').addEventListener('click', (e) => {
     const t = e.target;
     if (!t.dataset.id) return;
@@ -2956,7 +3746,9 @@ function wire() {
     capture = null;
     renderSettings();
   });
-  $('set-cancel').addEventListener('click', () => { draft = null; capture = null; toggleOverlay('settings', false); });
+  $('set-cancel').addEventListener('click', () => {
+    draft = null; capture = null; applyComfortSettings(S.settings); toggleOverlay('settings', false);
+  });
   $('set-save').addEventListener('click', async () => {
     for (const id of ['set-export-trim', 'set-overlay-seconds']) {
       if (!$(id).reportValidity()) {
@@ -2972,7 +3764,8 @@ function wire() {
     toggleOverlay('settings', false);
     if (prev.participationRoot !== S.settings.participationRoot) await refreshParticipation();
     if (prev.filmRoot !== S.settings.filmRoot && S.game && !S.gameData.filmPath) loadGame();
-    if (prev.cutThreshold !== S.settings.cutThreshold && S.film && confirm('Cut sensitivity changed. Re-analyze this film now?')) analyze(true);
+    if ((prev.cutMode !== S.settings.cutMode || (S.settings.cutMode === 'manual' && prev.cutThreshold !== S.settings.cutThreshold))
+      && S.film && confirm('Cut detection changed. Re-analyze this film now?')) analyze(true);
   });
 }
 
@@ -3024,5 +3817,13 @@ async function refreshParticipation(automatic = false) {
   applySettings(init.settings);
   window.api.onParticipationChanged(() => refreshParticipation(true));
   checkUpdates(true);
-  if (await loadSchedule(false)) await loadGame(false);
+  if (await loadSchedule(false)) {
+    await loadGame(false);
+    try {
+      if (localStorage.getItem('amp22.onboarding.dismissed') !== 'true') {
+        $('first-run').hidden = false;
+        $('first-run-dismiss').focus();
+      }
+    } catch (error) { setStatus(`Welcome checklist preference could not be loaded: ${error.message}`, true); }
+  }
 })();

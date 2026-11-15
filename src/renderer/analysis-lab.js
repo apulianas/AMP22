@@ -11,6 +11,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   let packages = A.DEFAULT_PACKAGES.map((r) => ({ name: r.name, counts: { ...r.counts } }));
   let result = null;
   let report = null;
+  let chartLayout = '';
   let evidence = [];
   let evidenceId = null;
   let revision = 0;
@@ -33,6 +34,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   let aiEvidence = [];
   let aiCloud = false;
   let aiDiscoveryPending = false;
+  let aiLocal = { label: 'Local intelligence', reason: 'Checking on-device availability...' };
   let handoffReport = null;
   let handoffRevision = 0;
   let handoffBusy = false;
@@ -47,42 +49,92 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   }
 
   root.innerHTML = `
-    <div class="lab-heading"><div><p class="lab-eyebrow">AMP22 / RESEARCH WORKSPACE</p>
-      <h1>Analysis Lab</h1><p class="muted">Find the pattern. Inspect the plays. Build the argument. No film required.</p></div></div>
-    <div class="lab-controls">
-      <label>Scope<select id="lab-scope"><option value="game">Selected game</option><option value="range">Team week range</option></select></label>
-      <label id="lab-from-label" hidden>From week<input id="lab-from" type="number" min="1" max="22" value="1"></label>
-      <label id="lab-to-label" hidden>Through week<input id="lab-to" type="number" min="1" max="22" value="22"></label>
-      <label>Group by<select id="lab-group">${Object.entries(A.GROUPS).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
-      <label>Split by<select id="lab-split">${Object.entries(A.SPLITS).map(([v, l]) => `<option value="${v}"${v === 'type' ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+    <div id="lab-toolbar" class="lab-toolbar">
+      <label>Games<select id="lab-scope"><option value="game">Selected game</option><option value="range">Team week range</option></select></label>
+      <label>Compare by<select id="lab-group">${Object.entries(A.GROUPS).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
+      <label>Break down by<select id="lab-split">${Object.entries(A.SPLITS).map(([v, l]) => `<option value="${v}"${v === 'type' ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Graphic<select id="lab-chart"><option value="bars">Efficiency bars</option><option value="heatmap">Matchup heatmap</option><option value="halves">Half comparison</option></select></label>
+      <label>Metric<select id="lab-metric">${Object.entries(A.METRICS).map(([v, m]) => `<option value="${v}">${m.label}</option>`).join('')}</select></label>
+      <div class="lab-actions">
+        <span id="lab-ai-source">Checking intelligence…</span>
+        <button id="lab-ai-open" type="button" aria-describedby="lab-ai-source">Ask a question…</button>
+        <details id="lab-export-tools"><summary title="Copy analysis or export a graphic or CSV">Share</summary>
+          <div><button id="lab-copy-context">Copy analysis…</button><button id="lab-svg">Save SVG</button><button id="lab-png">Save PNG</button><button id="lab-csv">Summary CSV</button></div>
+        </details>
+      </div>
+      <div id="lab-range" class="lab-controls" hidden>
+        <label>From week<input id="lab-from" type="number" min="1" max="22" value="1"></label>
+        <label>Through week<input id="lab-to" type="number" min="1" max="22" value="22"></label>
+      </div>
+    </div>
+    <div class="lab-context">
+      <p id="lab-scope-note" class="lab-scope-note muted small"></p>
       <button id="lab-reload">Reload data</button>
     </div>
-    <div class="lab-controls lab-selection-controls">
-      <label>Analyze<select id="lab-selection-mode">
-        <option value="all">All filtered plays</option>
-        <option value="include">Only selected plays</option>
-        <option value="exclude">Exclude selected plays</option>
-      </select></label>
-      <span id="lab-selection-count" class="muted small"></span>
-      <button id="lab-clear-selection" disabled>Clear play selection</button>
-    </div>
-    <details id="lab-play-selection" class="lab-methods">
-      <summary>Select plays for analysis</summary>
-      <p>Use checkboxes or Shift-click to select a range, here or in the sidebar. Selections use game and play IDs, across the full analysis scope. Sidebar filters still apply. Excluded plays stay in this picker so you can restore them.</p>
-      <div class="lab-controls">
-        <label>Show<select id="lab-selection-show"><option value="filtered">Filtered plays</option><option value="selected">Selected plays (including hidden by filters)</option></select></label>
-        <button id="lab-select-filtered">Select all filtered plays</button>
-      </div>
-      <p id="lab-selection-note" class="muted small"></p>
-      <ol id="lab-selection-plays"></ol>
-      <button id="lab-selection-more" hidden>Show more plays</button>
-    </details>
-    <p id="lab-scope-note" class="muted small"></p>
     <p id="lab-status" role="status" aria-live="polite"></p>
-    <details id="lab-ai" class="lab-methods" hidden>
+    <div id="lab-content" hidden>
+      <div id="lab-summary" class="lab-summary"></div>
+      <details id="lab-data-quality" class="lab-data-quality">
+        <summary id="lab-quality-summary">Data quality &amp; sources</summary>
+        <p id="lab-quality-warning" class="muted small"></p>
+        <p id="lab-coverage" class="muted small"></p>
+      </details>
+      <div id="lab-chart-preview"></div>
+      <p id="lab-chart-note" class="muted small"></p>
+      <div class="lab-table-wrap"><table class="lab-table"><thead><tr>
+        <th>Group / split</th><th>Snaps</th><th>Usage</th><th id="lab-yards-heading">Yards allowed</th><th>YPP</th><th>Off. EPA/play</th><th>Off. success</th><th>Explosives</th><th>3rd/4th conv.</th>
+      </tr></thead><tbody id="lab-rows"></tbody></table></div>
+      <details id="lab-play-selection" class="lab-methods">
+        <summary>Select plays for analysis</summary>
+        <p>Click a play, then Shift-click another to select the range, here or in the sidebar. Choose how to use the selection under Plays to analyze in the top bar. Selections use game and play IDs, across the full analysis scope. Sidebar filters still apply. Excluded plays stay in this picker so you can restore them.</p>
+        <div class="lab-controls">
+          <label>Show<select id="lab-selection-show"><option value="filtered">Filtered plays</option><option value="selected">Selected plays (including hidden by filters)</option></select></label>
+          <button id="lab-select-filtered">Select all filtered plays</button>
+        </div>
+        <p id="lab-selection-note" class="muted small"></p>
+        <ol id="lab-selection-plays"></ol>
+        <button id="lab-selection-more" hidden>Show more plays</button>
+      </details>
+      <details id="lab-definitions" class="lab-methods"><summary>Definitions &amp; package rules</summary>
+        <p>${A.EXCLUSIONS}</p><p>${A.DEFINITIONS}</p>
+        <p>All sidebar filters and the top-bar Plays to analyze mode also apply to this cohort, across every game in a range. Only selected plays intersects selections with those filters; Exclude selected plays removes them. An empty selection produces no snaps in Only selected plays, and excludes nothing in Exclude selected plays. Run/pass splits use official play type: sacks are passes and scrambles are runs. Usage is share of the entire filtered cohort, not within a split. Unknown data stays visible; missing values are never zero.</p>
+        <p>Package composition estimates use listed positions, not charted alignment. Generic LB/DB positions are not guessed as ILB/CB/S. Complete, uniquely identified eleven-player defenses are required for composition rules. Otherwise the supplied broad package is retained, or Unknown. A player's presence does not establish coverage responsibility or causal impact.</p>
+        <p>A WR listed on defense is assumed to be a CB for package identification, including custom rules. The recorded player position remains WR; this assumption does not verify the player's actual alignment.</p>
+        <p>Jumbo identifies a complete eleven-player defense with at least four listed DL (DE/DT/NT), at least two OLB, and no more than four DBs. It is a heavy-front composition estimate, not confirmed goal-line alignment. Custom exact-composition rules take precedence.</p>
+        <p>32 dime identifies three listed DL/OLB combined, two explicit ILB (including MLB), and six DBs. Two inside linebackers distinguish it from standard and rush dime; generic LB positions do not establish that role. This also requires a complete, uniquely identified eleven-player defense for on-field estimates.</p>
+        <p>Jumbo nickel identifies three DL, one OLB, two explicit ILB (including MLB), and five DBs: a nickel composition with one OLB replaced by a DL. Both standard (three CB/two S) and big (two CB/three S) DB combinations qualify. Generic LB positions are not guessed as inside or outside linebackers; exact custom rules take precedence.</p>
+        <p>Offensive personnel counts every OL beyond five as a TE, with the total OL count in parentheses: one RB, one TE and six OL is 12 (6); seven OL is 13 (7). Complete, unique eleven-player lists with one QB are required for on-field estimates. Original positions and reported eligibility are unchanged.</p>
+        <p>Explicit Direct snap to descriptions append Wildcat for a listed RB/HB/FB/WR recipient, or Tush push for a TE, even when a different player subsequently runs or passes. Positions come from participation or an unambiguous nflverse player-directory match. A positive FTN QB-sneak flag also appends Tush push; ordinary QB rushes and short yardage alone do not. Special-teams/punt or field-goal formations are excluded. Missing personnel counts stay Unknown alongside the modifier. Complete direct-snap lineups may omit a listed QB; RB and TE counts still use recorded positions.</p>
+        <div id="lab-packages"></div>
+        <form id="lab-package-form" class="lab-package-form">
+          <label>Package name<input id="lab-package-name" maxlength="60" required placeholder="My package"></label>
+          ${A.POSITIONS.map((p) => `<label>${p}<input id="lab-count-${p}" type="number" min="0" max="11" step="1" value="0" required></label>`).join('')}
+          <button type="submit">Add package</button>
+        </form>
+        <p class="muted small">Counts must total 11. DL includes DE/DT/NT; ILB includes MLB; S includes FS/SS. LB and DB remain generic. Definitions are saved locally and do not change Film Room filters.</p>
+        <button id="lab-package-reset">Restore default package rules</button>
+        <p id="lab-package-status" role="status"></p>
+      </details>
+      <section id="lab-evidence" hidden aria-labelledby="lab-evidence-title">
+        <div class="row"><h2 id="lab-evidence-title">Play evidence</h2><span class="spacer"></span><button id="lab-evidence-csv">Export these plays</button><button id="lab-evidence-close">Close</button></div>
+        <p id="lab-evidence-label" class="muted"></p><ol id="lab-evidence-plays"></ol>
+      </section>
+    </div>
+    <details id="lab-ai" class="lab-methods">
       <summary>Ask Analysis Lab</summary>
-      <p><span id="lab-ai-privacy">Questions stay on this device.</span> The model interprets your question; AMP22 calculates the numbers.
+      <div id="lab-ai-setup">
+        <p id="lab-ai-availability" role="status">Checking on-device availability...</p>
+        <div class="row"><button id="lab-ai-recheck" type="button">Check again</button>
+          <button id="lab-ai-settings" type="button">Cloud settings…</button></div>
+      </div>
+      <div id="lab-ai-ready" hidden>
+      <p><span id="lab-ai-privacy">Questions stay on this device.</span> AMP22 calculates the numbers; a model interprets your question.
         Uses the current scope, analysis side, sidebar filters and play selection without changing them.</p>
+      <div class="lab-question-starters">
+        <button type="button" data-question="Compare run and pass efficiency for this team.">Run vs pass</button>
+        <button type="button" data-question="Which defensive packages allowed the fewest yards per play?">Best defensive packages</button>
+        <button type="button" data-question="How did efficiency change by down?">Efficiency by down</button>
+      </div>
       <form id="lab-ai-form">
         <label id="lab-ai-model-label" hidden>Question provider<select id="lab-ai-model"></select></label>
         <label for="lab-ai-question">Question</label>
@@ -109,53 +161,15 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
             These are scored runs/passes, not all special-teams, nullified or other snaps.</p>
         </details>
         <p id="lab-ai-coverage" class="muted small"></p>
-        <p class="muted small">* = listed-position estimate, not confirmed alignment.
+        <p class="muted small">${A.PACKAGE_NOTE}, not confirmed alignment.
           Missing values are not zero. Comparisons are descriptive, not causal.
           Check the interpreted query and contributing plays; models can misunderstand questions.</p>
         <section id="lab-ai-evidence" hidden aria-label="Question play evidence">
           <p id="lab-ai-evidence-label"></p><ol id="lab-ai-evidence-plays"></ol>
         </section>
       </section>
-    </details>
-    <div id="lab-content" hidden>
-      <div id="lab-summary" class="lab-summary"></div>
-      <details class="lab-methods"><summary>Definitions, data coverage &amp; package rules</summary>
-        <p>${A.EXCLUSIONS}</p><p>${A.DEFINITIONS}</p>
-        <p>All sidebar filters and the Analyze play-selection mode also apply to this cohort, across every game in a range. Only selected plays intersects selections with those filters; Exclude selected plays removes them. An empty selection produces no snaps in Only selected plays, and excludes nothing in Exclude selected plays. Run/pass splits use official play type: sacks are passes and scrambles are runs. Usage is share of the entire filtered cohort, not within a split. Unknown data stays visible; missing values are never zero.</p>
-        <p>Packages marked * are estimates from listed positions, not charted alignment. Generic LB/DB positions are not guessed as ILB/CB/S. Complete, uniquely identified eleven-player defenses are required for composition rules. Otherwise the supplied broad package is retained, or Unknown. A player's presence does not establish coverage responsibility or causal impact.</p>
-        <p>A WR listed on defense is assumed to be a CB for package identification, including custom rules. The recorded player position remains WR; this assumption does not verify the player's actual alignment.</p>
-        <p>Jumbo* identifies a complete eleven-player defense with at least four listed DL (DE/DT/NT), at least two OLB, and no more than four DBs. It is a heavy-front composition estimate, not confirmed goal-line alignment. Custom exact-composition rules take precedence.</p>
-        <p>32 dime* identifies three listed DL/OLB combined, two explicit ILB (including MLB), and six DBs. Two inside linebackers distinguish it from standard and rush dime; generic LB positions do not establish that role. This also requires a complete, uniquely identified eleven-player defense for on-field estimates.</p>
-        <p>Jumbo nickel* identifies three DL, one OLB, two explicit ILB (including MLB), and five DBs: a nickel composition with one OLB replaced by a DL. Both standard (three CB/two S) and big (two CB/three S) DB combinations qualify. Generic LB positions are not guessed as inside or outside linebackers; exact custom rules take precedence.</p>
-        <p>Offensive personnel counts every OL beyond five as a TE, with the total OL count in parentheses: one RB, one TE and six OL is 12 (6); seven OL is 13 (7). Complete, unique eleven-player lists with one QB are required for on-field estimates, marked *. Original positions and reported eligibility are unchanged.</p>
-        <p>Explicit Direct snap to descriptions append Wildcat for a listed RB/HB/FB/WR recipient, or Tush push for a TE, even when a different player subsequently runs or passes. Positions come from participation or an unambiguous nflverse player-directory match. A positive FTN QB-sneak flag also appends Tush push; ordinary QB rushes and short yardage alone do not. Special-teams/punt or field-goal formations are excluded. Missing personnel counts stay Unknown alongside the modifier. Complete direct-snap lineups may omit a listed QB; RB and TE counts still use recorded positions.</p>
-        <p id="lab-coverage"></p>
-        <div id="lab-packages"></div>
-        <form id="lab-package-form" class="lab-package-form">
-          <label>Package name<input id="lab-package-name" maxlength="60" required placeholder="My package"></label>
-          ${A.POSITIONS.map((p) => `<label>${p}<input id="lab-count-${p}" type="number" min="0" max="11" step="1" value="0" required></label>`).join('')}
-          <button type="submit">Add package</button>
-        </form>
-        <p class="muted small">Counts must total 11. DL includes DE/DT/NT; ILB includes MLB; S includes FS/SS. LB and DB remain generic. Definitions are saved locally and do not change Film Room filters.</p>
-        <button id="lab-package-reset">Restore default package rules</button>
-        <p id="lab-package-status" role="status"></p>
-      </details>
-      <div class="lab-chart-toolbar">
-        <label>Graphic<select id="lab-chart"><option value="bars">Efficiency bars</option><option value="heatmap">Matchup heatmap</option><option value="halves">Half comparison</option></select></label>
-        <label>Metric<select id="lab-metric">${Object.entries(A.METRICS).map(([v, m]) => `<option value="${v}">${m.label}</option>`).join('')}</select></label>
-        <span class="spacer"></span><button id="lab-copy-context">Copy analysis…</button><button id="lab-svg">Save SVG</button><button id="lab-png">Save PNG</button><button id="lab-csv">Summary CSV</button>
       </div>
-      <p class="muted small">Click a bar, heatmap cell or table row to inspect contributing plays. Comparisons are descriptive, not causal.</p>
-      <div id="lab-chart-preview"></div>
-      <p id="lab-chart-note" class="muted small"></p>
-      <div class="lab-table-wrap"><table class="lab-table"><thead><tr>
-        <th>Group / split</th><th>Snaps</th><th>Usage</th><th id="lab-yards-heading">Yards allowed</th><th>YPP</th><th>Off. EPA/play</th><th>Off. success</th><th>Explosives</th><th>3rd/4th conv.</th>
-      </tr></thead><tbody id="lab-rows"></tbody></table></div>
-      <section id="lab-evidence" hidden aria-labelledby="lab-evidence-title">
-        <div class="row"><h2 id="lab-evidence-title">Play evidence</h2><span class="spacer"></span><button id="lab-evidence-csv">Export these plays</button><button id="lab-evidence-close">Close</button></div>
-        <p id="lab-evidence-label" class="muted"></p><ol id="lab-evidence-plays"></ol>
-      </section>
-    </div>`;
+    </details>`;
 
   function renderPackages() {
     $('packages').innerHTML = packages.map((r, i) => `<div class="lab-package"><span><strong>${esc(r.name)}</strong>:
@@ -206,6 +220,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     selectionLimit = 200;
     $('selection-mode').value = 'all';
     $('selection-show').value = 'filtered';
+    renderSelectionControls();
     syncSelection();
   }
 
@@ -222,7 +237,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     $('ai-usage').textContent = '';
     $('ai-cancel').hidden = true;
     $('ai-question').disabled = $('ai-model').disabled = false;
-    $('ai-ask').disabled = !ready || !result?.n;
+    $('ai-ask').disabled = !ready || !result?.n || !$('ai-model').value;
   }
 
   async function discoverAI(force = false) {
@@ -231,20 +246,30 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     aiChecking = true;
     aiCheckedAt = Date.now();
     try {
-      const models = await window.api.discoverAnalysisAI();
+      const { models, local } = await window.api.discoverAnalysisAI();
+      aiLocal = local;
       const previous = $('ai-model').value;
       $('ai-model').innerHTML = models.map(m => `<option value="${esc(m.id)}" data-cloud="${m.cloud === true}">${esc(m.label)}</option>`).join('');
       if (models.some(m => m.id === previous)) $('ai-model').value = previous;
+      else $('ai-model').value = (models.find(m => m.cloud) || models.find(m => m.id === 'apple') || models[0])?.id || '';
       if (previous && $('ai-model').value !== previous) clearAI();
-      $('ai').hidden = !models.length;
+      $('ai-ready').hidden = !models.length;
+      $('ai-setup').hidden = !!models.length;
+      $('ai-availability').textContent = local.reason;
       $('ai-model-label').hidden = models.length < 2;
       updateProvider();
-      $('ai-ask').disabled = !ready || !result?.n;
+      $('ai-ask').disabled = !ready || !result?.n || !models.length;
     } catch (error) {
       console.warn('Analytics AI discovery:', error.message);
-      $('ai').hidden = true;
+      $('ai-model').replaceChildren();
+      clearAI();
+      $('ai-ready').hidden = true;
+      $('ai-setup').hidden = false;
+      $('ai-availability').textContent = `Could not check intelligence providers: ${error.message}`;
+      updateProvider();
     } finally {
       aiChecking = false;
+      $('ai-recheck').disabled = false;
       if (aiDiscoveryPending) { aiDiscoveryPending = false; discoverAI(true); }
     }
   }
@@ -252,6 +277,9 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   function updateProvider() {
     const selected = $('ai-model').selectedOptions[0];
     aiCloud = selected?.dataset.cloud === 'true';
+    $('ai-source').textContent = !selected ? `${aiLocal.label} · Unavailable` :
+      selected.value === 'apple' ? 'Apple Intelligence · On device' : selected.textContent;
+    $('ai-source').title = $('ai-source').textContent;
     $('ai-provider').textContent = selected?.textContent || '';
     $('ai-privacy').textContent = aiCloud ?
       'Cloud provider selected. After your confirmation, the question and analytical context leave this device. Provider API charges and retention policies apply.' :
@@ -260,7 +288,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
 
   async function askAI(event) {
     event.preventDefault();
-    if (aiBusy || !ready || !result?.n || $('ai').hidden) return;
+    if (aiBusy || !ready || !result?.n || !$('ai-model').value) return;
     clearAI();
     const token = aiRevision;
     const ctx = getContext();
@@ -300,16 +328,15 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       $('ai-rows').innerHTML = aiRows.slice(0, 50).map((r, i) => {
         const sample = plan.metric === 'snaps' ? r.n : plan.metric === 'conversion' ? r.conversionN :
           ['epa', 'success'].includes(plan.metric) ? r.epaN : r.yardsN;
-        return `<tr><td><button data-ai-row="${i}">${esc(r.label)}</button><small>${esc(r.series)}</small></td>
+        return `<tr><td><button data-ai-row="${i}">${esc(A.displayLabel(r.label))}</button><small>${esc(A.displayLabel(r.series))}</small></td>
           <td>${r.n}</td>
           <td>${esc(AI.format(r[plan.metric], plan.metric))}</td><td>${sample}</td></tr>`;
       }).join('');
       $('ai-statistics').innerHTML = aiRows.slice(0, 50).map(r => `<tr>
-        <td>${esc(r.label)}<small>${esc(r.series)}</small></td><td>${r.n}</td>
-        ${Object.keys(A.METRICS).map(metric => {
-          const sample = metric === 'conversion' ? r.conversionN : ['epa', 'success'].includes(metric) ? r.epaN : r.yardsN;
-          return `<td>${esc(A.format(r[metric], metric))}<small>n = ${sample}</small></td>`;
-        }).join('')}</tr>`).join('');
+        <td>${esc(A.displayLabel(r.label))}<small>${esc(A.displayLabel(r.series))}</small></td><td>${r.n}</td>
+        ${Object.keys(A.METRICS).map(metric =>
+          `<td>${esc(A.format(r[metric], metric))}<small>${esc(A.sampleLabel(r, metric))}</small></td>`
+        ).join('')}</tr>`).join('');
       $('ai-answer').hidden = false;
       $('ai-status').textContent = 'Answer computed by AMP22. Click a result row to inspect its plays.';
     } catch (error) {
@@ -321,7 +348,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
         aiBusy = false;
         $('ai-cancel').hidden = true;
         $('ai-question').disabled = $('ai-model').disabled = false;
-        $('ai-ask').disabled = !ready || !result?.n;
+        $('ai-ask').disabled = !ready || !result?.n || !$('ai-model').value;
       }
     }
   }
@@ -395,20 +422,27 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     $('evidence').hidden = !row;
     evidence = row?.plays || [];
     if (!row) return;
-    $('evidence-label').textContent = `${row.label} / ${row.series}: ${evidence.length} plays. Showing first ${Math.min(200, evidence.length)}; CSV includes all.`;
+    $('evidence-label').textContent = `${A.displayLabel(row.label)} / ${A.displayLabel(row.series)}: ${evidence.length} plays. Showing first ${Math.min(200, evidence.length)}; CSV includes all.`;
     $('evidence-plays').innerHTML = evidence.slice(0, 200).map((p, i) => `<li>
       <button data-play="${i}" title="Locate this play in the selected-game sidebar without loading film">${esc(p.gameId)} / ${esc(A22.plays.clockLabel(p))} / ${esc(A22.plays.downDistance(p))}</button>
       <span>${esc(p.yards == null ? 'Yards N/A' : `${p.yards} yards`)} / EPA ${esc(A.format(p.epa, 'epa'))}</span>
       <p>${esc(p.desc)}</p></li>`).join('');
   }
 
+  function renderSelectionControls(matching) {
+    const selectionMode = $('selection-mode').value;
+    $('selection-controls').classList.toggle('selection-pending', selectionMode === 'all' && selected.size > 0);
+    $('selection-count').textContent = selectionMode === 'all'
+      ? (selected.size ? `${selected.size} selected; selection not applied. Choose how to analyze them.` : 'All filtered plays included')
+      : `${selected.size} selected${matching == null ? '' : ` / ${matching} match current side and filters`}`;
+    $('clear-selection').disabled = !selected.size;
+  }
+
   function renderSelection(scope) {
     const filtered = scope.filter(matchesFilter);
     selectionPlays = $('selection-show').value === 'selected'
       ? loaded.filter(play => selected.has(playKey(play))) : filtered;
-    const matching = filtered.filter(play => selected.has(playKey(play))).length;
-    $('selection-count').textContent = `${selected.size} selected / ${matching} match current perspective and filters`;
-    $('clear-selection').disabled = !selected.size;
+    renderSelectionControls(filtered.filter(play => selected.has(playKey(play))).length);
     $('select-filtered').disabled = !filtered.length;
     const shown = selectionPlays.slice(0, selectionLimit);
     $('selection-note').textContent = `${selectionPlays.length} plays in this list; showing ${shown.length}. Selection applies to analysis, not film links.`;
@@ -422,7 +456,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   }
 
   function render() {
-    if (loading || !ready || !loaded.length) return;
+    if (loading || !ready || !loaded.length) { renderSelectionControls(); return; }
     clearAI();
     clearHandoff();
     const ctx = getContext();
@@ -438,21 +472,29 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     onCohortChange(scope, selectionMatches);
     const filtered = renderSelection(scope);
     result = A.summarize(filtered.filter(selectionMatches), { team: ctx.sel.team, side, group, split, packages });
-    $('ai-ask').disabled = !result.n;
+    $('ai-ask').disabled = !result.n || !$('ai-model').value;
     $('copy-context').disabled = !result.n;
     const mode = $('selection-mode');
     const selectionNote = mode.value === 'all' ? 'All filtered plays' :
       `${mode.selectedOptions[0].textContent}; ${selected.size} selected`;
     const shared = `${filterDescription()}. Play selection: ${selectionNote}`;
-    $('status').textContent = [storageWarning, ...warnings].filter(Boolean).join(' | ') || 'Play data ready. No film loaded by Analysis Lab.';
-    $('status').classList.toggle('error', !!(storageWarning || warnings.length));
+    $('status').textContent = storageWarning;
+    $('status').classList.toggle('error', !!storageWarning);
     $('content').hidden = false;
+    const knownYards = result.plays.filter((play) => Number.isFinite(play.yards));
+    const knownEpa = result.plays.filter((play) => Number.isFinite(play.epa));
+    const yardsPerPlay = knownYards.length
+      ? knownYards.reduce((sum, play) => sum + play.yards, 0) / knownYards.length : null;
+    const epaPerPlay = knownEpa.length
+      ? knownEpa.reduce((sum, play) => sum + play.epa, 0) / knownEpa.length : null;
+    const successRate = knownEpa.length
+      ? knownEpa.filter((play) => play.epa > 0).length / knownEpa.length : null;
     $('summary').innerHTML = [
-      [result.n, `${ctx.sel.team} ${side} scored snaps`],
-      [`${result.knownDefense}/${result.n}`, 'known defensive package'],
-      [`${result.knownOffense}/${result.n}`, 'known offensive personnel'],
-      [`${result.knownEpa}/${result.n}`, 'known EPA'],
-    ].map(([n, l]) => `<div><strong>${esc(n)}</strong><span>${esc(l)}</span></div>`).join('');
+      [result.n, 'Scored snaps', `${ctx.sel.team} ${side}`],
+      [A.format(yardsPerPlay, 'ypp'), 'Yards per play', `${knownYards.length}/${result.n} known`],
+      [A.format(epaPerPlay, 'epa'), 'EPA per play', `${knownEpa.length}/${result.n} known`],
+      [A.format(successRate, 'success'), 'Success rate', `${knownEpa.length}/${result.n} known`],
+    ].map(([value, label, detail]) => `<div><strong>${esc(value)}</strong><span>${esc(label)}</span><small>${esc(detail)}</small></div>`).join('');
     const sourceText = Object.entries(result.sources).map(([s, n]) => `${s}: ${n} snaps`).join('; ') || 'No eligible snaps';
     const chartingSources = new Map();
     for (const play of result.plays) {
@@ -463,19 +505,25 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     const chartingText = [...chartingSources].map(([source, n]) => `${source}: ${n} snaps`).join('; ') || 'No source-labelled charting';
     const disagreements = result.plays.filter((play) => Object.keys(play.chartingConflicts || {}).length).length;
     const coverage = `${sourceText}. Known yards: ${result.knownYards}/${result.n}; complete defensive position lists: ${result.completeDefense}/${result.n}. PBP/EPA: nflverse/nflfastR. Charting sources (may overlap): ${chartingText}. Source disagreements: ${disagreements} snaps; retained source values are used.`;
-    $('coverage').textContent = `${coverage} Shared filters: ${shared}.`;
+    $('quality-warning').textContent = warnings.join(' ');
+    const quality = [
+      disagreements ? `${disagreements} source difference${disagreements === 1 ? '' : 's'}` : '',
+      warnings.length ? `${warnings.length} data warning${warnings.length === 1 ? '' : 's'}` : '',
+    ].filter(Boolean);
+    $('quality-summary').textContent = quality.length ? `Data quality · ${quality.join(' · ')}` : 'Data quality & sources';
+    $('coverage').textContent = `${coverage} Shared filters: ${shared}. Known counts exclude missing values; missing is never treated as zero.`;
     $('yards-heading').textContent = side === 'defense' ? 'Yards allowed' : 'Yards gained';
     $('group').disabled = chart === 'heatmap';
     $('split').disabled = chart !== 'bars';
     $('rows').innerHTML = result.rows.map((r, i) => {
       const type = split === 'type' ? r.plays[0].playType : '';
       const classes = [type ? `lab-row-${type}` : '', r.id === evidenceId ? 'selected' : ''].filter(Boolean).join(' ');
-      const series = type ? esc(r.series).replace(/^(Run|Pass)/, '<span class="lab-split-badge">$1</span>') : esc(r.series);
+      const series = type ? esc(r.series).replace(/^(Run|Pass)/, '<span class="lab-split-badge">$1</span>') : esc(A.displayLabel(r.series));
       return `<tr class="${classes}">
-      <td><button data-row="${i}" title="${esc(r.label)}">${esc(r.label)}</button><small${type ? ' class="lab-split"' : ''}>${series}</small></td>
+      <td><button data-row="${i}" title="${esc(A.displayLabel(r.label))}">${esc(A.displayLabel(r.label))}</button><small${type ? ' class="lab-split"' : ''}>${series}</small></td>
       <td>${r.n}</td>
-      <td>${(r.share * 100).toFixed(1)}%</td><td>${r.yardsN ? r.totalYards : 'N/A'}<small>n=${r.yardsN}</small></td>
-      ${Object.keys(A.METRICS).map((m) => `<td>${A.format(r[m], m)}<small>n=${m === 'epa' || m === 'success' ? r.epaN : m === 'conversion' ? r.conversionN : r.yardsN}</small></td>`).join('')}</tr>`;
+      <td>${(r.share * 100).toFixed(1)}%</td><td>${r.yardsN ? r.totalYards : 'N/A'}<small>${esc(A.sampleLabel(r, 'ypp'))}</small></td>
+      ${Object.keys(A.METRICS).map((m) => `<td>${A.format(r[m], m)}<small>${esc(A.sampleLabel(r, m))}</small></td>`).join('')}</tr>`;
     }).join('') ||
       '<tr><td colspan="9">No scored snaps match. Check perspective, shared sidebar filters, and play selection.</td></tr>';
     let chartRows = result.rows.slice(0, 30);
@@ -494,10 +542,21 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
         selection: { mode: mode.value, playIds: loaded.filter(play => selected.has(playKey(play))).map(play => `${play.gameId}/${play.playId}`) },
       }),
     };
-    $('chart-preview').innerHTML = result.n ? A.svg(report) : '';
-    $('chart-note').textContent = `${limit} ${chart !== 'bars' ? `This graphic uses ${A.GROUPS[group]} by ${A.SPLITS[split]}.` : ''}`;
+    renderChart();
+    $('chart-note').textContent = `${limit} Click a bar, heatmap cell or table row to inspect plays.`;
     for (const id of ['svg', 'png', 'csv']) $(id).disabled = !result.n;
     renderEvidence();
+  }
+
+  function renderChart(resizeOnly = false) {
+    if (root.hidden || !ready) return;
+    const preview = $('chart-preview');
+    const displayWidth = preview.clientWidth - 2;
+    const textScale = Number(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'));
+    const layout = `${displayWidth}/${textScale}`;
+    if (resizeOnly && layout === chartLayout) return;
+    chartLayout = layout;
+    preview.innerHTML = result?.n ? A.svg({ ...report, compact: true, displayWidth, textScale }) : '';
   }
 
   async function exportReport(format) {
@@ -564,7 +623,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   $('copy-context').addEventListener('click', () => {
     if (!ready || !report || !result?.n) return;
     handoffReport = { ...report, rows: result.rows.map(({ plays, ...row }) => row) };
-    share('question').value = $('ai').hidden ? '' : $('ai-question').value;
+    share('question').value = $('ai-ready').hidden ? '' : $('ai-question').value;
     handoffDialog.showModal();
     previewHandoff();
   });
@@ -598,13 +657,25 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
   });
 
   $('scope').addEventListener('change', () => {
-    $('from-label').hidden = $('to-label').hidden = $('scope').value !== 'range';
+    $('range').hidden = $('scope').value !== 'range';
     resetSelection();
     load();
   });
   for (const id of ['from', 'to']) $(id).addEventListener('change', () => { resetSelection(); load(); });
   for (const id of ['side', 'group', 'split', 'chart', 'metric']) $(id).addEventListener('change', render);
   $('reload').addEventListener('click', () => { cache.clear(); load(true); });
+  $('export-tools').addEventListener('click', event => {
+    if (event.target.closest('button')) $('export-tools').open = false;
+  });
+  root.addEventListener('click', event => {
+    if (!$('export-tools').contains(event.target)) $('export-tools').open = false;
+  });
+  $('export-tools').addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      $('export-tools').open = false;
+      $('export-tools').querySelector('summary').focus();
+    }
+  });
   $('selection-mode').addEventListener('change', render);
   $('selection-show').addEventListener('change', () => { selectionLimit = 200; render(); });
   $('clear-selection').addEventListener('click', () => {
@@ -690,6 +761,28 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     savePackages([...packages, { name: $('package-name').value.trim(), counts: Object.fromEntries(A.POSITIONS.map((p) => [p, $(`count-${p}`).valueAsNumber])) }]);
   });
   renderPackages();
+  const chartResize = new ResizeObserver(() => renderChart(true));
+  chartResize.observe($('chart-preview'));
+  chartResize.observe($('toolbar'));
+  $('ai-open').addEventListener('click', () => {
+    $('ai').open = true;
+    $('ai').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if ($('ai-ready').hidden) $('ai-recheck').focus();
+    else $('ai-question').focus();
+    discoverAI();
+  });
+  $('ai-recheck').addEventListener('click', () => {
+    $('ai-recheck').disabled = true;
+    discoverAI(true);
+  });
+  $('ai-settings').addEventListener('click', () => document.getElementById('configure-cloud-ai').click());
+  $('ai').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-question]');
+    if (!button) return;
+    $('ai-question').value = button.dataset.question;
+    $('ai').open = true;
+    $('ai-question').focus();
+  });
   $('ai-form').addEventListener('submit', askAI);
   $('ai-model').addEventListener('change', () => {
     clearAI();
@@ -705,7 +798,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
     const row = aiRows[Number(button.dataset.aiRow)];
     if (!row) return;
     aiEvidence = row.plays;
-    $('ai-evidence-label').textContent = `${row.label} / ${row.series}: ${aiEvidence.length} contributing plays; showing first ${Math.min(200, aiEvidence.length)}.`;
+    $('ai-evidence-label').textContent = `${A.displayLabel(row.label)} / ${A.displayLabel(row.series)}: ${aiEvidence.length} contributing plays; showing first ${Math.min(200, aiEvidence.length)}.`;
     $('ai-evidence-plays').innerHTML = aiEvidence.slice(0, 200).map((p, i) =>
       `<li><button data-ai-play="${i}">${esc(p.gameId)} / ${esc(A22.plays.clockLabel(p))} / ${esc(A22.plays.downDistance(p))}</button>
         <p>${esc(p.desc)}</p></li>`).join('');
@@ -743,6 +836,7 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       loading = ready = false;
       loaded = [];
       result = report = null;
+      renderSelectionControls();
       onCohortChange(null);
       $('content').hidden = true;
     },
@@ -750,6 +844,13 @@ window.createAnalysisLab = function ({ getContext, preparePlays, matchesFilter, 
       const ctx = getContext();
       for (const key of selected) if (JSON.parse(key)[0] === ctx.sel.gameId) selected.delete(key);
       for (const play of plays) selected.add(playKey(play));
+      render();
+    },
+    selectFilmPlays(plays) {
+      selected.clear();
+      for (const play of plays) selected.add(playKey(play));
+      $('selection-mode').value = 'include';
+      syncSelection();
       render();
     },
     hasSelectionFilter: () => $('selection-mode').value !== 'all',

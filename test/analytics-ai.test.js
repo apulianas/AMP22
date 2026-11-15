@@ -247,9 +247,25 @@ test('Apple uses only its bundled helper, hides unavailable models and sends the
       return plan;
     } });
   assert.deepEqual(await service.discover(), []);
+  assert.equal(service.localStatus.available, false);
+  assert.match(service.localStatus.reason, /System Settings/);
   available = true;
   assert.equal((await service.discover())[0].id, 'apple');
+  assert.equal(service.localStatus.available, true);
+  assert.equal(service.localStatus.reason, '');
   assert.deepEqual(await service.plan({ provider: 'apple', question: 'Compare EPA', context, catalog: labels }), plan);
+});
+
+test('missing or failed Apple helpers expose a local recovery reason without inventing a cloud fallback', async () => {
+  const service = new AnalyticsAI({ platform: 'darwin', arch: 'arm64', release: '25',
+    exists: () => false, native: () => assert.fail('missing helper must not run'), log: () => {} });
+  assert.deepEqual(await service.discover(), []);
+  assert.match(service.localStatus.reason, /npm run build:ai/);
+  service.exists = () => true;
+  service.native = async () => { throw new Error('Local helper failed'); };
+  assert.deepEqual(await service.discover(), []);
+  assert.match(service.localStatus.reason, /Local helper failed/);
+  assert.equal(service.localStatus.available, false);
 });
 
 test('Windows discovery is metadata-only and inference rechecks the local weight digest', async () => {

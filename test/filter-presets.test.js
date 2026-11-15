@@ -25,6 +25,14 @@ test('presets round-trip all filters with relative analyzed-team and opponent of
   assert.equal(saved.filter.choices.down, '3');
 });
 
+test('incompletions presets survive settings persistence and restore with other filters', () => {
+  const filter = { ...presets.emptyFilter(), result: 'incomplete', offense: 'BAL', qtr: '3' };
+  const saved = presets.capture('Incompletions', filter, 'BAL', 'JAX');
+  const settings = mergeSettings(JSON.parse(JSON.stringify({ filterPresets: [saved] })));
+  assert.equal(settings.filterPresets.length, 1);
+  assert.deepEqual(presets.restore(settings.filterPresets[0], 'BAL', 'CIN'), filter);
+});
+
 test('player presets are tied to the analyzed team and cross-team use requires explicitly omitting all players', () => {
   const filter = { ...presets.emptyFilter(), offense: 'BAL', choices: { player: ['ravens-player', 'opponent-player'], down: '2' } };
   const saved = presets.capture('Players', filter, 'BAL', 'JAX', { 'ravens-player': 'Raven' });

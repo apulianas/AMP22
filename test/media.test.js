@@ -29,6 +29,13 @@ test('film analysis honors a cut threshold below the usual candidate floor', asy
     const normal = await analyzeFilm(file, { cutThreshold: 0.1 });
     assert.equal(normal.clips.length, 1);
     assert.equal(normal.candidates.length, 0);
+    assert.equal(normal.cutMode, 'manual');
+
+    const automatic = await analyzeFilm(file, { cutThreshold: 0.1, filmWeights: [1] });
+    assert.equal(automatic.cutMode, 'auto');
+    assert.equal(automatic.candidates.length, 2, 'automatic detection scans at the most sensitive level');
+    assert.equal(automatic.tuning.levels.length, 9);
+    assert.ok(automatic.clips.every((clip) => !('estimated' in clip) && clip.orient != null));
 
     const vf = "scale=64:36,select='gt(scene\\,0.03)',metadata=print:key=lavfi.scene_score";
     const { stderr } = await run(ffmpegPath(), [
