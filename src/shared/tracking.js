@@ -1,8 +1,8 @@
 (function (root, factory) {
-  const mod = factory();
+  const mod = factory(typeof module === 'object' && module.exports ? require('./overlay') : root.A22.overlay);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else (root.A22 = root.A22 || {}).tracking = mod;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (overlay) {
   'use strict';
 
   const RATE = 10;
@@ -11,11 +11,18 @@
   const DEFAULTS = { mode: 'full', radius: 0.035, showName: true, showPhoto: true };
 
   function defaults(value = {}) {
+    let theme = null;
+    if (value.theme != null) {
+      try { theme = overlay.theme(value.theme); }
+      catch { /* Ignore malformed saved preferences. */ }
+    }
     return {
       mode: ['full', 'presnap'].includes(value.mode) ? value.mode : DEFAULTS.mode,
       radius: Number.isFinite(value.radius) && value.radius >= 0.015 && value.radius <= 0.1 ? value.radius : DEFAULTS.radius,
       showName: typeof value.showName === 'boolean' ? value.showName : DEFAULTS.showName,
       showPhoto: typeof value.showPhoto === 'boolean' ? value.showPhoto : DEFAULTS.showPhoto,
+      ...(Object.hasOwn(value, 'theme') ? { theme } : {}),
+      ...(Object.hasOwn(value, 'opacity') ? { opacity: Number.isFinite(value.opacity) && value.opacity >= 0 && value.opacity <= 1 ? value.opacity : null } : {}),
     };
   }
 
@@ -27,6 +34,8 @@
         (track.id !== null && (typeof track.id !== 'string' || !/^[a-zA-Z0-9-]{1,32}$/.test(track.id))) ||
         (track.snap !== null && (!Number.isFinite(track.snap) || track.snap < 0)) ||
         !Array.isArray(track.points) || track.points.length > MAX_POINTS) throw new Error('Invalid player highlight.');
+    if (track.theme != null) overlay.theme(track.theme);
+    if (track.opacity != null) overlay.opacity(track.opacity);
     let previous = -1;
     for (const point of track.points) {
       if (!point || ![point.t, point.x, point.y].every(Number.isFinite) || point.t <= previous ||
@@ -49,6 +58,10 @@
 
   function visible(track, time) {
     return track.mode !== 'presnap' || (track.snap !== null && time < track.snap);
+  }
+
+  function appearance(track, inherited) {
+    return overlay.appearance(track.theme ?? inherited, track.opacity ?? inherited.opacity);
   }
 
   function median(values) {
@@ -134,5 +147,5 @@
     return result;
   }
 
-  return { RATE, MAX_SECONDS, MAX_POINTS, DEFAULTS, defaults, validateTrack, position, visible, cameraShift, patchMotion, suggestSnap, geometry, intervals };
+  return { RATE, MAX_SECONDS, MAX_POINTS, DEFAULTS, defaults, validateTrack, position, visible, appearance, cameraShift, patchMotion, suggestSnap, geometry, intervals };
 });

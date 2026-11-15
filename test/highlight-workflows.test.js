@@ -5,15 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const tracking = require('../src/shared/tracking');
+const overlay = require('../src/shared/overlay');
 
-function editor({ deferred = false } = {}) {
+function editor({ deferred = false, mode, renderPreview } = {}) {
   const elements = new Map(), requests = [], writes = [], defaults = [], pending = [], cancellations = [], busyChanges = [];
   let progress;
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
       listeners: {}, value: '', checked: false, disabled: false, hidden: false, textContent: '',
       readyState: 2, videoWidth: 1920, videoHeight: 1080, currentTime: 10, paused: true,
-      classList: { toggle() {} }, src: '',
+      classList: { toggle() {} }, src: '', dataset: {},
       get valueAsNumber() { return this.value === '' ? NaN : Number(this.value); },
       addEventListener(name, fn) { this.listeners[name] = fn; },
       fire(name, event = {}) { return this.listeners[name]?.(event); },
@@ -26,7 +27,7 @@ function editor({ deferred = false } = {}) {
     return elements.get(id);
   }
   const context = vm.createContext({
-    A22: { tracking },
+    A22: { tracking, overlay },
     document: { getElementById: element, createElement: () => element('created-canvas') },
     structuredClone, requestAnimationFrame() {},
     Option: function (name, value) { this.name = name; this.value = value; },
@@ -51,6 +52,9 @@ function editor({ deferred = false } = {}) {
     save: async (clip, value) => { if (failWrites) throw new Error('disk full'); writes.push({ clip, value }); },
     saveDefaults: async value => defaults.push(value),
     preparePhoto: value => value,
+    mode: mode ? () => mode : undefined,
+    renderPreview,
+    themes: () => [{ value: 'team-BAL', label: 'Baltimore Ravens', theme: overlay.teamTheme('BAL') }],
   });
   const clip = { file: '/film.mp4', url: 'file:///film.mp4', aStart: 10, bStart: 30, len: 5, trim: 0, fps: 30, info: { width: 1920, height: 1080 }, highlights: {} };
   element('highlight-angle').value = 'sideline';
@@ -111,7 +115,7 @@ test('corrections replace future points, retain earlier work, and do not affect 
   r.el('angle').fire('change');
   assert.equal(r.clip.highlights.endzone, undefined);
   r.el('canvas').fire('click', { clientX: 200, clientY: 200 });
-  assert.equal(r.clip.highlights.endzone.points[0].t, 30);
+  assert.equal(r.clip.highlights.endzone.points[0].t, 30.15, 'camera changes preserve the relative preview time');
   assert.equal(r.clip.highlights.sideline.points[2].t, 10.15);
   r.el('clear-track').fire('click');
   await r.settle();
@@ -168,6 +172,76 @@ test('saving display defaults does not enable a highlight, copy an identity, or 
   assert.equal(r.writes.length, 0);
   assert.equal(r.requests.length, 0);
   assert.deepEqual(JSON.parse(JSON.stringify(r.defaults[0])), tracking.DEFAULTS);
+});
+
+test('player themes and opacity are independent, persist with defaults, and can return to matching play information', async () => {
+  const r = editor();
+  r.instance.select(r.clip);
+  assert.equal(r.el('theme').value, 'match');
+  assert.equal(r.el('opacity-match').checked, true);
+  r.el('theme').value = 'team-BAL';
+  r.el('theme').fire('change');
+  assert.deepEqual(JSON.parse(JSON.stringify(r.clip.highlights.sideline.theme)), overlay.teamTheme('BAL'));
+  r.el('opacity').value = 0;
+  r.el('opacity').fire('input');
+  r.el('opacity').fire('change');
+  assert.equal(r.clip.highlights.sideline.opacity, 0);
+  assert.equal(r.el('opacity-value').textContent, '0%');
+  await r.el('defaults').fire('click');
+  assert.equal(r.defaults[0].opacity, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.defaults[0].theme)), overlay.teamTheme('BAL'));
+  assert.equal(r.requests.length, 0);
+  r.el('theme').value = 'match';
+  r.el('theme').fire('change');
+  r.el('opacity-match').checked = true;
+  r.el('opacity-match').fire('change');
+  await r.settle();
+  assert.equal(r.writes.at(-1).value.sideline.theme, null);
+  assert.equal(r.writes.at(-1).value.sideline.opacity, null);
+});
+
+test('portrait placement maps to the selected camera viewport, rejects padding and other cameras, and syncs seeking', async () => {
+  const r = editor({ mode: 'both', renderPreview: ({ canvas }) => {
+    canvas.width = 1080; canvas.height = 1920;
+    return {
+      sideline: { x: 0, y: 352, w: 1080, h: 608 },
+      endzone: { x: 0, y: 960, w: 1080, h: 608 },
+    };
+  } });
+  r.instance.select(r.clip);
+  r.el('video').fire('loadedmetadata');
+  r.el('tool').value = 'overlay';
+  await r.el('canvas').fire('click', { clientX: 480, clientY: 184.5 });
+  assert.equal(r.requests.length, 0, 'moving the play card never places a player');
+  r.el('tool').value = 'player';
+  for (const clientY of [40, 350]) await r.el('canvas').fire('click', { clientX: 480, clientY });
+  assert.equal(r.requests.length, 0, 'output padding and the other camera are not valid player placements');
+  await r.el('canvas').fire('click', { clientX: 480, clientY: 184.5 });
+  assert.equal(r.requests[0].seeds[0].x, 0.5);
+  assert.equal(r.requests[0].seeds[0].y, 0.5);
+  r.el('time').value = 1;
+  r.el('time').fire('input');
+  assert.equal(r.el('video').currentTime, 11);
+  assert.equal(r.el('other-video').currentTime, 31);
+  r.el('angle').value = 'endzone';
+  r.el('angle').fire('change');
+  assert.equal(r.el('video').currentTime, 31);
+  assert.equal(r.el('other-video').currentTime, 11);
+});
+
+test('unloaded or seeking previews cannot receive player placements', async () => {
+  const r = editor();
+  r.instance.select(null);
+  assert.equal(r.el('controls').disabled, true);
+  assert.equal(r.instance.ready(), false);
+  r.instance.select(r.clip);
+  r.el('video').seeking = true;
+  await r.el('canvas').fire('click', {clientX: 480, clientY: 270});
+  assert.equal(r.requests.length, 0);
+  assert.equal(r.instance.ready(), false);
+  assert.match(r.el('status').textContent, /finish loading/);
+  r.el('video').seeking = false;
+  assert.equal(r.instance.ready(), true);
 });
 
 test('preview distinguishes a placed marker, a tracked frame, and untracked footage with a stop shortcut', async () => {

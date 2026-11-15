@@ -230,86 +230,43 @@ test('Share starts with remembered decimals, keeps per-play overrides, and block
   assert.equal(r.element('share-export').disabled, true);
 });
 
-test('trim previews follow the export mode and ignore stale angle requests', async () => {
-  let pendingTimer;
-  const timers = {
-    setTimeout(fn) { pendingTimer = fn; return fn; },
-    clearTimeout(id) { if (pendingTimer === id) pendingTimer = null; },
-    run() {
-      const fn = pendingTimer;
-      assert.ok(fn, 'preview timer scheduled');
-      pendingTimer = null;
-      return fn();
-    },
-  };
-  const r = renderer({ timers });
+test('live cut-up preview follows the selected split source and mode without extracting separate frames', async () => {
+  const r = renderer();
   await r.openSplitFilms();
   r.S.settings.exportTrim = 0.25;
   r.S.selected = new Set([0, 1]);
   r.element('share-preview-play').value = '0';
   const requests = [];
-  r.api.previewFrame = async (file, time) => {
-    requests.push({ file, time });
-    return `frame:${time}`;
-  };
+  let extracted = 0;
+  r.api.previewFrame = async () => { extracted++; };
+  r.setHighlightEditor({
+    busy: () => false, refresh() {}, pause() {},
+    select: clip => requests.push({ clip, mode: r.element('share-angle').value }),
+  });
   r.openShare();
   const clip = r.S.exportDraft.clips[0];
-  const starts = { a: clip.aStart + clip.trim, b: clip.bStart + clip.trim };
-
-  for (const [mode, showA, showB] of [
-    ['sideline', true, false], ['endzone', false, true], ['both', true, true],
-    ['sideline-first', true, true], ['endzone-first', true, true],
-  ]) {
-    if (mode !== 'sideline') {
-      r.element('share-angle').value = mode;
-      r.queueTrimPreview();
-    }
-    assert.equal(r.element('share-preview-figure-a').hidden, !showA, mode);
-    assert.equal(r.element('share-preview-figure-b').hidden, !showB, mode);
-    assert.equal(r.element('share-preview-a').hidden, true, 'old images hidden while loading');
-    assert.equal(r.element('share-preview-b').hidden, true, 'old images hidden while loading');
-    requests.length = 0;
-    await timers.run();
-    assert.deepEqual(requests.map((request) => request.time), [
-      ...(showA ? [starts.a] : []), ...(showB ? [starts.b] : []),
-    ], mode);
-    assert.ok(requests.every((request) => request.file === clip.file));
-    assert.equal(r.element('share-preview-a').hidden, !showA, mode);
-    assert.equal(r.element('share-preview-b').hidden, !showB, mode);
-    if (showA) assert.equal(r.element('share-preview-a').src, `frame:${starts.a}`);
-    if (showB) assert.equal(r.element('share-preview-b').src, `frame:${starts.b}`);
+  for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
+    r.element('share-angle').value = mode;
+    r.queueTrimPreview();
+    assert.equal(requests.at(-1).clip, clip);
+    assert.equal(requests.at(-1).mode, mode);
     assert.equal(clip.trim, 0.25, 'changing angles preserves the trim');
   }
 
-  requests.length = 0;
   r.element('share-preview-play').value = '1';
   r.selectTrimPlay();
-  await timers.run();
   const defenseClip = r.S.exportDraft.clips[1];
-  assert.deepEqual(requests.map((request) => request.file), [defenseClip.file, defenseClip.file]);
-  assert.deepEqual(requests.map((request) => request.time), [
-    defenseClip.aStart + defenseClip.trim, defenseClip.bStart + defenseClip.trim,
-  ]);
+  assert.equal(requests.at(-1).clip, defenseClip);
+  assert.equal(requests.at(-1).clip.url, 'file:///defense.mp4');
   r.element('share-preview-play').value = '0';
   r.selectTrimPlay();
 
-  let finishOld;
-  r.api.previewFrame = (_file, time) => time === starts.a
-    ? new Promise((resolve) => { finishOld = resolve; })
-    : Promise.resolve('new end-zone frame');
-  r.element('share-angle').value = 'sideline';
+  assert.equal(requests.at(-1).clip, clip);
+  clip.trim = clip.len;
   r.queueTrimPreview();
-  const oldRequest = timers.run();
-  r.element('share-angle').value = 'endzone';
-  r.queueTrimPreview();
-  await timers.run();
-  finishOld('stale sideline frame');
-  await oldRequest;
-  assert.equal(r.element('share-preview-figure-a').hidden, true);
-  assert.equal(r.element('share-preview-a').hidden, true);
-  assert.equal(r.element('share-preview-figure-b').hidden, false);
-  assert.equal(r.element('share-preview-b').src, 'new end-zone frame');
-  assert.equal(r.element('share-preview-b').hidden, false);
+  assert.equal(requests.at(-1).clip, null, 'invalid trims disable the live editor rather than showing a stale clip');
+  assert.match(r.element('share-preview-status').textContent, /Preview unavailable/);
+  assert.equal(extracted, 0);
 });
 
 test('Share uses saved breakdown defaults while allowing format and advanced-statistic overrides', async () => {

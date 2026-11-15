@@ -38,7 +38,7 @@ button:disabled { opacity: .4; cursor: default; }
 #highlight-progress-panel { position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 8px 0; }
 #highlight-progress { width: 100%; display: block; margin: 6px 0; accent-color: var(--accent); }
 #highlight-progress-panel[hidden] { display: none; }
-#highlight-video[hidden], #highlight-cancel[hidden], #highlight-editor[hidden] { display: none; }
+#highlight-video[hidden], #highlight-other-video[hidden], #highlight-canvas[hidden], #highlight-cancel[hidden], #highlight-editor[hidden] { display: none; }
 .muted { color: var(--muted); }
 .small { font-size: 11px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -233,18 +233,38 @@ main { display: flex; height: calc(100% - 46px); }
 .overlay[hidden] { display: none; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; max-height: 90vh; overflow-y: auto; min-width: 460px; }
 .panel.wide { width: 820px; }
-#share .panel { width: 560px; max-width: 90vw; }
-#share .panel:has(#highlight-section[open]) { width: 1000px; }
-#share-preview-play { width: 100%; margin-top: 6px; }
-.trim-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; }
-.trim-previews figure { margin: 0; min-width: 0; }
-.trim-previews figure[hidden] { display: none; }
-.trim-previews figcaption { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
-.trim-previews img { width: 100%; background: black; }
+#share .panel { width: 1240px; max-width: 94vw; min-width: 0; height: 90vh; display: flex; flex-direction: column; overflow: clip; }
+#share-preview-play { width: 100%; margin: 6px 0 16px; }
+.cutup-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: minmax(0, 1fr); gap: 22px; flex: 1; min-height: 0; }
+.cutup-preview { min-width: 0; height: 100%; overflow-y: auto; background: var(--panel); }
+.cutup-preview > p { margin: 4px 0; }
+.cutup-preview > .row { flex-wrap: wrap; }
+.cutup-preview label { font-size: 12px; }
+.cutup-transport { flex-wrap: wrap; margin-top: 8px; }
+.cutup-transport .mono { margin-left: auto; font-size: 12px; }
+.cutup-tools { min-width: 0; height: 100%; overflow-y: auto; padding-right: 8px; background: var(--panel2); border-radius: 6px; }
+.cutup-tools:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cutup-tools select, .cutup-tools input:not([type=checkbox]) { min-width: 0; max-width: 100%; }
+.cutup-tools .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.cutup-tools .row { flex-wrap: wrap; }
+.cutup-tools label { min-width: 0; overflow-wrap: anywhere; }
+.cutup-tools fieldset { min-width: 0; }
+#highlight-controls > label:has(> input[type=checkbox]) { flex-direction: row; align-items: center; }
+.cutup-tools > #share-trimming { margin-top: 0; }
+.cutup-tools details > summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+#share-status:empty { display: none; }
+#share .actions { flex-shrink: 0; background: var(--panel); margin-top: 0; padding: 12px 0 0; border-top: 1px solid var(--border); }
+#highlight-canvas { touch-action: none; cursor: grab; }
+#highlight-canvas[data-tool="player"], #highlight-canvas[data-tool="offense"] { cursor: crosshair; }
+#highlight-theme, #highlight-opacity { width: 100%; }
+#highlight-theme-name { min-width: 0; flex: 1; }
+#highlight-controls input[type=color] { width: 100%; height: 34px; padding: 2px; }
+@media (max-width: 950px) {
+  #share .panel { overflow-y: auto; display: block; height: auto; }
+  .cutup-workspace { display: block; }
+  .cutup-preview, .cutup-tools { height: auto; overflow: visible; }
+}
 #share-position { width: 100%; margin-top: 6px; }
-#share-position-preview { display: block; max-width: 100%; height: auto; margin: auto; background: black; touch-action: none; cursor: grab; }
-#share-position-preview[hidden] { display: none; }
-#share-position-preview:active { cursor: grabbing; }
 #share-location-name { min-width: 0; flex: 1; }
 #share-theme { width: 100%; margin: 6px 0 12px; }
 #share-theme-name { min-width: 0; flex: 1; }

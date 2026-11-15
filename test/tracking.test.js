@@ -40,6 +40,20 @@ test('tracking requests bound computation to one explicitly requested clip and u
   }
 });
 
+test('player appearance inherits legacy play themes and supports independent colors and transparent backgrounds', () => {
+  const overlay = require('../src/shared/overlay');
+  const inherited = overlay.appearance(null, 0.65, 'BAL');
+  assert.deepEqual(T.appearance(track(), inherited), inherited);
+  const themed = track({ theme: { background: '#ffffff', accent: '#ff8800' }, opacity: 0 });
+  assert.deepEqual(T.appearance(themed, inherited), overlay.appearance(themed.theme, 0));
+  assert.equal(T.appearance(themed, inherited).text, '#000000');
+  assert.deepEqual(mergeSettings({ highlightDefaults: themed }).highlightDefaults.theme, themed.theme);
+  assert.equal(mergeSettings({ highlightDefaults: themed }).highlightDefaults.opacity, 0);
+  for (const patch of [{ theme: { background: 'red', accent: '#ffffff' } }, { opacity: -0.1 }, { opacity: 2 }]) {
+    assert.throws(() => T.validateTrack(track(patch)));
+  }
+});
+
 test('positions interpolate only within tracked spans and do not invent a track across gaps', () => {
   const points = track().points;
   assert.equal(T.position(points, 9.9), null);

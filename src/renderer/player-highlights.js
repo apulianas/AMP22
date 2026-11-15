@@ -48,14 +48,19 @@
   }
 
   A22.createHighlightEditor = function (options) {
-    const video = $('video'), canvas = $('canvas');
-    let clip = null, angle = 'sideline', busy = false, photo = null, photoKey = '';
+    const video = $('video'), otherVideo = $('other-video'), canvas = $('canvas');
+    let clip = null, angle = 'sideline', busy = false;
     let job = null, running = null, analysisQueue = Promise.resolve();
     let offense = [], offenseTime = null, suggestion = null;
     let saving = Promise.resolve();
     const saveErrors = new Map();
     const saveKey = value => value.highlightKey || value;
     let photoRevision = 0;
+    let viewports = null, themeChoices = [], themeSaving = false, playerChoices = [];
+    const photos = new Map();
+    const graphics = new WeakMap();
+    const base = (camera = angle) => camera === 'sideline' ? clip.aStart : clip.bStart;
+    const otherAngle = () => angle === 'sideline' ? 'endzone' : 'sideline';
     const track = () => clip?.highlights?.[angle];
     const start = () => (angle === 'sideline' ? clip.aStart : clip.bStart) + clip.trim;
     const end = () => (angle === 'sideline' ? clip.aStart : clip.bStart) + clip.len;
@@ -104,6 +109,7 @@
         ? `Suggested snap: ${(suggestion.time - start()).toFixed(2)}s (${suggestion.confidence} relative confidence; ${suggestion.players} marked offensive targets). Review before accepting.`
         : 'No snap suggestion. Mark at least 3 stationary offensive players on the same pre-snap frame, then run tracking.';
       const points = value.points || [];
+      syncThemeControls(value);
       const first = points.find(p => p.t >= start() && p.t < end());
       const last = points.findLast(p => p.t >= start() && p.t < end());
       $('review-stop').disabled = !last;
@@ -114,12 +120,53 @@
           ? `${points.length} saved positions; first ${(first.t - start()).toFixed(2)}s, last ${(last.t - start()).toFixed(2)}s of ${(end() - start()).toFixed(2)}s. Gaps and footage after the last position are not highlighted. Use Go to last tracked frame to continue a stopped track.`
           : 'No track in this retained clip. Click the player on the film to start background tracking. Choosing a name or pressing Play preview alone does not run tracking.';
     }
+    function syncThemeControls(value = track() || options.defaults()) {
+      if (!options.themes) return;
+      themeChoices = options.themes();
+      const inherited = options.appearance();
+      const appearance = T.appearance(value, inherited);
+      $('theme').replaceChildren(new Option('Match play information', 'match'));
+      for (const item of themeChoices) $('theme').add(new Option(item.label, item.value));
+      $('theme').add(new Option('Custom / modified', 'custom'));
+      const match = value.theme && themeChoices.find(item => item.theme.background === value.theme.background && item.theme.accent === value.theme.accent);
+      $('theme').value = value.theme == null ? 'match' : match?.value || 'custom';
+      $('theme-background').value = appearance.background;
+      $('theme-accent').value = appearance.accent;
+      $('opacity-match').checked = value.opacity == null;
+      $('opacity').value = appearance.opacity * 100;
+      $('opacity-value').textContent = `${Math.round(appearance.opacity * 100)}%`;
+      $('theme-delete').disabled = themeSaving || !$('theme').value.startsWith('saved-');
+      $('theme-save').disabled = themeSaving;
+    }
+    function drawTrack(ctx, viewport, camera, timestamp) {
+      const value = clip.highlights?.[camera];
+      const p = value && T.visible(value, timestamp) && T.position(value.points, timestamp);
+      if (!p || options.isClean()) return;
+      const appearance = T.appearance(value, options.appearance()), photo = photos.get(value.id);
+      const key = JSON.stringify([value.radius, value.name, value.showName, value.showPhoto, appearance, viewport.w]);
+      let cached = graphics.get(value);
+      if (!cached || cached.key !== key || cached.photo !== photo) {
+        cached = { key, photo, image: graphic(value, appearance, viewport.w, photo) };
+        graphics.set(value, cached);
+      }
+      const image = cached.image;
+      ctx.drawImage(image.canvas, viewport.x + p.x * viewport.w - image.anchorX, viewport.y + p.y * viewport.h - image.anchorY);
+    }
     function draw() {
       if (!clip || video.readyState < 2) return;
-      canvas.width = 960;
-      canvas.height = Math.round(960 * video.videoHeight / video.videoWidth);
+      if (video.seeking || options.mode?.() === 'both' && (otherVideo.readyState < 2 || otherVideo.seeking)) return;
+      canvas.hidden = false;
+      if (options.renderPreview) {
+        viewports = options.renderPreview({ canvas, clip, angle, video, otherVideo, time: time() - start(), drawTrack });
+      } else {
+        canvas.width = 960;
+        canvas.height = Math.round(960 * video.videoHeight / video.videoWidth);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        viewports = { [angle]: { x: 0, y: 0, w: canvas.width, h: canvas.height } };
+        drawTrack(ctx, viewports[angle], angle, time());
+      }
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const value = track(), t = time();
       const p = value && T.position(value.points, t);
       $('preview-state').textContent = !value ? 'No player highlight enabled.'
@@ -129,25 +176,25 @@
               : value.points.length === 1 ? job?.value === value ? 'Position placed. Tracking in the background; you can keep using the preview.'
                 : 'Position placed only. Click the player to track again.'
                 : 'Showing a saved tracked position. Review that the circle stays on the intended player.';
-      if (value && T.visible(value, t)) {
-        if (p) {
-          const image = graphic(value, options.appearance(), canvas.width, photo);
-          ctx.drawImage(image.canvas, p.x * canvas.width - image.anchorX, p.y * canvas.height - image.anchorY);
-        }
-      }
+      const viewport = viewports[angle];
       if (offenseTime !== null && Math.abs(t - offenseTime) < 0.06) {
         ctx.strokeStyle = '#ffffff';
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 16px sans-serif';
         offense.forEach((p, index) => {
-          ctx.strokeRect(p.x * canvas.width - 6, p.y * canvas.height - 6, 12, 12);
-          ctx.fillText(String(index + 1), p.x * canvas.width + 9, p.y * canvas.height);
+          ctx.strokeRect(viewport.x + p.x * viewport.w - 6, viewport.y + p.y * viewport.h - 6, 12, 12);
+          ctx.fillText(String(index + 1), viewport.x + p.x * viewport.w + 9, viewport.y + p.y * viewport.h);
         });
       }
       $('time').value = Math.max(0, time() - start());
       $('time-label').textContent = `${Math.max(0, time() - start()).toFixed(2)} / ${(end() - start()).toFixed(2)}s`;
     }
-    function stopPlayback() { video.pause(); $('play').textContent = 'Play preview'; }
+    function stopPlayback() { video.pause(); otherVideo.pause(); $('play').textContent = 'Play preview'; }
+    function syncOther() {
+      if (!clip || !otherVideo.readyState) return;
+      const target = base(otherAngle()) + time() - base();
+      if (Math.abs(otherVideo.currentTime - target) > 0.04) otherVideo.currentTime = target;
+    }
     function seek(relative) {
       stopPlayback();
       const target = Math.min(end() - 0.001, Math.max(start(), start() + relative));
@@ -157,21 +204,35 @@
         syncControls();
       }
       video.currentTime = target;
+      syncOther();
     }
     video.addEventListener('seeked', draw);
     video.addEventListener('loadedmetadata', () => { if (clip) seek(0); });
-    video.addEventListener('error', () => status('Highlight preview could not open this film.', true));
-    video.addEventListener('timeupdate', () => { if (clip && time() >= end() - 0.05) stopPlayback(); draw(); });
+    otherVideo.addEventListener('loadedmetadata', syncOther);
+    otherVideo.addEventListener('seeked', draw);
+    for (const source of [video, otherVideo]) {
+      source.addEventListener('loadeddata', draw);
+      source.addEventListener('error', () => status('Cut-up preview could not open this film.', true));
+    }
+    video.addEventListener('timeupdate', () => {
+      if (clip && time() >= end() - 0.05) stopPlayback();
+      if (options.mode?.() === 'both') syncOther();
+      draw();
+    });
     function animate() {
       if (video.paused) return;
+      if (options.mode?.() === 'both') syncOther();
       draw();
       requestAnimationFrame(animate);
     }
     $('play').addEventListener('click', () => {
+      if (!clip) return;
       if (!video.paused) { stopPlayback(); return; }
       if (time() >= end() - 0.1) video.currentTime = start();
-      video.play().then(() => { $('play').textContent = 'Pause preview'; animate(); })
-        .catch(error => status(`Preview failed: ${error.message}`, true));
+      syncOther();
+      Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
+        .then(() => { $('play').textContent = 'Pause preview'; animate(); })
+        .catch(error => { stopPlayback(); status(`Preview failed: ${error.message}`, true); });
     });
     $('time').addEventListener('input', () => seek(Number($('time').value)));
     $('back').addEventListener('click', () => seek(time() - start() - 1 / clip.fps));
@@ -183,10 +244,22 @@
       status('This is the last tracked frame. Step forward to a clear view and click the same player to resume background tracking. Earlier tracked positions are kept.');
     });
     canvas.addEventListener('click', event => {
-      if (!clip || options.isClean() || video.readyState < 2) return;
+      if (!clip || options.isClean() || video.readyState < 2 || $('tool').value === 'overlay') return;
+      if (video.seeking || options.mode?.() === 'both' && otherVideo.seeking) {
+        status('Wait for the selected video frame to finish loading before placing a player.', true);
+        return;
+      }
       stopPlayback();
       const bounds = canvas.getBoundingClientRect();
-      const p = { x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height };
+      const viewport = viewports?.[angle];
+      if (!viewport) return;
+      const x = (event.clientX - bounds.left) / bounds.width * canvas.width;
+      const y = (event.clientY - bounds.top) / bounds.height * canvas.height;
+      const p = { x: (x - viewport.x) / viewport.w, y: (y - viewport.y) / viewport.h };
+      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) {
+        status('Click inside the selected preview camera, not the other angle or output padding.', true);
+        return;
+      }
       if ($('tool').value === 'offense') {
         if (offense.length >= 11) { status('At most 11 offensive targets. Clear the markers to start again.', true); return; }
         if (offenseTime !== null && Math.abs(offenseTime - time()) > 0.06) offense = [];
@@ -227,7 +300,7 @@
       if (id === 'show-photo') loadPhoto();
     });
     $('player').addEventListener('change', () => {
-      const player = options.players(clip).find(p => p.id === $('player').value);
+      const player = playerChoices.find(p => p.id === $('player').value);
       const value = ensureTrack();
       value.id = player?.id || null;
       value.name = player?.name || '';
@@ -248,31 +321,71 @@
     $('clear-track').addEventListener('click', () => {
       cancelForCurrentTrack();
       if (clip.highlights) delete clip.highlights[angle];
-      suggestion = null; photo = null; photoKey = '';
+      suggestion = null;
       syncControls(); persist(); draw();
     });
     $('defaults').addEventListener('click', async () => {
       try { await options.saveDefaults(T.defaults(track() || options.defaults())); status('Highlight display defaults saved. Existing clips are unchanged.'); }
       catch (error) { status(`Defaults could not be saved: ${error.message}`, true); }
     });
-    async function loadPhoto() {
-      const key = track()?.showPhoto ? track()?.id : null;
-      if (key === photoKey) return;
-      const token = ++photoRevision;
-      photoKey = key;
-      photo = null;
-      if (!key) { draw(); return; }
+    $('theme').addEventListener('change', () => {
+      const value = ensureTrack(), selected = $('theme').value;
+      value.theme = selected === 'match' ? null : A22.overlay.theme(themeChoices.find(item => item.value === selected)?.theme || T.appearance(value, options.appearance()));
+      syncThemeControls(); persist(); draw();
+    });
+    for (const key of ['background', 'accent']) {
+      $('theme-' + key).addEventListener('input', () => {
+        const value = ensureTrack();
+        value.theme = A22.overlay.theme({ ...T.appearance(value, options.appearance()), [key]: $('theme-' + key).value });
+        syncThemeControls(); draw();
+      });
+      $('theme-' + key).addEventListener('change', () => persist());
+    }
+    $('opacity-match').addEventListener('change', () => {
+      ensureTrack().opacity = $('opacity-match').checked ? null : Number($('opacity').value) / 100;
+      syncThemeControls(); persist(); draw();
+    });
+    $('opacity').addEventListener('input', () => {
+      ensureTrack().opacity = Number($('opacity').value) / 100;
+      syncThemeControls(); draw();
+    });
+    $('opacity').addEventListener('change', () => persist());
+    async function saveTheme(remove) {
+      if (themeSaving) return;
+      const selected = $('theme').value;
+      const name = $('theme-name').value.trim();
+      if (!remove && (!name || name.length > 60)) { status('Enter a theme name (1-60 characters).', true); return; }
+      if (remove && !selected.startsWith('saved-')) return;
+      themeSaving = true; syncThemeControls();
       try {
-        const [result] = await window.api.getHeadshots([key]);
-        if (token !== photoRevision) return;
-        if (!result?.dataUrl) throw new Error(result?.warning || 'No headshot available for this player.');
-        const image = new Image();
-        image.src = result.dataUrl;
-        await image.decode();
-        if (token !== photoRevision) return;
-        photo = options.preparePhoto(image); draw();
+        await options.saveTheme({ name, theme: A22.overlay.theme(T.appearance(track() || options.defaults(), options.appearance())), remove: remove ? Number(selected.slice(6)) : null });
+        status(remove ? 'Saved theme deleted. Current player colors are unchanged.' : `Theme "${name}" saved for player and play-information overlays.`);
+      } catch (error) { status(`Could not save player theme: ${error.message}`, true); }
+      finally { themeSaving = false; syncThemeControls(); }
+    }
+    $('theme-save').addEventListener('click', () => saveTheme(false));
+    $('theme-delete').addEventListener('click', () => saveTheme(true));
+    $('tool').addEventListener('change', () => {
+      canvas.dataset.tool = $('tool').value;
+      if ($('tool').value !== 'overlay') options.openPlayer?.();
+    });
+    async function loadPhoto() {
+      const token = ++photoRevision;
+      const ids = [...new Set(Object.values(clip?.highlights || {}).filter(value => value.showPhoto && value.id && !photos.has(value.id)).map(value => value.id))];
+      if (!ids.length) { draw(); return; }
+      try {
+        for (const result of await window.api.getHeadshots(ids)) {
+          if (token !== photoRevision) return;
+          if (!result?.dataUrl) { status(`Headshot unavailable: ${result?.warning || 'No headshot available for this player.'} Name and circle remain available.`, true); continue; }
+          const image = new Image();
+          image.src = result.dataUrl;
+          await image.decode();
+          if (token !== photoRevision) return;
+          photos.set(result.id, options.preparePhoto(image));
+        }
+        draw();
       } catch (error) {
-        if (token === photoRevision) { photoKey = ''; status(`Headshot unavailable: ${error.message}. Name and circle remain available.`, true); }
+        if (token === photoRevision) status(`Headshot unavailable: ${error.message}. Name and circle remain available.`, true);
       }
     }
     function showProgress(fraction) {
@@ -338,36 +451,56 @@
     $('run').addEventListener('click', startTracking);
     $('cancel').addEventListener('click', cancelTracking);
     window.api.onTrackingProgress(fraction => { if (job && running === job) showProgress(fraction); });
-    $('angle').addEventListener('change', () => select(clip));
+    $('angle').addEventListener('change', () => select(clip, true));
 
-    function select(next) {
+    function select(next, preserveTime = false) {
+      const relative = clip ? Math.max(0, time() - start()) : 0;
       stopPlayback();
       if (next && job && saveKey(next) === saveKey(job.clip)) next.highlights = job.clip.highlights;
       clip = next;
       angle = $('angle').value;
+      if (options.mode) {
+        const mode = options.mode();
+        const single = ['sideline', 'endzone'].includes(mode);
+        $('angle').disabled = single;
+        if (single) angle = $('angle').value = mode;
+      }
+      canvas.hidden = true;
+      viewports = null;
       offense = []; offenseTime = null; suggestion = null;
-      photo = null; photoKey = ''; photoRevision++;
+      photoRevision++;
       $('editor').hidden = !clip;
+      setBusy(busy);
       if (!clip) return;
       $('time').max = clip.len - clip.trim;
       $('time').value = 0;
       $('time').step = 1 / clip.fps;
       $('player').replaceChildren(new Option('Custom name / no roster identity', ''));
-      for (const p of options.players(clip)) $('player').add(new Option(`${p.team || ''} ${p.number ? '#' + p.number : ''} ${p.name || p.id}`, p.id));
+      playerChoices = options.players(clip);
+      for (const p of playerChoices) $('player').add(new Option(`${p.team || ''} ${p.number ? '#' + p.number : ''} ${p.name || p.id}`, p.id));
+      if (track()?.id && !playerChoices.some(p => p.id === track().id)) {
+        playerChoices = [...playerChoices, { id: track().id, name: track().name }];
+        $('player').add(new Option(`Saved identity: ${track().name || track().id} (not in available roster)`, track().id));
+      }
       $('player').value = track()?.id || '';
-      syncControls(); setBusy(busy);
+      syncControls();
       if (video.src !== clip.url) video.src = clip.url;
-      else seek(0);
+      else seek(preserveTime ? relative : 0);
+      if (otherVideo.src !== clip.url) otherVideo.src = clip.url;
+      else syncOther();
       status(busy ? 'Tracking continues in the background. You can preview, edit, or close Share.'
-        : 'Click the player on the film to start background tracking or correct from this frame.');
+        : $('tool').value === 'overlay' ? 'Drag play information on the video, or choose a player tool to place / correct a highlight.'
+          : 'Click the player on the film to start background tracking or correct from this frame.');
       loadPhoto();
     }
 
     return {
       select,
+      relativeTime: () => clip ? Math.max(0, time() - start()) : 0,
+      ready: () => !!clip && video.readyState >= 2 && !video.seeking && (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking),
       busy: () => busy,
       pause: stopPlayback,
-      refresh: () => { $('controls').disabled = !clip || options.isClean(); draw(); },
+      refresh: () => { $('controls').disabled = !clip || options.isClean(); syncThemeControls(); draw(); },
       async export(clips, mode, appearance, centered) {
         if (busy) throw new Error('Finish or cancel background player tracking before exporting highlights.');
         await saving;
@@ -391,7 +524,7 @@
             if (value.points.length === 0) throw new Error('A highlight is enabled without a player position. Place the player or remove that highlight.');
             if (value.mode === 'presnap' && value.snap === null) throw new Error('Set or confirm the snap for each pre-snap highlight.');
             const geometry = T.geometry(mode === 'both' ? 'both' : angleName, angleName, c.info, centered);
-            const image = graphic(value, appearance, geometry.w, images.get(value.id));
+            const image = graphic(value, T.appearance(value, appearance), geometry.w, images.get(value.id));
             highlights[angleName] = { ...value, graphic: {
               dataUrl: image.canvas.toDataURL('image/png'), width: image.canvas.width, height: image.canvas.height,
               anchorX: image.anchorX, anchorY: image.anchorY,
