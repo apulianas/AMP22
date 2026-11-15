@@ -182,28 +182,28 @@ test('release workflow requires explicit master dispatch and final DMG verificat
   assert.match(workflow, /^  pull_request:/m);
   assert.match(workflow, /^  workflow_dispatch:/m);
   assert.doesNotMatch(workflow, /^  push:/m);
-  const versionGuard = workflow.match(/CREATE_RELEASE: \$\{\{ (.+) \}\}/)[1];
-  const releaseGuard = workflow.match(/^  release:\n    if: (.+)/m)[1];
-  for (const [event, ref, expected] of [
-    ['push', 'refs/heads/master', false],
-    ['pull_request', 'refs/heads/master', false],
-    ['workflow_dispatch', 'refs/heads/feature', false],
-    ['workflow_dispatch', 'refs/heads/master', true],
-  ]) {
-    for (const guard of [versionGuard, releaseGuard]) {
-      assert.equal(vm.runInNewContext(guard, { github: { event_name: event, ref } }), expected,
-        `${event} on ${ref}: ${guard}`);
+  for (const newline of ['\n', '\r\n']) {
+    const checkout = workflow.replace(/\r?\n/g, newline);
+    const versionGuard = checkout.match(/CREATE_RELEASE: \$\{\{ (.+) \}\}/)[1];
+    const releaseGuard = checkout.match(/^  release:\r?\n    if: (.+)/m)[1];
+    for (const [event, ref, expected] of [
+      ['push', 'refs/heads/master', false],
+      ['pull_request', 'refs/heads/master', false],
+      ['workflow_dispatch', 'refs/heads/feature', false],
+      ['workflow_dispatch', 'refs/heads/master', true],
+    ]) {
+      for (const guard of [versionGuard, releaseGuard]) {
+        assert.equal(vm.runInNewContext(guard, { github: { event_name: event, ref } }), expected,
+          `${event} on ${ref}: ${guard}`);
+      }
     }
+    assert.match(checkout, /--notes-file release-notes\.md \\\r?\n\s+--generate-notes/);
   }
   assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: false/);
   assert.match(workflow, /CSC_FOR_PULL_REQUEST: true/);
   assert.doesNotMatch(workflow, /secrets\.|pull_request_target|notarize-mac-release/);
   assert.ok(workflow.indexOf('node scripts/verify-mac-release.js') < workflow.indexOf('actions/upload-artifact'));
   assert.match(workflow, /needs: \[version, build, extension\]/);
-  for (const newline of ['\n', '\r\n']) {
-    const checkout = workflow.replace(/\r?\n/g, newline);
-    assert.match(checkout, /--notes-file release-notes\.md \\\r?\n\s+--generate-notes/);
-  }
   assert.match(workflow, /gh release view "\$tag" --json body > release-notes\.json/);
   assert.match(workflow, /node scripts\/mac-release-notice\.js --release-json release-notes\.json > release-notes\.md/);
 });
