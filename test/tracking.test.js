@@ -159,24 +159,30 @@ test('native highlight export follows motion, hides after the snap, and honors t
     });
     H.validateHighlights({ sideline: value });
     assert.throws(() => H.validateHighlights({ sideline: { ...value, snap: null } }), /confirm the snap/);
+    const endzoneTrack = { ...value, snap: value.snap + 0.5, points: value.points.map(p => ({ ...p, t: p.t + 0.5 })) };
     for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
       const dimensions = require('../src/shared/export').dimensions(mode);
       const card = await image('card-' + mode, dimensions.width, dimensions.height, 'black@0');
-      const destination = path.join(temp, mode + '.mp4');
-      await exportClips({
-        file: film, mode, overlaySeconds: 0, overlayPosition: { preset: 'top-left' },
-        clips: [{ aStart: 1.2, bStart: 1.2, len: 1, card, highlights: { sideline: value, endzone: value } }],
-      }, destination);
-      const info = await probe(destination);
-      assert.equal(info.width, dimensions.width);
-      assert.equal(info.height, dimensions.height);
-      const frame = async t => (await run(ffmpegPath(), ['-v', 'error', '-ss', String(t), '-i', destination, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { binary: true })).stdout;
-      const early = await frame(0.1), late = await frame(0.8);
-      const g = T.geometry(mode === 'both' ? 'both' : 'sideline', 'sideline', { width: 320, height: 180 }, true);
-      const pixel = (buffer, x, y) => [...buffer.subarray((Math.round(y) * info.width + Math.round(x)) * 3, (Math.round(y) * info.width + Math.round(x)) * 3 + 3)];
-      const earlyPixel = pixel(early, g.x + 0.32 * g.w, g.y + 0.5 * g.h);
-      assert.ok(earlyPixel[1] > 170 && earlyPixel[0] < 60, `${mode}: moving highlight appears at trimmed absolute position: ${earlyPixel}`);
-      assert.ok(pixel(late, g.x + 0.6 * g.w, g.y + 0.5 * g.h).every(v => v < 30), `${mode}: highlight hides after snap`);
+      for (const centered of [false, true]) {
+        const destination = path.join(temp, `${mode}-${centered}.mp4`);
+        await exportClips({
+          file: film, mode, overlaySeconds: 0, overlayPosition: { preset: centered ? 'top-left' : 'original' },
+          clips: [{ ...require('../src/shared/export').trimRange({ aStart: 1, bStart: 1.5, len: 1.5 }, 0.2, 0.3), card, highlights: { sideline: value, endzone: endzoneTrack } }],
+        }, destination);
+        const info = await probe(destination);
+        assert.equal(info.width, dimensions.width);
+        assert.equal(info.height, dimensions.height);
+        assert.ok(Math.abs(info.duration - (mode.endsWith('-first') ? 2 : 1)) < 0.15, `${mode}: end trim sets exported duration`);
+        const frame = async t => (await run(ffmpegPath(), ['-v', 'error', '-ss', String(t), '-i', destination, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { binary: true })).stdout;
+        const early = await frame(0.1), late = await frame(0.8);
+        const pixel = (buffer, x, y) => [...buffer.subarray((Math.round(y) * info.width + Math.round(x)) * 3, (Math.round(y) * info.width + Math.round(x)) * 3 + 3)];
+        for (const camera of mode === 'both' ? ['sideline', 'endzone'] : [mode.startsWith('endzone') ? 'endzone' : 'sideline']) {
+          const g = T.geometry(mode === 'both' ? 'both' : camera, camera, { width: 320, height: 180 }, centered);
+          const earlyPixel = pixel(early, g.x + 0.32 * g.w, g.y + 0.5 * g.h);
+          assert.ok(earlyPixel[1] > 170 && earlyPixel[0] < 60, `${mode}/${camera}/${centered}: moving highlight appears at trimmed absolute position: ${earlyPixel}`);
+          assert.ok(pixel(late, g.x + 0.6 * g.w, g.y + 0.5 * g.h).every(v => v < 30), `${mode}/${camera}: highlight hides after snap`);
+        }
+      }
     }
     const result = await analyze({ file: film, start: 0, len: 1, seeds: [{ x: 0.5, y: 0.5 }] });
     assert.equal(result.points.length, 1, 'blank film is not silently tracked');

@@ -7,6 +7,7 @@ const { spawnSync } = require('node:child_process');
 
 async function exerciseWorkflows({ app, win }) {
   const { dialog, ipcMain, BrowserWindow } = require('electron');
+  if (process.env.A22_HEADLESS === '1') assert.equal(win.isVisible(), false);
   const { pathToFileURL } = require('node:url');
   const { probe } = require('../src/main/media');
   const { parseCSV } = require('../src/shared/csv');
@@ -32,7 +33,10 @@ async function exerciseWorkflows({ app, win }) {
       ? Array.from({ length: 3 }, (_n, i) => ({ sideline: { start: i, end: i + 0.5 }, endzone: { start: i + 0.5, end: i + 1 } }))
       : [{ sideline: { start: 0, end: 2 }, endzone: { start: 2, end: 4 } }] },
   }));
-  const js = (source) => win.webContents.executeJavaScript(source, true);
+  const js = async (source) => {
+    try { return await win.webContents.executeJavaScript(source, true); }
+    catch (error) { throw new Error(`${source}: ${error.message}`, { cause: error }); }
+  };
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const until = async (source) => {
     for (let i = 0; i < 200; i++) {
@@ -149,6 +153,7 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js('vidB().src'), pathToFileURL(sources.defense).href);
   await js('dockAngle()');
   await until('detachedAngle === null');
+  if (process.env.A22_HEADLESS === '1') assert.ok(BrowserWindow.getAllWindows().every(window => !window.isVisible()));
   await js(`$('btn-settings').click()`);
   assert.equal(await js(`$('set-report-format').value`), 'csv');
   assert.equal(await js(`$('set-report-advanced').checked`), false);
@@ -237,21 +242,56 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js(`$('share-report-advanced').checked`), true);
   await js(`$('highlight-time').value = '0.25'; $('highlight-time').dispatchEvent(new Event('input'))`);
   await until(`!$('highlight-video').seeking`);
-  const trimAtFrame = await js(`Number((S.exportDraft.clips[0].trim + highlightEditor.relativeTime()).toFixed(6))`);
+  const trimAtFrame = await js(`Number(highlightEditor.relativeTime().toFixed(6))`);
   await js(`$('share-trim-current').click()`);
   await until(`!$('highlight-video').seeking`);
-  assert.equal(await js(`S.exportDraft.clips[0].trim`), trimAtFrame, 'trim at the current decoded frame includes the existing trim');
+  assert.equal(await js(`S.exportDraft.clips[0].trim`), trimAtFrame, 'trim at the current decoded frame uses original-relative time');
   await js(`$('share-trim').value = '0.5'; $('share-trim').dispatchEvent(new Event('input'))`);
   await until(`!$('highlight-video').seeking`);
 
   await js(`$('share-clean').checked = false; $('share-clean').dispatchEvent(new Event('change'));`);
   await until(`!$('highlight-canvas').hidden && positionHeadshots !== null`);
+  await js(`$('share-trim-end').value = '0.25'; $('share-trim-end').dispatchEvent(new Event('input'));
+    $('share-overlay-seconds').value = '0.25'; $('share-overlay-seconds').dispatchEvent(new Event('input'));`);
+  const originalLength = await js(`S.exportDraft.clips[0].len`);
+  assert.equal(await js(`Number($('highlight-time').max)`), originalLength);
+  assert.ok(Math.abs(await js(`trimmedExportClips()[0].len`) - (originalLength - 0.75)) < 1e-9);
+  assert.ok(await js(`Number.parseFloat($('highlight-time').style.getPropertyValue('--trim-start')) > 0`));
+  assert.ok(await js(`Number.parseFloat($('highlight-time').style.getPropertyValue('--trim-end')) < 100`));
+  for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
+    await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'));`);
+    await until(`positionFrames?.mode === '${mode}' && highlightEditor.ready()`);
+    for (const [time, visible] of [[0.25, false], [0.6, true], [0.8, false], [originalLength - 0.1, false]]) {
+      await js(`$('highlight-time').value = '${time}'; $('highlight-time').dispatchEvent(new Event('input'));`);
+      await until(`highlightEditor.ready() && ${visible ? 'positionBounds !== null' : 'positionBounds === null'}`);
+      const timelineTime = await js(`Number($('highlight-time').value)`);
+      const camera = await js(`$('highlight-angle').value`);
+      const start = await js(`S.exportDraft.clips[0].${camera === 'sideline' ? 'aStart' : 'bStart'}`);
+      assert.ok(Math.abs(await js(`$('highlight-video').currentTime`) - start - timelineTime) < 0.001, `${mode}: timeline seeks original source time`);
+      if (mode === 'both') {
+        const otherStart = await js(`S.exportDraft.clips[0].${camera === 'sideline' ? 'bStart' : 'aStart'}`);
+        assert.ok(Math.abs(await js(`$('highlight-other-video').currentTime`) - otherStart - timelineTime) < 0.001);
+      }
+    }
+  }
+  await js(`$('highlight-time').value = '1'; $('highlight-time').dispatchEvent(new Event('input'));`);
+  await until(`highlightEditor.ready()`);
+  await js(`$('share-trim-end-current').click()`);
+  await until(`highlightEditor.ready()`);
+  assert.ok(Math.abs(await js(`S.exportDraft.clips[0].trimEnd`) - (originalLength - 1)) < 0.000001);
+  assert.ok(Math.abs(await js(`highlightEditor.relativeTime()`) - 1) < 0.001, 'end trim does not reset the cursor');
+  await js(`$('share-trim-end').value = '${originalLength}'; $('share-trim-end').dispatchEvent(new Event('input'));`);
+  assert.equal(await js(`$('share-export').disabled`), true);
+  assert.match(await js(`$('share-status').textContent`), /together leave some film/);
+  await js(`$('share-trim-end').value = '0'; $('share-trim-end').dispatchEvent(new Event('input'));
+    $('share-angle').value = 'sideline'; $('share-angle').dispatchEvent(new Event('change'));`);
+  await until(`highlightEditor.ready()`);
   assert.equal(await js(`$('share-theme').value`), 'auto');
   assert.deepEqual(await js(`A22.overlay.theme(currentOverlayAppearance())`), require('../src/shared/overlay').teamTheme('BAL'));
-  await js(`$('share-overlay-seconds').value = '0.25'; $('share-overlay-seconds').dispatchEvent(new Event('input')); $('highlight-time').value = '0.5'; $('highlight-time').dispatchEvent(new Event('input'))`);
+  await js(`$('share-overlay-seconds').value = '0.25'; $('share-overlay-seconds').dispatchEvent(new Event('input')); $('highlight-time').value = '0.8'; $('highlight-time').dispatchEvent(new Event('input'))`);
   await until(`!$('highlight-video').seeking && positionBounds === null`);
   assert.equal(await js(`$('share-position-status').textContent.includes('hidden at this time')`), true, 'the shared preview respects play-overlay duration');
-  await js(`$('share-overlay-seconds').value = '1.75'; $('share-overlay-seconds').dispatchEvent(new Event('input')); $('highlight-time').value = '0'; $('highlight-time').dispatchEvent(new Event('input'))`);
+  await js(`$('share-overlay-seconds').value = '1.75'; $('share-overlay-seconds').dispatchEvent(new Event('input')); $('highlight-time').value = '0.5'; $('highlight-time').dispatchEvent(new Event('input'))`);
   await until(`!$('highlight-video').seeking && positionBounds !== null`);
   await js(`$('share-theme').value = 'team-CIN'; $('share-theme').dispatchEvent(new Event('change'))`);
   assert.deepEqual(await js(`A22.overlay.theme(currentOverlayAppearance())`), require('../src/shared/overlay').teamTheme('CIN'));
@@ -559,7 +599,7 @@ if (process.versions.electron) {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-film-workflows-'));
     try {
       const result = spawnSync(require('electron'), ['--no-sandbox', path.join(__dirname, '..')], {
-        env: { ...process.env, A22_USER_DATA: profile, A22_DEV_SCRIPT: __filename },
+        env: { ...process.env, A22_HEADLESS: process.env.A22_HEADLESS || '1', A22_USER_DATA: profile, A22_DEV_SCRIPT: __filename },
         encoding: 'utf8', timeout: 80000,
       });
       assert.equal(result.status, 0, result.stdout + result.stderr);

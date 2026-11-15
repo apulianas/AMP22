@@ -216,7 +216,7 @@ else {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-ai-workflows-'));
     try {
       const result = spawnSync(require('electron'), ['--no-sandbox', path.join(__dirname, '..')], {
-        env: { ...process.env, A22_USER_DATA: profile, A22_DEV_SCRIPT: __filename },
+        env: { ...process.env, A22_HEADLESS: process.env.A22_HEADLESS || '1', A22_USER_DATA: profile, A22_DEV_SCRIPT: __filename },
         encoding: 'utf8', timeout: 55000,
       });
       assert.equal(result.status, 0, result.stdout + result.stderr);

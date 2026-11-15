@@ -208,14 +208,17 @@ test('Share starts with remembered decimals, keeps per-play overrides, and block
   assert.deepEqual(Array.from(r.S.exportDraft.clips, (clip) => clip.trim), [1.25, 1.25]);
   const original = r.S.exportDraft.clips[0].aStart;
   r.S.exportDraft.clips[0].trim = 0.125;
+  r.S.exportDraft.clips[0].trimEnd = 0.75;
   r.element('share-preview-play').value = '0';
   r.selectTrimPlay();
   assert.equal(r.element('share-trim').value, 0.125);
+  assert.equal(r.element('share-trim-end').value, 0.75);
   r.element('share-preview-play').value = '1';
   r.selectTrimPlay();
   assert.equal(r.element('share-trim').value, 1.25);
   const clips = r.trimmedExportClips();
   assert.equal(clips[0].aStart, original + 0.125);
+  assert.equal(clips[0].len, r.S.exportDraft.clips[0].len - 0.875);
   assert.equal(r.S.exportDraft.clips[0].aStart, original);
   assert.equal(r.S.settings.exportTrim, 1.25);
   r.S.exportDraft.clips[1].trim = 999;
@@ -223,6 +226,10 @@ test('Share starts with remembered decimals, keeps per-play overrides, and block
   assert.equal(r.element('share-export').disabled, true);
   assert.match(r.element('share-status').textContent, /Play 2.*Trim/);
   r.S.exportDraft.clips[1].trim = 0;
+  r.S.exportDraft.clips[1].trimEnd = r.S.exportDraft.clips[1].len;
+  r.updateExportOptions();
+  assert.equal(r.element('share-export').disabled, true);
+  delete r.S.exportDraft.clips[1].trimEnd;
   r.updateExportOptions();
   assert.equal(r.element('share-export').disabled, false);
   r.element('share-overlay-seconds').value = '';

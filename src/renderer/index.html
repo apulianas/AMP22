@@ -262,7 +262,7 @@
           <video id="highlight-video" preload="auto" muted playsinline hidden></video>
           <video id="highlight-other-video" preload="auto" muted playsinline hidden></video>
           <canvas id="highlight-canvas" tabindex="0" role="img" aria-label="Live cut-up preview. Move play information or select a player's torso using the Edit on video control." hidden></canvas>
-          <label for="highlight-time">Time from trimmed clip start</label>
+          <label for="highlight-time">Original clip timeline · red portions removed</label>
           <input id="highlight-time" type="range" min="0" max="1" step="0.1" />
           <div class="row cutup-transport">
             <button id="highlight-back" type="button" aria-label="Back 1 frame">Back 1 frame</button>
@@ -277,12 +277,20 @@
         </section>
         <div class="cutup-tools" tabindex="0" role="region" aria-label="Scrollable clip controls">
           <fieldset id="share-trimming">
-            <legend>Trim start · this play</legend>
-            <p><label>Remove from this play (seconds)
+            <legend>Trim · this play</legend>
+            <div class="grid">
+              <label>Remove from start (seconds)
                 <input id="share-trim" type="number" min="0" step="any" />
-            </label></p>
-            <button id="share-trim-current" type="button">Start clip at current frame</button>
-            <p class="muted small">Applies to both cameras. Each play starts with your Settings default.</p>
+              </label>
+              <label>Remove from end (seconds)
+                <input id="share-trim-end" type="number" min="0" step="any" />
+              </label>
+            </div>
+            <p class="row">
+              <button id="share-trim-current" type="button">Start clip at current frame</button>
+              <button id="share-trim-end-current" type="button">End clip at current frame</button>
+            </p>
+            <p class="muted small">Applies to both cameras. Red timeline portions are removed; preview playback uses the retained range. Start uses your Settings default; end starts at 0.</p>
           </fieldset>
           <details id="highlight-section">
             <summary>Player highlight · this play / camera</summary>
