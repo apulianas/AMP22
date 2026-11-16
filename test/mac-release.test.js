@@ -78,8 +78,26 @@ test('release notice preserves existing notes and links and is idempotent', () =
   assert.match(notice, /xattr -dr com\.apple\.quarantine \/Applications\/AMP22\.app/);
   assert.doesNotMatch(notice, /spctl --master-disable|sudo xattr/);
   assert.match(notice, /Previously published installers are unchanged/);
+  assert.match(notice, /does not have a trusted Windows code-signing certificate/);
+  assert.match(notice, /Only if you trust this official AMP22 GitHub download/);
+  assert.match(notice, /More info -> Run anyway/);
+  assert.match(notice, /stop and contact your administrator/);
+  assert.match(notice, /Do not disable SmartScreen, antivirus, or organizational security controls/);
   assert.equal(addNotice(''), `${notice}\n`);
   assert.throws(() => addNotice(null), /Expected release description text/);
+});
+
+test('older mac-only release notes gain Windows guidance without duplicating or replacing existing notes', () => {
+  const windowsStart = notice.indexOf('### Windows installation and SmartScreen');
+  const macOnly = `${notice.slice(0, windowsStart).trimEnd()}\n\n## What's Changed\n* Original feature\n`;
+  const updated = addNotice(macOnly);
+  assert.ok(updated.endsWith(macOnly));
+  assert.equal((updated.match(/^### macOS installation and Gatekeeper$/gm) || []).length, 1);
+  assert.equal((updated.match(/^### Windows installation and SmartScreen$/gm) || []).length, 1);
+  assert.equal(addNotice(updated), updated);
+  const windowsOnly = `${notice.slice(windowsStart)}\n* Custom Windows notes\n`;
+  assert.ok(addNotice(windowsOnly).endsWith(windowsOnly));
+  assert.equal(addNotice(addNotice(windowsOnly)), addNotice(windowsOnly));
 });
 
 test('manually added notices with other heading levels are preserved without duplication', () => {
