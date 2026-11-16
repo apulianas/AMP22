@@ -2020,7 +2020,7 @@ function openShare() {
       return {
         ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)),
         file: film.path, url: film.url, info: film.info, fps: film.info.fps || 59.94,
-        play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim, highlightKey, gameId: S.sel.gameId,
+        play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim, trimEnd: 0, highlightKey, gameId: S.sel.gameId,
         highlights: structuredClone(S.gameData.playerHighlights?.[highlightKey] || {}),
       };
     });
@@ -2073,8 +2073,8 @@ function applyExportPreset(preset, persist = true) {
 }
 
 function trimmedExportClips() {
-  return S.exportDraft.clips.map(({ trim, ...clip }, i) => {
-    try { return A22.clipExport.trimRange(clip, trim); }
+  return S.exportDraft.clips.map(({ trim, trimEnd, ...clip }, i) => {
+    try { return A22.clipExport.trimRange(clip, trim, trimEnd); }
     catch (e) { throw new Error(`Play ${i + 1} (${P.clockLabel(clip.play)}): ${e.message}`); }
   });
 }
@@ -2250,7 +2250,7 @@ function drawCutupPreview({ canvas, clip, angle, video, otherVideo, time, drawTr
   } else {
     drawFrame(video, angle);
   }
-  if (!clean && time < $('share-overlay-seconds').valueAsNumber) {
+  if (!clean && time >= 0 && time < clip.len - clip.trim - (clip.trimEnd ?? 0) && time < $('share-overlay-seconds').valueAsNumber) {
     if (!positionCard || positionCard.clip !== clip || positionCard.mode !== mode) {
       positionCard = { clip, mode, ...buildPlayCard(clip.play, mode, S.exportDraft.matchup,
         positionHeadshots?.images.get(P.primaryPlayer(clip.play)?.id), sharePosition) };
@@ -2267,7 +2267,7 @@ function drawCutupPreview({ canvas, clip, angle, video, otherVideo, time, drawTr
   $('share-position-status').textContent = clean ? 'Clean export: overlays are disabled.'
     : !positionBounds ? 'Play information is hidden at this time; player highlights keep their own timing.'
     : `Choose Move play information to drag the card.${warnings?.size ? ` Headshot notices: ${[...warnings].join('; ')}` : ''}`;
-  $('share-preview-status').textContent = `${(clip.len - clip.trim).toFixed(2)} seconds retained${mode === 'both' ? ' per camera' : ''}.${mode.endsWith('-first') ? ' Preview camera changes do not change export block order.' : ''}`;
+  $('share-preview-status').textContent = `${(clip.len - clip.trim - (clip.trimEnd ?? 0)).toFixed(2)} seconds retained${mode === 'both' ? ' per camera' : ''}.${mode.endsWith('-first') ? ' Preview camera changes do not change export block order.' : ''}`;
   positionFrames = { clip, mode };
   return viewports;
 }
@@ -2360,6 +2360,7 @@ function selectTrimPlay() {
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   if (!clip) return;
   $('share-trim').value = clip.trim;
+  $('share-trim-end').value = clip.trimEnd ?? 0;
   queueTrimPreview();
 }
 
@@ -2367,8 +2368,8 @@ function queueTrimPreview() {
   positionFrames = null;
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   try {
-    if (clip) A22.clipExport.trimRange(clip, clip.trim);
-    highlightEditor?.select(clip || null);
+    if (clip) A22.clipExport.trimRange(clip, clip.trim, clip.trimEnd);
+    highlightEditor?.select(clip || null, true);
     loadPositionHeadshots();
   } catch (e) {
     highlightEditor?.select(null);
@@ -3468,25 +3469,26 @@ function wire() {
   $('share-theme-delete').addEventListener('click', () => saveThemePreference('delete'));
   $('share-theme-default').addEventListener('click', () => saveThemePreference('default'));
   $('share-preview-play').addEventListener('change', selectTrimPlay);
-  $('share-trim').addEventListener('input', () => {
+  for (const [id, field] of [['share-trim', 'trim'], ['share-trim-end', 'trimEnd']]) $(id).addEventListener('input', () => {
     const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
     if (!clip) return;
-    clip.trim = $('share-trim').valueAsNumber;
+    clip[field] = $(id).valueAsNumber;
     updateExportOptions();
     queueTrimPreview();
   });
-  $('share-trim-current').addEventListener('click', () => {
+  for (const endTrim of [false, true]) $(endTrim ? 'share-trim-end-current' : 'share-trim-current').addEventListener('click', () => {
     const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
     if (!clip || S.exporting) return;
     if (!highlightEditor.ready()) {
       $('share-preview-status').textContent = 'Wait for the selected video frame to finish loading before trimming here.';
       return;
     }
-    const trim = clip.trim + highlightEditor.relativeTime();
+    const trim = Number((endTrim ? clip.len - highlightEditor.relativeTime() : highlightEditor.relativeTime()).toFixed(6));
     try {
-      A22.clipExport.trimRange(clip, trim);
-      $('share-trim').value = trim.toFixed(6);
-      $('share-trim').dispatchEvent(new Event('input'));
+      A22.clipExport.trimRange(clip, endTrim ? clip.trim : trim, endTrim ? trim : clip.trimEnd);
+      const input = $(endTrim ? 'share-trim-end' : 'share-trim');
+      input.value = trim;
+      input.dispatchEvent(new Event('input'));
     } catch (e) {
       $('share-preview-status').textContent = `Cannot trim here: ${e.message}`;
     }

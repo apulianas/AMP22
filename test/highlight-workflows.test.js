@@ -15,6 +15,8 @@ function editor({ deferred = false, mode, renderPreview } = {}) {
       listeners: {}, value: '', checked: false, disabled: false, hidden: false, textContent: '',
       readyState: 2, videoWidth: 1920, videoHeight: 1080, currentTime: 10, paused: true,
       classList: { toggle() {} }, src: '', dataset: {},
+      style: { setProperty(name, value) { this[name] = value; } },
+      setAttribute(name, value) { this[name] = value; },
       get valueAsNumber() { return this.value === '' ? NaN : Number(this.value); },
       addEventListener(name, fn) { this.listeners[name] = fn; },
       fire(name, event = {}) { return this.listeners[name]?.(event); },
@@ -24,6 +26,7 @@ function editor({ deferred = false, mode, renderPreview } = {}) {
       getContext: () => new Proxy({}, { get: () => () => {} }),
       toDataURL: () => 'data:image/png;base64,AAAA',
     });
+
     return elements.get(id);
   }
   const context = vm.createContext({
@@ -67,6 +70,65 @@ function editor({ deferred = false, mode, renderPreview } = {}) {
     async settle() { await new Promise(resolve => setImmediate(resolve)); },
   };
 }
+
+test('original-extent timeline preserves source frames through both trims and camera changes', async () => {
+  const previews = [];
+  const r = editor({ mode: 'both', renderPreview: value => {
+    previews.push(value.time);
+    value.canvas.width = 960;
+    value.canvas.height = 1080;
+    return { sideline: { x: 0, y: 0, w: 960, h: 540 }, endzone: { x: 0, y: 540, w: 960, h: 540 } };
+  } });
+  r.clip.trim = 1;
+  r.clip.trimEnd = 1.5;
+  r.instance.select(r.clip);
+  r.el('video').fire('loadedmetadata');
+  assert.equal(r.el('time').max, 5);
+  assert.equal(r.el('video').currentTime, 11);
+  assert.equal(r.el('other-video').currentTime, 31);
+  assert.equal(r.el('time').style['--trim-start'], '20%');
+  assert.equal(r.el('time').style['--trim-end'], '70%');
+  r.el('time').value = 0.5;
+  r.el('time').fire('input');
+  r.el('video').fire('seeked');
+  assert.equal(previews.at(-1), -0.5, 'play overlay receives signed retained-relative time');
+  assert.match(r.el('preview-state').textContent, /Removed frame/);
+  r.el('tool').value = 'player';
+  await r.el('canvas').fire('click', { clientX: 480, clientY: 270 });
+  r.el('set-snap').fire('click');
+  assert.deepEqual(r.clip.highlights, {}, 'removed frames cannot save positions or snap annotations');
+  r.el('forward').fire('click');
+  assert.ok(Math.abs(r.instance.relativeTime() - (0.5 + 1 / 30)) < 1e-9);
+  r.el('back').fire('click');
+  assert.equal(r.instance.relativeTime(), 0.5);
+  r.clip.trim = 0.75;
+  r.instance.select(r.clip, true);
+  assert.equal(r.el('video').currentTime, 10.5, 'trim changes do not move the original timeline cursor');
+  await r.el('play').fire('click');
+  assert.equal(r.el('video').currentTime, 10.75, 'play starts at the retained boundary, not a removed frame');
+  r.el('video').currentTime = 13.6;
+  r.el('video').fire('timeupdate');
+  assert.equal(r.el('video').paused, true);
+  assert.ok(r.el('video').currentTime < 13.5);
+  r.el('time').value = 2;
+  r.el('time').fire('input');
+  r.el('angle').value = 'endzone';
+  r.el('angle').fire('change');
+  assert.equal(r.el('video').currentTime, 32);
+  assert.equal(r.el('other-video').currentTime, 12);
+  r.el('video').fire('seeked');
+  await r.el('canvas').fire('click', { clientX: 480, clientY: 405 });
+  assert.equal(r.requests[0].start, 32);
+  assert.equal(r.requests[0].len, 1.5, 'tracking ends at the retained end');
+  r.el('set-snap').fire('click');
+  assert.equal(r.clip.highlights.endzone.snap, 32);
+  assert.equal(r.el('snap').value, '1.250', 'snap input remains retained-relative');
+  assert.equal(r.el('snap').max, 2.75);
+  r.el('time').value = 4;
+  r.el('time').fire('input');
+  r.el('video').fire('seeked');
+  assert.match(r.el('preview-state').textContent, /Removed frame/);
+});
 
 test('only clicking a player starts tracking; opening clips, changing identity/options and marking offense do not', async () => {
   const r = editor();

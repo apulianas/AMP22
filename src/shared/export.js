@@ -32,11 +32,12 @@
     };
   }
 
-  function trimRange(range, seconds) {
-    if (!Number.isFinite(seconds) || seconds < 0 || seconds >= range.len) {
-      throw new Error('Trim must be zero or more seconds and leave some film in each clip.');
+  function trimRange(range, seconds, endSeconds = 0) {
+    if (![seconds, endSeconds, range.len].every(Number.isFinite) ||
+        seconds < 0 || endSeconds < 0 || seconds + endSeconds >= range.len) {
+      throw new Error('Trims must be zero or more seconds and together leave some film in each clip.');
     }
-    return { ...range, aStart: range.aStart + seconds, bStart: range.bStart + seconds, len: range.len - seconds };
+    return { ...range, aStart: range.aStart + seconds, bStart: range.bStart + seconds, len: range.len - seconds - endSeconds };
   }
 
   function exportSequence(clips, mode) {

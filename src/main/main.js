@@ -36,6 +36,7 @@ let lastExportPath = null;
 let headshotPreparation = null;
 let trackingJob = null;
 const appIcon = path.join(__dirname, '..', 'renderer', 'assets', 'icon.png');
+const headless = process.env.A22_HEADLESS === '1' && !!process.env.A22_DEV_SCRIPT;
 
 function installApplicationMenu() {
   const action = (label, accelerator, name) => ({
@@ -69,6 +70,7 @@ function installApplicationMenu() {
 function createWindow() {
   const angleUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'angle.html')).href;
   win = new BrowserWindow({
+    show: !headless,
     width: 1680,
     height: 980,
     minWidth: 1100,
@@ -82,6 +84,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       backgroundThrottling: false,
+      offscreen: headless,
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -90,6 +93,7 @@ function createWindow() {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
+          show: !headless,
           width: 1100,
           height: 700,
           minWidth: 480,
@@ -102,6 +106,7 @@ function createWindow() {
             nodeIntegration: false,
             sandbox: true,
             backgroundThrottling: false,
+            offscreen: headless,
           },
         },
       };
@@ -445,6 +450,7 @@ function registerIpc() {
 }
 
 app.setName('AMP22');
+if (headless && process.platform === 'darwin') app.setActivationPolicy('prohibited');
 // Keep the original profile so the rebrand retains settings, film links, and caches.
 app.setPath('userData', process.env.A22_USER_DATA
   ? path.resolve(process.env.A22_USER_DATA)

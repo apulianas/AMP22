@@ -64,6 +64,25 @@ test('decimal trim advances both synced angles equally and cannot remove a whole
   }
 });
 
+test('combined decimal trims retain source starts and crop the end in all export layouts', () => {
+  const range = { aStart: 10, bStart: 20, len: 4 };
+  const retained = trimRange(range, 0.75, 1.25);
+  assert.deepEqual(retained, { aStart: 10.75, bStart: 20.75, len: 2 });
+  assert.deepEqual(trimRange(range, 0.75, undefined), trimRange(range, 0.75), 'old drafts have no end trim');
+  assert.deepEqual(range, { aStart: 10, bStart: 20, len: 4 });
+  for (const [start, end] of [[3, 1], [3, 2], [0, -1], [0, NaN], [0, Infinity], [0, null], [0, '1']]) {
+    assert.throws(() => trimRange(range, start, end), /together leave some film/);
+  }
+  for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
+    for (const segment of exportSequence([retained], mode)) {
+      const args = segmentArgs('/film.mp4', segment.clip, segment.mode, true, 30, false, 0.5);
+      assert.equal(args[args.indexOf('-ss') + 1], segment.mode === 'endzone' ? '20.750000' : '10.750000');
+      assert.equal(args[args.indexOf('-t') + 1], '2.000000');
+      assert.match(args[args.indexOf('-filter_complex') + 1], /enable='lt\(t,0.5\)'/);
+    }
+  }
+});
+
 test('grouped angle exports use game order within each block, including split sources', () => {
   const clips = [{ file: 'offense', play: 1 }, { file: 'defense', play: 2 }];
   for (const [mode, first, second] of [['sideline-first', 'sideline', 'endzone'], ['endzone-first', 'endzone', 'sideline']]) {
@@ -243,15 +262,21 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
       }
       assert.ok(Math.abs((await probe(output)).duration - 2.5) < 0.25);
     }
-    for (const mode of ['sideline', 'both']) {
+    for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
       const output = path.join(temp, `timed-${mode}.mp4`);
       await exportClips({ file, mode, overlaySeconds: 0.5, clips: [
-        { aStart: 0, bStart: 4.5, len: 1, card: cards[mode] },
+        { ...trimRange({ aStart: 0, bStart: 4.5, len: 2 }, 0.75, 0.25), card: cards[mode === 'both' ? 'both' : 'sideline'] },
       ] }, output);
       const [x, y] = mode === 'both' ? [500, 1600] : [800, 900];
       assert.ok((await frame(output, 0.2, x, y)).every((v) => v > 220));
       const after = await frame(output, 0.8, x, y);
-      assert.ok(mode === 'both' ? after.every((v) => v < 40) : isRed(after));
+      assert.ok(mode === 'both' ? after.every((v) => v < 40) : mode.startsWith('endzone') ? isBlue(after) : isRed(after));
+      const info = await probe(output);
+      assert.ok(Math.abs(info.duration - (mode.endsWith('-first') ? 2 : 1)) < 0.15, `${mode}: both trims determine duration`);
+      if (mode.endsWith('-first')) {
+        assert.ok((await frame(output, 1.2, x, y)).every(v => v > 220), 'overlay starts again at the second retained angle');
+        assert.ok((mode === 'sideline-first' ? isBlue : isRed)(await frame(output, 1.8, x, y)));
+      }
     }
     const progress = [];
     const landscape = path.join(temp, 'sideline.mp4');

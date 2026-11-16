@@ -27,7 +27,7 @@ async function exerciseWindows({ app, win }) {
     }
   };
   if (win.webContents.isLoading()) await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
-  await until(() => js(`$('status').textContent.includes('Offline window test')`));
+  await until(() => js(`$('app-toast').textContent.includes('Offline window test')`));
   await js(`(async () => {
     applySettings(A22.settings.DEFAULT_SETTINGS);
     S.settings.speeds = [1, 0.5];
@@ -57,6 +57,10 @@ async function exerciseWindows({ app, win }) {
     assert.equal(await js(`$('pop-a').disabled && $('pop-b').disabled`), true);
     assert.equal(await js(`$('fig${key.toUpperCase()}').classList.contains('detached')`), true);
     const child = BrowserWindow.getAllWindows().find((w) => w !== win);
+    if (process.env.A22_HEADLESS === '1') {
+      assert.equal(win.isVisible(), false);
+      assert.equal(child.isVisible(), false);
+    }
     const childJs = (source) => child.webContents.executeJavaScript(source, true);
     assert.equal(await childJs('typeof require'), 'undefined');
     await childJs(`document.querySelector('[data-action="frameForward"]').click()`);
@@ -73,11 +77,12 @@ async function exerciseWindows({ app, win }) {
     await js(`runAction('cycleSpeed')`);
     assert.equal(await js('vidA().playbackRate'), .5);
     assert.ok(Math.abs(await js('vidB().playbackRate') - .5) < .07);
-    win.minimize();
+    const headless = process.env.A22_HEADLESS === '1';
+    if (!headless) win.minimize();
     const before = await js('currentRel()');
     await wait(600);
-    assert.ok(await js('currentRel()') > before + .15, 'playback continues with the main window minimized');
-    win.restore();
+    assert.ok(await js('currentRel()') > before + .15, 'playback continues with the main window hidden or minimized');
+    if (!headless) win.restore();
     await childJs(`document.querySelector('[data-action="playPause"]').click()`);
     await until(settled);
     const offset = await js('offsetFrames(S.curPair)');
@@ -91,10 +96,12 @@ async function exerciseWindows({ app, win }) {
     await childJs(`document.querySelector('[data-action="prevPlay"]').click()`);
     await until(settled);
     assert.equal(await js('S.curPair'), 0);
-    await childJs(`document.getElementById('angle-fullscreen').click()`);
-    await until(() => childJs('!!document.fullscreenElement'));
-    await childJs(`document.getElementById('angle-fullscreen').click()`);
-    await until(() => childJs('!document.fullscreenElement'));
+    if (!headless) {
+      await childJs(`document.getElementById('angle-fullscreen').click()`);
+      await until(() => childJs('!!document.fullscreenElement'));
+      await childJs(`document.getElementById('angle-fullscreen').click()`);
+      await until(() => childJs('!document.fullscreenElement'));
+    }
     await js(`S.settings.endOfPlay = 'loop'; seekRel(S.range.len - 0.1); play()`);
     await wait(600);
     assert.ok(await js('currentRel()') < 1, 'end-of-play looping keeps the detached player synced');
@@ -131,7 +138,7 @@ if (process.versions.electron) {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'a22-angle-windows-'));
     try {
       const result = spawnSync(require('electron'), [path.join(__dirname, '..')], {
-        env: { ...process.env, A22_USER_DATA: profile, A22_DEV_SCRIPT: __filename },
+        env: { ...process.env, A22_HEADLESS: process.env.A22_HEADLESS || '1', A22_USER_DATA: profile, A22_DEV_SCRIPT: __filename },
         encoding: 'utf8',
         timeout: 80000,
       });

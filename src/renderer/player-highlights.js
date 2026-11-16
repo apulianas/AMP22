@@ -63,8 +63,14 @@
     const otherAngle = () => angle === 'sideline' ? 'endzone' : 'sideline';
     const track = () => clip?.highlights?.[angle];
     const start = () => (angle === 'sideline' ? clip.aStart : clip.bStart) + clip.trim;
-    const end = () => (angle === 'sideline' ? clip.aStart : clip.bStart) + clip.len;
+    const end = () => base() + clip.len - (clip.trimEnd ?? 0);
     const time = () => video.currentTime;
+    const retained = () => !!clip && time() >= start() && time() < end();
+    function requireRetained() {
+      if (retained()) return true;
+      status('This frame is removed. Seek inside the retained range before editing player annotations.', true);
+      return false;
+    }
     function status(message, error = false) {
       $('status').textContent = message;
       $('status').classList.toggle('error', error);
@@ -102,7 +108,7 @@
       $('show-photo').checked = value.showPhoto;
       $('snap').value = value.snap === null ? '' : (value.snap - start()).toFixed(3);
       $('snap').min = 0;
-      $('snap').max = clip ? clip.len - clip.trim : 0;
+      $('snap').max = clip ? end() - start() : 0;
       $('offense-count').textContent = `${offense.length} offensive targets marked`;
       $('accept-snap').disabled = !suggestion;
       $('suggestion').textContent = suggestion
@@ -141,7 +147,8 @@
     function drawTrack(ctx, viewport, camera, timestamp) {
       const value = clip.highlights?.[camera];
       const p = value && T.visible(value, timestamp) && T.position(value.points, timestamp);
-      if (!p || options.isClean()) return;
+      const cameraStart = base(camera) + clip.trim;
+      if (!p || options.isClean() || timestamp < cameraStart || timestamp >= base(camera) + clip.len - (clip.trimEnd ?? 0)) return;
       const appearance = T.appearance(value, options.appearance()), photo = photos.get(value.id);
       const key = JSON.stringify([value.radius, value.name, value.showName, value.showPhoto, appearance, viewport.w]);
       let cached = graphics.get(value);
@@ -169,7 +176,8 @@
       const ctx = canvas.getContext('2d');
       const value = track(), t = time();
       const p = value && T.position(value.points, t);
-      $('preview-state').textContent = !value ? 'No player highlight enabled.'
+      $('preview-state').textContent = !retained() ? 'Removed frame: play information and player highlights are hidden.'
+        : !value ? 'No player highlight enabled.'
         : value.mode === 'presnap' && value.snap === null ? 'Set or confirm the snap to preview a pre-snap highlight.'
           : !T.visible(value, t) ? 'Highlight hidden: this frame is at or after the configured snap.'
             : !p ? 'Untracked frame. Click the player here to track from this frame.'
@@ -186,8 +194,9 @@
           ctx.fillText(String(index + 1), viewport.x + p.x * viewport.w + 9, viewport.y + p.y * viewport.h);
         });
       }
-      $('time').value = Math.max(0, time() - start());
-      $('time-label').textContent = `${Math.max(0, time() - start()).toFixed(2)} / ${(end() - start()).toFixed(2)}s`;
+      $('time').value = Math.max(0, time() - base());
+      $('time-label').textContent = `${Math.max(0, time() - base()).toFixed(2)} / ${clip.len.toFixed(2)}s`;
+      $('time').setAttribute('aria-valuetext', `${(time() - base()).toFixed(2)} seconds from original start; ${retained() ? 'retained' : 'removed'}`);
     }
     function stopPlayback() { video.pause(); otherVideo.pause(); $('play').textContent = 'Play preview'; }
     function syncOther() {
@@ -197,7 +206,7 @@
     }
     function seek(relative) {
       stopPlayback();
-      const target = Math.min(end() - 0.001, Math.max(start(), start() + relative));
+      const target = Math.min(base() + clip.len - 0.001, Math.max(base(), base() + relative));
       if (offenseTime !== null && Math.abs(target - offenseTime) > 0.06) {
         offense = [];
         offenseTime = null;
@@ -207,19 +216,26 @@
       syncOther();
     }
     video.addEventListener('seeked', draw);
-    video.addEventListener('loadedmetadata', () => { if (clip) seek(0); });
+    video.addEventListener('loadedmetadata', () => { if (clip) seek(clip.trim); });
     otherVideo.addEventListener('loadedmetadata', syncOther);
     otherVideo.addEventListener('seeked', draw);
     for (const source of [video, otherVideo]) {
       source.addEventListener('loadeddata', draw);
       source.addEventListener('error', () => status('Cut-up preview could not open this film.', true));
     }
+    function stopAtEnd() {
+      if (!clip || video.paused || time() < end()) return;
+      stopPlayback();
+      video.currentTime = Math.max(start(), end() - 0.001);
+      syncOther();
+    }
     video.addEventListener('timeupdate', () => {
-      if (clip && time() >= end() - 0.05) stopPlayback();
+      stopAtEnd();
       if (options.mode?.() === 'both') syncOther();
       draw();
     });
     function animate() {
+      stopAtEnd();
       if (video.paused) return;
       if (options.mode?.() === 'both') syncOther();
       draw();
@@ -228,19 +244,19 @@
     $('play').addEventListener('click', () => {
       if (!clip) return;
       if (!video.paused) { stopPlayback(); return; }
-      if (time() >= end() - 0.1) video.currentTime = start();
+      if (time() < start() || time() >= end() - 0.001) video.currentTime = start();
       syncOther();
       Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
         .then(() => { $('play').textContent = 'Pause preview'; animate(); })
         .catch(error => { stopPlayback(); status(`Preview failed: ${error.message}`, true); });
     });
     $('time').addEventListener('input', () => seek(Number($('time').value)));
-    $('back').addEventListener('click', () => seek(time() - start() - 1 / clip.fps));
-    $('forward').addEventListener('click', () => seek(time() - start() + 1 / clip.fps));
+    $('back').addEventListener('click', () => seek(time() - base() - 1 / clip.fps));
+    $('forward').addEventListener('click', () => seek(time() - base() + 1 / clip.fps));
     $('review-stop').addEventListener('click', () => {
       const last = track()?.points.findLast(p => p.t >= start() && p.t < end());
       if (!last) return;
-      seek(last.t - start());
+      seek(last.t - base());
       status('This is the last tracked frame. Step forward to a clear view and click the same player to resume background tracking. Earlier tracked positions are kept.');
     });
     canvas.addEventListener('click', event => {
@@ -249,6 +265,7 @@
         status('Wait for the selected video frame to finish loading before placing a player.', true);
         return;
       }
+      if (!requireRetained()) return;
       stopPlayback();
       const bounds = canvas.getBoundingClientRect();
       const viewport = viewports?.[angle];
@@ -316,8 +333,12 @@
       else if (Number.isFinite(value) && value >= 0 && value <= end() - start()) setSnap(start() + value);
       else { syncControls(); status('Snap must be inside this retained clip.', true); }
     });
-    $('set-snap').addEventListener('click', () => setSnap(time()));
-    $('accept-snap').addEventListener('click', () => { if (suggestion) setSnap(suggestion.time); });
+    $('set-snap').addEventListener('click', () => { if (requireRetained()) setSnap(time()); });
+    $('accept-snap').addEventListener('click', () => {
+      if (!suggestion) return;
+      if (suggestion.time >= start() && suggestion.time <= end()) setSnap(suggestion.time);
+      else status('Suggested snap is outside this retained clip. Set the snap manually.', true);
+    });
     $('clear-track').addEventListener('click', () => {
       cancelForCurrentTrack();
       if (clip.highlights) delete clip.highlights[angle];
@@ -409,6 +430,7 @@
       if (job?.value === track()) void cancelTracking();
     }
     function startTracking() {
+      if (!requireRetained()) return;
       const value = track();
       const seed = value && T.position(value.points, time());
       if (!seed) { status('Click the player on the current frame before tracking.', true); return; }
@@ -454,7 +476,7 @@
     $('angle').addEventListener('change', () => select(clip, true));
 
     function select(next, preserveTime = false) {
-      const relative = clip ? Math.max(0, time() - start()) : 0;
+      const relative = clip && next === clip && preserveTime ? Math.max(0, time() - base()) : next?.trim || 0;
       stopPlayback();
       if (next && job && saveKey(next) === saveKey(job.clip)) next.highlights = job.clip.highlights;
       clip = next;
@@ -472,9 +494,11 @@
       $('editor').hidden = !clip;
       setBusy(busy);
       if (!clip) return;
-      $('time').max = clip.len - clip.trim;
-      $('time').value = 0;
+      $('time').max = clip.len;
+      $('time').value = relative;
       $('time').step = 1 / clip.fps;
+      $('time').style.setProperty('--trim-start', `${clip.trim / clip.len * 100}%`);
+      $('time').style.setProperty('--trim-end', `${(clip.len - (clip.trimEnd ?? 0)) / clip.len * 100}%`);
       $('player').replaceChildren(new Option('Custom name / no roster identity', ''));
       playerChoices = options.players(clip);
       for (const p of playerChoices) $('player').add(new Option(`${p.team || ''} ${p.number ? '#' + p.number : ''} ${p.name || p.id}`, p.id));
@@ -485,7 +509,7 @@
       $('player').value = track()?.id || '';
       syncControls();
       if (video.src !== clip.url) video.src = clip.url;
-      else seek(preserveTime ? relative : 0);
+      else seek(relative);
       if (otherVideo.src !== clip.url) otherVideo.src = clip.url;
       else syncOther();
       status(busy ? 'Tracking continues in the background. You can preview, edit, or close Share.'
@@ -496,7 +520,7 @@
 
     return {
       select,
-      relativeTime: () => clip ? Math.max(0, time() - start()) : 0,
+      relativeTime: () => clip ? Math.max(0, time() - base()) : 0,
       ready: () => !!clip && video.readyState >= 2 && !video.seeking && (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking),
       busy: () => busy,
       pause: stopPlayback,
