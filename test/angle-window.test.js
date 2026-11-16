@@ -27,7 +27,7 @@ async function exerciseWindows({ app, win }) {
     }
   };
   if (win.webContents.isLoading()) await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
-  await until(() => js(`$('status').textContent.includes('Offline window test')`));
+  await until(() => js(`$('app-toast').textContent.includes('Offline window test')`));
   await js(`(async () => {
     applySettings(A22.settings.DEFAULT_SETTINGS);
     S.settings.speeds = [1, 0.5];

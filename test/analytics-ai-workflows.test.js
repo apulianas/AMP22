@@ -28,7 +28,10 @@ async function exercise({ app, win }) {
     playType: 'all', down: 0, half: 'all', offense: 'all', defense: 'all', motion: 'all', playAction: 'all', minSnaps: 1, player: 'all', presence: 'all', downRange: 'all', minDistance: 0, maxDistance: 0,
   };
   let responsePlan = plan;
-  replace('analysis-ai:discover', () => models);
+  replace('analysis-ai:discover', () => ({
+    models, local: { label: 'Apple Intelligence', available: models.some(m => m.id === 'apple'),
+      reason: 'Enable Apple Intelligence in System Settings, then check again.' },
+  }));
   replace('analysis-ai:plan', (_event, body) => {
     request = body;
     if (failure) throw new Error('Local model failed');
@@ -54,21 +57,27 @@ async function exercise({ app, win }) {
     ] : i === 2 ? Array.from({ length: 11 }, (_value, index) => ({ id: `defender-${index}`, name: `Defender ${index}` })) : [] },
   })) }));
   if (win.webContents.isLoading()) await new Promise(resolve => win.webContents.once('did-finish-load', resolve));
-  await wait(`$('status').textContent.includes('AI workflow offline boot')`);
+  await js('loadSchedule(false)');
+  await wait(`$('app-toast').textContent.includes('AI workflow offline boot')`);
   await js(`(async () => {
     await setWorkspaceMode('analysis', false);
     S.games = ${JSON.stringify(games)};
     S.sel = {season:2024,team:'BAL',gameId:'2024_04_BUF_BAL'};
     renderSelectors(); await loadGame();
   })()`);
-  await wait(`$('lab-summary').textContent.includes('4BAL defense scored snaps')`);
-  assert.equal(await js(`$('lab-ai').hidden`), true);
-  assert.equal(await js(`getComputedStyle($('lab-ai')).display`), 'none', 'no disabled button or unsupported message');
+  await wait(`$('lab-summary').textContent.includes('4Scored snapsBAL defense')`);
+  assert.equal(await js(`$('lab-ai').open`), false);
+  assert.equal(await js(`$('lab-ai-ready').hidden`), true);
+  await js(`$('lab-ai-open').click()`);
+  assert.equal(await js(`$('lab-ai').open`), true, 'unavailable local intelligence opens its own availability panel');
+  assert.match(await js(`$('lab-ai-availability').textContent`), /Enable Apple Intelligence/);
+  assert.equal(await js(`$('cloud-ai-settings').open`), false, 'a Mac without a provider is never redirected to cloud setup');
   assert.equal(await js(`$('lab-copy-context').disabled`), false, 'manual copying does not require a model');
   let copied = null;
   clipboard.writeText = text => { copied = text; };
-  await js(`$('lab-copy-context').click()`);
+  await js(`$('lab-export-tools').querySelector('summary').click(); $('lab-copy-context').click()`);
   await wait(`!$('analysis-context-copy').disabled`);
+  assert.equal(await js(`$('lab-export-tools').open`), false, 'choosing a sharing action closes its menu');
   assert.match(await js(`$('analysis-context-preview').value`), /COMPUTED SUMMARY CSV/);
   assert.equal(copied, null, 'preview does not write the clipboard');
   await js(`$('analysis-context-question').value='Explain this game';
@@ -82,12 +91,20 @@ async function exercise({ app, win }) {
   await wait(`$('analysis-context-status').textContent.includes('saved as TXT')`);
   assert.equal(fs.readFileSync(path.join(app.getPath('userData'), 'context.txt'), 'utf8'), copied);
   await js(`$('analysis-context-close').click()`);
-  models = [{ id: 'apple', label: 'Apple on-device model' }, { id: 'other', label: 'Other test model' }];
+  models = [{ id: 'other', label: 'Other test model' }, { id: 'apple', label: 'Apple Intelligence (on device)' }];
+  await js(`$('lab-ai-recheck').click()`);
+  await wait(`!$('lab-ai-ready').hidden && !$('lab-ai-ask').disabled`);
+  assert.equal(await js(`$('lab-ai-model').value`), 'apple', 'Apple is the default without a configured cloud provider, regardless of discovery order');
+  assert.match(await js(`$('lab-ai-source').textContent`), /Apple Intelligence.*On device/);
+  await js(`$('lab-ai-open').click()`);
+  assert.equal(await js(`document.activeElement.id`), 'lab-ai-question');
+  assert.equal(await js(`$('cloud-ai-settings').open`), false);
   await js(`(async () => { S.sel.gameId='2024_05_BAL_CIN'; renderSelectors(); await loadGame(); })()`);
-  await wait(`!$('lab-ai').hidden && !$('lab-ai-ask').disabled`);
+  await wait(`!$('lab-ai-ready').hidden && !$('lab-ai-ask').disabled`);
   assert.equal(await js(`$('lab-ai-model-label').hidden`), false);
   await js(`$('lab-ai').open=true; $('lab-ai-question').value='Compare run and pass yards per play'; $('lab-ai-form').requestSubmit()`);
   await wait(`!$('lab-ai-answer').hidden`);
+  assert.equal(request.provider, 'apple');
   assert.equal(request.context.snaps, 4);
   assert.equal(request.context.side, 'defense');
   assert.match(await js(`$('lab-ai-summary').textContent`), /4.00 \(2 known observations; 2 snaps\)/);
@@ -103,7 +120,7 @@ async function exercise({ app, win }) {
   assert.match(await js(`$('lab-ai-rows').textContent`), /With Kyle Hamilton/);
   assert.match(await js(`$('lab-ai-rows').textContent`), /Without Kyle Hamilton/);
   assert.match(await js(`$('lab-ai-coverage').textContent`), /confirmed without: 1; unknown: 1/);
-  assert.match(await js(`$('lab-ai-statistics').textContent`), /n = 2/);
+  assert.match(await js(`$('lab-ai-statistics').textContent`), /2 plays/);
   await js(`document.querySelector('#lab-ai-rows button').click()`);
   assert.equal(await js(`$('lab-ai-evidence-plays').children.length`), 1, 'without evidence includes only its confirmed snap');
   responsePlan = plan;
@@ -197,6 +214,8 @@ async function exercise({ app, win }) {
   await wait(`$('cloud-ai-status').textContent.includes('disconnected')`);
   await js(`$('cloud-ai-close').click(); toggleOverlay('settings', false);`);
   await wait(`$('lab-ai-model').querySelector('[value="cloud:openai"]') === null`);
+  assert.equal(await js(`$('lab-ai-model').value`), 'apple', 'disconnecting cloud restores Apple on-device intelligence');
+  assert.match(await js(`$('lab-ai-source').textContent`), /Apple Intelligence.*On device/);
   assert.equal(await js(`$('lab-ai-answer').hidden`), true);
   assert.match(await js(`$('lab-ai-privacy').textContent`), /stay on this device/);
   win.setSize(1100, 800);

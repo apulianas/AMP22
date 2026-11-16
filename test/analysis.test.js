@@ -169,8 +169,8 @@ test('jumbo groups both Jacksonville goal-line compositions and respects custom 
   assert.equal(A.defensivePackage(second, []), '4-3*');
   assert.equal(A.defensivePackage(play(1, { onField: { defense: roster({ DL: 4, LB: 3, DB: 4 }) } }), []), 'Unknown');
   const report = { title: 'Jumbo', subtitle: 'Jacksonville at Baltimore', notes: '', rows: result.rows, metric: 'ypp', chart: 'bars' };
-  assert.match(A.csv(report), /"Jumbo\*","All","2"/);
-  assert.match(A.svg(report), /Jumbo\*/);
+  assert.match(A.csv(report), /"Jumbo","All","2"/);
+  assert.match(A.svg(report), /<title>Jumbo<\/title>Jumbo<\/text>/);
 });
 
 test('32 dime distinguishes two inside linebackers from standard and rush dime without changing saved rules', () => {
@@ -194,8 +194,8 @@ test('32 dime distinguishes two inside linebackers from standard and rush dime w
   p.personnel.defense = '32 dime';
   assert.equal(A.defensivePackage(p, []), '32 dime*');
   const report = { title: 'Dime packages', subtitle: 'Jacksonville at Baltimore', notes: '', rows: result.rows, metric: 'ypp', chart: 'bars' };
-  assert.match(A.csv(report), /"32 dime\*","All","1"/);
-  assert.match(A.svg(report), /32 dime\*/);
+  assert.match(A.csv(report), /"32 dime","All","1"/);
+  assert.match(A.svg(report), /<title>32 dime<\/title>32 dime<\/text>/);
 });
 
 test('jumbo nickel includes both DB variants while preserving custom precedence and incomplete fallbacks', () => {
@@ -250,7 +250,7 @@ test('Wildcat is an offensive-personnel modifier in groups, splits and matchups 
   assert.equal(A.summarize([tushPush], { group: 'offense' }).rows[0].label, '12 (6) Tush push*');
   assert.equal(A.summarize([tushPush], { split: 'offense' }).rows[0].series, '12 (6) Tush push*');
   assert.match(A.csv({ title: 'Wildcat', subtitle: '', notes: '', rows: summary.rows, metric: 'ypp', chart: 'bars' }),
-    /"12 \(6\) Wildcat\*"/);
+    /"12 \(6\) Wildcat"/);
 });
 
 test('conversion uses first-down or touchdown credit and separates scramble run efficiency', () => {
@@ -266,18 +266,88 @@ test('conversion uses first-down or touchdown credit and separates scramble run 
   assert.equal(pass.conversionN, 1);
 });
 
+test('analysis graphics and summary CSV replace package markers with one note without changing bucket identity', () => {
+  const rows = A.summarize([play(1)], { split: 'none' }).rows.map(row => ({
+    ...row, label: '11* vs Big nickel*', series: '12*',
+  }));
+  const before = structuredClone(rows);
+  const report = { title: 'Defense', subtitle: 'Scope', notes: '', rows, metric: 'epa', chart: 'bars' };
+  for (const compact of [false, true]) {
+    for (const chart of ['bars', 'heatmap', 'halves']) {
+      const svg = A.svg({ ...report, compact, chart });
+      assert.equal(svg.split(A.PACKAGE_NOTE).length - 1, 1);
+      assert.match(svg, /<title>11 vs Big nickel<\/title>11 vs Big nickel<\/text>/);
+      assert.doesNotMatch(svg, /<text[^>]*>12\*<\/text>/);
+      assert.match(svg, /<text[^>]*>12<\/text>/);
+    }
+  }
+  assert.match(A.csv(report), /"11 vs Big nickel","12"/);
+  assert.match(A.csv(report), /Packages estimated from listed positions, not confirmed alignment/);
+  assert.deepEqual(rows, before, 'raw inference markers and play identities remain intact for evidence and filtering');
+  assert.doesNotMatch(A.svg({ ...report, rows: rows.map(row => ({ ...row, label: 'Unknown', series: 'All' })) }),
+    /lab-chart-package-note/, 'non-package charts do not claim a position estimate');
+});
+
 test('SVGs support negative metrics, escape labels and disclose metric samples and exclusions', () => {
   const rows = A.summarize([play(1, { epa: -1 })], { split: 'none' }).rows;
   for (const chart of ['bars', 'heatmap', 'halves']) {
     const svg = A.svg({ title: '<Defense & "data">', subtitle: 'BUF at BAL', notes: 'Source: nflverse', rows, metric: 'epa', chart });
     assert.match(svg, /&lt;Defense &amp; &quot;data&quot;&gt;/);
     assert.match(svg, /-1.00/);
-    assert.match(svg, /metric n=1/);
-    assert.match(svg, /n=1; metric n=1/);
+    assert.match(svg, /1 play/);
+    assert.doesNotMatch(svg, /metric n=|n=1/);
     assert.doesNotMatch(svg, /small sample|\(small\)|n &lt; 10/i);
     assert.match(svg, /excludes no-plays/);
     assert.doesNotMatch(svg, /NaN|Infinity|<script/);
   }
+});
+
+test('play counts explain missing or ineligible observations only when the metric sample differs', () => {
+  const row = A.summarize([
+    play(1, { down: 1 }),
+    play(2, { yards: null, epa: null }),
+    play(3, { epa: null }),
+  ], { split: 'none' }).rows[0];
+  assert.equal(A.sampleLabel(row, 'ypp'), '3 plays; 2 with yards');
+  assert.equal(A.sampleLabel(row, 'epa'), '3 plays; 1 with EPA');
+  assert.equal(A.sampleLabel(row, 'success'), '3 plays; 1 with EPA');
+  assert.equal(A.sampleLabel(row, 'conversion'), '3 plays; 1 eligible');
+  const complete = A.summarize([play(1), play(2)], { split: 'none' }).rows[0];
+  assert.equal(A.sampleLabel(complete, 'epa'), '2 plays');
+  for (const chart of ['bars', 'heatmap']) {
+    const svg = A.svg({ title: 'Defense', subtitle: 'Scope', notes: '', rows: [row], metric: 'epa', chart, compact: true });
+    assert.match(svg, /3 plays; 1 with EPA/);
+    assert.doesNotMatch(svg, /metric n=|n=3/);
+    if (chart === 'bars') {
+      assert.match(svg, /class="lab-chart-sample"[^>]*><title>3 plays; 1 with EPA<\/title>3 plays<\/text>/);
+      assert.match(svg, /class="lab-chart-sample-detail"[^>]*>1 with EPA<\/text>/);
+    }
+  }
+});
+
+test('compact screen graphics retain chart data without the full export header and notes block', () => {
+  const report = { title: 'Defense', subtitle: 'BUF at BAL', notes: 'Source: nflverse',
+    rows: A.summarize([play(1)], { split: 'none' }).rows, metric: 'epa', chart: 'bars' };
+  const full = A.svg(report);
+  const compact = A.svg({ ...report, compact: true });
+  assert.ok(Number(compact.match(/height="(\d+)"/)[1]) < Number(full.match(/height="(\d+)"/)[1]));
+  assert.match(compact, /Defense/);
+  assert.match(compact, /data-bucket=/);
+  assert.match(compact, /excludes no-plays/);
+  assert.doesNotMatch(compact, /AMP22 \/ ANALYSIS LAB|<text[^>]*>Source: nflverse/);
+  assert.match(full, /AMP22 \/ ANALYSIS LAB/);
+  assert.match(full, /Source: nflverse/);
+});
+
+test('bar charts show a shared run/pass legend instead of repeating split labels for each group', () => {
+  const rows = [
+    { id: 'a-run', label: 'Nickel', series: 'Run (incl. scrambles)', n: 2, share: 0.4, totalYards: 5, yardsN: 2, ypp: 2.5, epa: 0.1, epaN: 2, success: 0.5, explosive: 0.1, conversionN: 2, conversion: 0.5 },
+    { id: 'a-pass', label: 'Nickel', series: 'Pass (incl. sacks)', n: 3, share: 0.6, totalYards: 10, yardsN: 3, ypp: 3.3, epa: 0.2, epaN: 3, success: 0.4, explosive: 0.2, conversionN: 3, conversion: 0.4 },
+  ];
+  const svg = A.svg({ title: 'Defense', subtitle: 'Scope', notes: 'Source', rows, metric: 'epa', chart: 'bars' });
+  assert.equal((svg.match(/<text[^>]*>Run \(incl\. scrambles\)<\/text>/g) || []).length, 1);
+  assert.equal((svg.match(/<text[^>]*>Pass \(incl\. sacks\)<\/text>/g) || []).length, 1);
+  assert.equal((svg.match(/<title>Nickel<\/title>/g) || []).length, 1);
 });
 
 test('summary CSV exports definitions and all rows with spreadsheet-safe text', () => {

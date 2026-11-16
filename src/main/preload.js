@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   init: () => ipcRenderer.invoke('app:init'),
@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   downloadUpdate: () => ipcRenderer.invoke('updates:download'),
   saveSettings: (s) => ipcRenderer.invoke('settings:save', s),
   getSchedule: (opts) => ipcRenderer.invoke('schedule:get', opts),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   getPlays: (opts) => ipcRenderer.invoke('pbp:get', opts),
   getHeadshots: (ids) => ipcRenderer.invoke('players:headshots', ids),
   getGame: (gameId) => ipcRenderer.invoke('game:get', gameId),
@@ -31,9 +32,15 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('participation:changed', h);
     return () => ipcRenderer.removeListener('participation:changed', h);
   },
+  onMenuAction: (cb) => {
+    const h = (_e, action) => cb(action);
+    ipcRenderer.on('app:menu-action', h);
+    return () => ipcRenderer.removeListener('app:menu-action', h);
+  },
   suggestFilm: (game) => ipcRenderer.invoke('film:suggest', game),
+  getFilmLibrary: (games) => ipcRenderer.invoke('film:library', games),
   openFilm: (file) => ipcRenderer.invoke('film:open', file),
-  analyzeFilm: (file, force) => ipcRenderer.invoke('film:analyze', { file, force }),
+  analyzeFilm: (file, force, { filmWeights, auto } = {}) => ipcRenderer.invoke('film:analyze', { file, force, filmWeights, auto }),
   cancelAnalysis: (file) => ipcRenderer.invoke('film:cancel', file),
   exportClips: (request) => ipcRenderer.invoke('clips:export', request),
   previewFrame: (file, time) => ipcRenderer.invoke('clips:preview', { file, time }),

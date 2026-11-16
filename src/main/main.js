@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, net, shell, safeStorage, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, net, shell, safeStorage, clipboard, Menu } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -37,6 +37,35 @@ let headshotPreparation = null;
 let trackingJob = null;
 const appIcon = path.join(__dirname, '..', 'renderer', 'assets', 'icon.png');
 const headless = process.env.A22_HEADLESS === '1' && !!process.env.A22_DEV_SCRIPT;
+
+function installApplicationMenu() {
+  const action = (label, accelerator, name) => ({
+    label, ...(accelerator ? { accelerator } : {}), click: () => {
+      if (win && !win.isDestroyed()) win.webContents.send('app:menu-action', name);
+    },
+  });
+  const template = [
+    ...(process.platform === 'darwin' ? [{
+      label: app.name,
+      submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        action('Open Film…', 'CmdOrCtrl+O', 'open-film'),
+        action('Game library…', 'CmdOrCtrl+L', 'game-library'),
+        { type: 'separator' },
+        action('Export clip…', 'CmdOrCtrl+Shift+E', 'export-clip'),
+        { type: 'separator' },
+        ...(process.platform === 'darwin' ? [] : [{ role: 'quit' }]),
+      ],
+    },
+    { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: 'View', submenu: [action('Command palette…', 'CmdOrCtrl+K', 'command-palette'), { type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] },
+    { label: 'Help', submenu: [action('Keyboard shortcuts', null, 'help'), action('Settings…', 'CmdOrCtrl+,', 'settings'), { type: 'separator' }, { label: 'AMP22 on GitHub', click: () => shell.openExternal('https://github.com/apulianas/AMP22') }] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function createWindow() {
   const angleUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'angle.html')).href;
@@ -265,6 +294,33 @@ function registerIpc() {
     return { ranked: ranked.slice(0, 10).map((c) => ({ ...c, path: abs(c.path) })), auto: auto ? abs(auto) : null };
   });
 
+  ipcMain.handle('film:library', (_e, games) => {
+    if (!Array.isArray(games) || games.length > 32) throw new Error('Invalid game-library request.');
+    const root = getSettings().filmRoot;
+    const videos = root && fs.existsSync(root) ? listVideos(root) : [];
+    return games.map((game) => {
+      if (!game || typeof game.gameId !== 'string' || typeof game.team !== 'string') throw new Error('Invalid game-library entry.');
+      const saved = gamesStore.get()[game.gameId] || {};
+      const paths = saved.filmFormat === 'split'
+        ? Object.values((saved.splitFilmPaths || {})[game.team] || {}).filter(Boolean)
+        : [saved.filmPath].filter(Boolean);
+      const candidates = root && videos.length
+        ? films.rankCandidates(videos, { week: game.week, opponent: game.opponent, season: game.season, team: game.team }).ranked
+        : [];
+      const suggested = candidates[0] ? path.join(root, candidates[0].path) : null;
+      const chosen = paths.length ? paths : suggested ? [suggested] : [];
+      return {
+        gameId: game.gameId,
+        hasFilm: chosen.length > 0,
+        suggested: !paths.length && !!suggested,
+        filmNames: chosen.map((file) => path.basename(file)),
+        analyzed: chosen.length > 0 && chosen.every((file) => {
+          try { return !!readCachedAnalysis(file, fs.statSync(file)); } catch { return false; }
+        }),
+      };
+    });
+  });
+
   ipcMain.handle('film:open', async (_e, file) => {
     const st = fs.statSync(file);
     const cached = readCachedAnalysis(file, st);
@@ -272,7 +328,11 @@ function registerIpc() {
     return { path: file, url: pathToFileURL(file).href, size: st.size, mtimeMs: st.mtimeMs, info, analysis: cached };
   });
 
-  ipcMain.handle('film:analyze', async (e, { file, force }) => {
+  ipcMain.handle('film:analyze', async (e, { file, force, filmWeights, auto } = {}) => {
+    if (filmWeights != null && (!Array.isArray(filmWeights) || filmWeights.length > 2000
+      || !filmWeights.every((w) => typeof w === 'number' && w >= 0 && w <= 1))) {
+      throw new Error('Invalid play-by-play weights for film analysis.');
+    }
     const st = fs.statSync(file);
     if (!force) {
       const cached = readCachedAnalysis(file, st);
@@ -281,10 +341,13 @@ function registerIpc() {
     if (running.has(file)) return running.get(file).promise;
     const controller = new AbortController();
     const sender = e.sender;
+    const settings = getSettings();
+    const automatic = auto === true || settings.cutMode !== 'manual';
     const promise = media
       .analyzeFilm(file, {
         signal: controller.signal,
-        cutThreshold: getSettings().cutThreshold,
+        cutThreshold: settings.cutThreshold,
+        filmWeights: automatic ? filmWeights : null,
         onProgress: (p) => { if (!sender.isDestroyed()) sender.send('film:progress', { file, ...p }); },
       })
       .then((a) => {
@@ -394,6 +457,7 @@ app.setPath('userData', process.env.A22_USER_DATA
   : path.join(app.getPath('appData'), 'A22 Film Tool'));
 
 app.whenReady().then(() => {
+  installApplicationMenu();
   if (process.platform === 'darwin' && !app.isPackaged) app.dock.setIcon(appIcon);
   const ud = app.getPath('userData');
   data = new DataService(path.join(ud, 'cache'), (url, options) => net.fetch(url, options));

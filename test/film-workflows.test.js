@@ -52,7 +52,7 @@ async function exerciseWorkflows({ app, win }) {
     throw new Error(`Timed out: ${source}; preview: ${preview}`);
   };
   if (win.webContents.isLoading()) await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
-  await until(`$('status').textContent.includes('Offline workflow test')`);
+  await until(`$('app-toast').textContent.includes('Offline workflow test')`);
   assert.equal(await js(`getComputedStyle(document.querySelector('#topbar .brand')).backgroundColor`), 'rgba(0, 0, 0, 0)');
   assert.match(await js(`getComputedStyle(document.querySelector('.brand-amp')).maskImage`), /amp\.svg/);
   assert.match(await js(`getComputedStyle(document.querySelector('.brand-amp')).backgroundImage`), /linear-gradient/);
@@ -170,7 +170,7 @@ async function exerciseWorkflows({ app, win }) {
   assert.deepEqual(saved.playReport, { format: 'pdf', includeAdvanced: true, fields: ['airYards', 'motion', 'coverage'] });
   assert.equal(saved.exportTrim, 0.25);
   assert.equal(saved.overlaySeconds, 1.75);
-  await js(`S.selected = new Set([2, 0, 1]); updateSelection(); $('btn-share').click(); $('share-clean').checked = true;`);
+  await js(`S.selected = new Set([2, 0, 1]); updateSelection(); $('btn-share').click(); setExportMode('customize'); $('share-clean').checked = true;`);
   assert.equal(await js(`$('share-trim').value`), '0.25');
   assert.equal(await js(`$('share-overlay-seconds').value`), '1.75');
   await until(`!$('highlight-canvas').hidden && positionFrames !== null`);

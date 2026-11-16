@@ -65,7 +65,8 @@ async function exerciseAnalysis({ app, win }) {
     throw new Error(`Timed out: ${condition}`);
   };
   if (win.webContents.isLoading()) await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
-  await waitUntil(`$('status').textContent.includes('Analysis workflow offline boot')`);
+  await js('loadSchedule(false)');
+  await waitUntil(`$('app-toast').textContent.includes('Analysis workflow offline boot')`);
   await js(`(async () => {
     await setWorkspaceMode('analysis', false);
     S.games = ${JSON.stringify(games)};
@@ -77,16 +78,20 @@ async function exerciseAnalysis({ app, win }) {
   assert.equal(filmCalls, 0);
   assert.equal(await js(`$('viewer').hidden && !$('analysis-lab').hidden`), true);
   assert.equal(await js(`$('lab-side').closest('#sidebar') !== null`), true, 'analysis side belongs beside the Film Room filters');
+  assert.equal(await js(`$('lab-selection-mode').closest('#topbar') !== null`), true, 'selection mode stays in the persistent toolbar');
+  assert.equal(await js(`document.querySelectorAll('#lab-selection-mode').length`), 1);
   assert.equal(await js(`document.querySelectorAll('#lab-side').length`), 1);
   assert.deepEqual(await js(`[...$('lab-side').options].map(option => option.textContent)`), ['Baltimore Ravens defense', 'Baltimore Ravens offense']);
   assert.deepEqual(await js(`S.visible.map(index => S.plays[index].posteam)`), Array(12).fill('BUF'));
   assert.equal(await js(`$('play-list').querySelectorAll('li[data-i]').length`), 12);
   await js(`setWorkspaceMode('film', false)`);
   assert.equal(await js(`$('analysis-perspective').hidden`), true, 'analysis-only control stays hidden in Film Room');
+  assert.equal(await js(`getComputedStyle($('lab-selection-controls')).display`), 'none');
   await js(`setWorkspaceMode('analysis', false)`);
   assert.equal(await js(`$('analysis-perspective').hidden`), false);
+  assert.notEqual(await js(`getComputedStyle($('lab-selection-controls')).display`), 'none');
   await js(`$('lab-side').value = 'offense'; $('lab-side').dispatchEvent(new Event('change'))`);
-  assert.match(await js(`$('lab-summary').textContent`), /4BAL offense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /4Scored snapsBAL offense/);
   assert.deepEqual(await js(`S.visible.map(index => S.plays[index].posteam)`), Array(4).fill('BAL'));
   assert.deepEqual(await js(`S.visible`), [12, 13, 14, 15], 'sidebar indices stay aligned with the loaded game');
   assert.match(await js(`$('sel-offense').textContent`), /Baltimore Ravens offense/);
@@ -103,7 +108,7 @@ async function exerciseAnalysis({ app, win }) {
   assert.match(await js(`$('lab-rows').textContent`), /Big nickel/);
   assert.doesNotMatch(await js(`$('analysis-lab').textContent`), /small sample|\(small\)/i);
   assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows tr')].map(row => row.cells[1].textContent)`), ['6', '6']);
-  assert.equal(await js(`document.querySelector('#lab-rows tr').cells[3].querySelector('small').textContent`), 'n=6');
+  assert.equal(await js(`document.querySelector('#lab-rows tr').cells[3].querySelector('small').textContent`), '6 plays');
   assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows tr')].map(row => row.querySelector('small').textContent)`),
     ['Run (incl. scrambles)', 'Pass (incl. sacks)']);
   assert.deepEqual(await js(`[...document.querySelectorAll('#lab-rows .lab-split-badge')].map(badge => ({
@@ -127,24 +132,54 @@ async function exerciseAnalysis({ app, win }) {
   assert.equal(await js(`$('clear-filters').hidden`), true);
   assert.equal(await js(`document.activeElement.id`), 'search');
   assert.equal(await js(`$('type-chips').querySelector('[data-type="pass"]').textContent`), 'Pass (6)');
+  await js(`document.querySelector('#play-list li[data-i="1"] .box').click()`);
+  assert.equal(await js(`S.selected.size`), 0, 'browsing a play sets a range anchor without selecting it for analysis');
+  assert.equal(await js(`S.multiSelect`), false);
+  await js(`document.querySelector('#play-list li[data-i="4"] .box').dispatchEvent(new MouseEvent('click', {bubbles: true, shiftKey: true}))`);
+  assert.deepEqual(await js(`[...S.selected]`), [1, 2, 3, 4], 'Shift-click includes the originally clicked play and both endpoints');
+  assert.equal(await js(`$('btn-multi-select').getAttribute('aria-pressed')`), 'true');
+  assert.equal(await js(`document.querySelector('#play-list li[data-i="1"] .play-check').hidden`), false);
+  assert.equal(await js(`$('lab-selection-mode').value`), 'all', 'range selection prompts for a mode instead of silently narrowing analysis');
+  assert.match(await js(`$('lab-summary').textContent`), /12Scored snapsBAL defense/);
+  assert.equal(await js(`$('lab-selection-controls').classList.contains('selection-pending')`), true);
+  assert.match(await js(`$('lab-selection-count').textContent`), /4 selected; selection not applied/);
+  const toolbarTop = await js(`$('lab-selection-mode').getBoundingClientRect().top`);
+  await js(`$('lab-definitions').open = true`);
+  await js(`$('analysis-lab').scrollTop = 400`);
+  assert.ok(await js(`$('analysis-lab').scrollTop > 0`), 'analysis results remain scrollable');
+  assert.equal(await js(`$('lab-selection-mode').getBoundingClientRect().top`), toolbarTop, 'the mode does not scroll away with results');
+  await js(`$('lab-definitions').open = false`);
+  await js(`$('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'))`);
+  assert.match(await js(`$('lab-summary').textContent`), /4Scored snapsBAL defense/);
+  assert.equal(await js(`$('lab-selection-controls').classList.contains('selection-pending')`), false);
+  await js(`$('lab-selection-mode').value = 'exclude'; $('lab-selection-mode').dispatchEvent(new Event('change'))`);
+  assert.match(await js(`$('lab-summary').textContent`), /8Scored snapsBAL defense/);
+  await js(`$('clear-filters').click(); $('btn-clear-selection').click(); $('analysis-lab').scrollTop = 0`);
+  assert.equal(await js(`$('lab-selection-controls').classList.contains('selection-pending')`), false);
+  await js(`$('type-chips').querySelector('[data-type="run"]').click();
+    document.querySelector('#play-list li[data-i="4"] .box').click();
+    document.querySelector('#play-list li[data-i="0"] .box').dispatchEvent(new MouseEvent('click', {bubbles: true, shiftKey: true}));`);
+  assert.deepEqual(await js(`[...S.selected]`), [0, 2, 4], 'reverse ranges include only visible plays, not filtered-out passes');
+  await js(`$('btn-clear-selection').click(); $('clear-filters').click()`);
   await js(`$('lab-play-selection').open = true;
     document.querySelector('#lab-selection-plays [data-selection="0"]').click();
-    document.querySelector('#lab-selection-plays [data-selection="2"]').dispatchEvent(new MouseEvent('click', {bubbles: true, shiftKey: true}));
-    $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
-  assert.match(await js(`$('lab-summary').textContent`), /3BAL defense scored snaps/);
+    document.querySelector('#lab-selection-plays [data-selection="2"]').dispatchEvent(new MouseEvent('click', {bubbles: true, shiftKey: true}));`);
+  assert.equal(await js(`$('lab-selection-controls').classList.contains('selection-pending')`), true, 'the full-scope picker also cues the selection mode');
+  await js(`$('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
+  assert.match(await js(`$('lab-summary').textContent`), /3Scored snapsBAL defense/);
   assert.equal(await js(`S.selected.size`), 3, 'range selection synchronizes sidebar selection');
   assert.equal(await js(`$('type-chips').querySelector('[data-type="all"]').textContent`), 'All (3)');
   assert.match(await js(`$('lab-coverage').textContent`), /Only selected plays; 3 selected/);
   await js(`document.querySelector('#lab-selection-plays [data-selection="1"]').click()`);
-  assert.match(await js(`$('lab-summary').textContent`), /2BAL defense scored snaps/);
-  assert.equal(await js(`document.querySelector('#lab-rows td:nth-child(4)').textContent`), '8n=2');
+  assert.match(await js(`$('lab-summary').textContent`), /2Scored snapsBAL defense/);
+  assert.equal(await js(`document.querySelector('#lab-rows td:nth-child(4)').textContent`), '82 plays');
   await js(`$('lab-selection-mode').value = 'exclude'; $('lab-selection-mode').dispatchEvent(new Event('change'))`);
-  assert.match(await js(`$('lab-summary').textContent`), /10BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /10Scored snapsBAL defense/);
   assert.equal(await js(`$('lab-selection-plays').children.length`), 12, 'excluded plays remain in the picker');
   await js(`document.querySelector('#lab-selection-plays [data-selection="0"]').click()`);
-  assert.match(await js(`$('lab-summary').textContent`), /11BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /11Scored snapsBAL defense/);
   await js(`$('lab-clear-selection').click(); $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'))`);
-  assert.match(await js(`$('lab-summary').textContent`), /0BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /0Scored snapsBAL defense/);
   assert.equal(await js(`$('lab-csv').disabled`), true, 'empty selection never falls back to all plays');
   assert.equal(await js(`$('clear-filters').hidden`), false, 'selection mode alone is an active filter');
   await js(`$('clear-filters').click()`);
@@ -153,17 +188,21 @@ async function exerciseAnalysis({ app, win }) {
     document.querySelector('#play-list li[data-i="0"] .play-check').click();
     document.querySelector('#play-list li[data-i="1"] .play-check').click();
     $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
-  assert.match(await js(`$('lab-summary').textContent`), /2BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /2Scored snapsBAL defense/);
   await js(`document.querySelector('#play-list li[data-i="0"] .play-check').click()`);
-  assert.match(await js(`$('lab-summary').textContent`), /1BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /1Scored snapsBAL defense/);
   await js(`$('btn-clear-selection').click()`);
-  assert.match(await js(`$('lab-summary').textContent`), /0BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /0Scored snapsBAL defense/);
   await js(`$('clear-filters').click()`);
   await js(`document.querySelector('#lab-packages [data-remove="0"]').click();
     $('lab-package-name').value = 'My nickel';
     for (const [position, count] of Object.entries(${JSON.stringify(A.DEFAULT_PACKAGES[0].counts)})) $('lab-count-' + position).value = count;
     $('lab-package-form').requestSubmit();`);
   assert.match(await js(`$('lab-rows').textContent`), /My nickel/);
+  assert.doesNotMatch(await js(`$('lab-rows').textContent`), /My nickel\*/);
+  assert.equal(await js(`document.querySelectorAll('#lab-chart-preview .lab-chart-package-note').length`), 1);
+  assert.equal(await js(`document.querySelector('#lab-chart-preview .lab-chart-package-note').textContent`),
+    'Packages estimated from listed positions');
   assert.match(await js(`localStorage.getItem('amp22.analysis.packages')`), /My nickel/);
   const packageFolder = app.getPath('userData');
   dialog.showSaveDialog = async () => ({ canceled: false, filePath: path.join(packageFolder, 'custom-evidence.csv') });
@@ -177,10 +216,11 @@ async function exerciseAnalysis({ app, win }) {
   assert.match(await js(`$('lab-package-status').textContent`), /not saved/);
   await js(`$('lab-package-reset').click()`);
   await js(`$('type-chips').querySelector('[data-type="run"]').click()`);
-  assert.match(await js(`$('lab-summary').textContent`), /6BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /6Scored snapsBAL defense/);
   await js(`$('type-chips').querySelector('[data-type="all"]').click();
     $('lab-chart').value = 'heatmap'; $('lab-chart').dispatchEvent(new Event('change'));`);
   assert.match(await js(`$('lab-chart-preview').innerHTML`), /11/);
+  assert.doesNotMatch(await js(`$('lab-chart-preview').textContent`), /nickel\*|11\*/i);
   assert.equal(await js(`document.querySelectorAll('#lab-rows .lab-split-badge').length`), 0, 'non-run/pass splits do not receive play-type badges');
   await js(`$('lab-chart').value = 'halves'; $('lab-chart').dispatchEvent(new Event('change'));`);
   assert.match(await js(`$('lab-rows').textContent`), /First half/);
@@ -190,7 +230,7 @@ async function exerciseAnalysis({ app, win }) {
   assert.equal(await js(`document.querySelector('#lab-rows tr').classList.contains('selected')`), true);
   assert.equal(await js(`$('lab-evidence-plays').children.length`), 6);
   await js(`$('lab-scope').value = 'range'; $('lab-from').value = '4'; $('lab-to').value = '5'; $('lab-scope').dispatchEvent(new Event('change'));`);
-  await waitUntil(`$('lab-summary').textContent.includes('24BAL defense scored snaps')`);
+  await waitUntil(`$('lab-summary').textContent.includes('24Scored snapsBAL defense')`);
   assert.equal(await js(`$('type-chips').querySelector('[data-type="all"]').textContent`), 'All (24)');
   assert.equal(await js(`S.visible.length`), 12, 'range counts span all games while the sidebar stays on the selected game');
   assert.match(await js(`$('player-choice').textContent`), /Range Only Defender.*12 plays/);
@@ -199,34 +239,34 @@ async function exerciseAnalysis({ app, win }) {
   await js(`document.querySelector('#lab-selection-plays [data-selection="0"]').click();
     document.querySelector('#lab-selection-plays [data-selection="12"]').click();
     $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
-  assert.match(await js(`$('lab-summary').textContent`), /2BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /2Scored snapsBAL defense/);
   assert.equal(await js(`S.selected.size`), 1, 'same play ID from another game is not confused with selected-game indices');
   await js(`$('lab-reload').click()`);
-  await waitUntil(`$('lab-summary').textContent.includes('2BAL defense scored snaps') && !$('lab-content').hidden`);
+  await waitUntil(`$('lab-summary').textContent.includes('2Scored snapsBAL defense') && !$('lab-content').hidden`);
   assert.match(await js(`$('lab-selection-count').textContent`), /2 selected/);
   await js(`setAdvancedChoice('motion', 'false')`);
-  assert.match(await js(`$('lab-summary').textContent`), /0BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /0Scored snapsBAL defense/);
   await js(`$('lab-selection-show').value = 'selected'; $('lab-selection-show').dispatchEvent(new Event('change'))`);
   assert.equal(await js(`$('lab-selection-plays').children.length`), 2, 'hidden selected plays can still be removed');
   await js(`document.querySelector('#lab-selection-plays [data-selection="1"]').click()`);
   assert.match(await js(`$('lab-selection-count').textContent`), /1 selected/);
   await js(`$('clear-filters').click(); $('lab-clear-selection').click();
     $('lab-selection-show').value = 'filtered'; $('lab-selection-show').dispatchEvent(new Event('change'));`);
-  assert.match(await js(`$('lab-summary').textContent`), /24BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /24Scored snapsBAL defense/);
   await js(`S.settings.filterPresets = [PRESETS.capture('Range pressure', {
     ...PRESETS.emptyFilter(), choices: {player: ['range-only'], pressure: 'false'}
   }, 'BAL', 'BUF', {'range-only': 'Range Only Defender'})];
   chooseFilterPreset('Range pressure');`);
-  assert.match(await js(`$('lab-summary').textContent`), /6BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /6Scored snapsBAL defense/);
   assert.doesNotMatch(await js(`$('filter-data-warning').textContent`), /No matching data/);
   await js(`setWorkspaceMode('analysis')`);
-  await waitUntil(`$('lab-summary').textContent.includes('6BAL defense scored snaps')`);
+  await waitUntil(`$('lab-summary').textContent.includes('6Scored snapsBAL defense')`);
   assert.equal(await js(`S.appliedPreset.name`), 'Range pressure', 'workspace reload retains applied presets');
   await js(`S.appliedPreset = null; S.filter = PRESETS.emptyFilter(); syncFilterControls(); renderAdvancedFilters(); renderList()`);
   await js(`document.querySelector('#lab-chart-preview [data-bucket]').dispatchEvent(new MouseEvent('click', {bubbles: true}))`);
   assert.equal(await js(`$('lab-evidence').hidden`), false);
   await js(`setAdvancedChoice('player', 'range-only')`);
-  assert.match(await js(`$('lab-summary').textContent`), /12BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /12Scored snapsBAL defense/);
   await js(`removePlayerFilter('range-only')`);
   assert.equal(filmCalls, 0);
   const folder = app.getPath('userData');
@@ -279,24 +319,78 @@ async function exerciseAnalysis({ app, win }) {
   assert.equal(filmCalls, 0);
   assert.ok(requests.some((r) => r.force === true));
   win.setSize(1100, 800);
+  await js(`applySettings({...S.settings, textScale: 1.2})`);
   assert.equal(await js(`$('topbar').scrollWidth <= $('topbar').clientWidth`), true, 'workspace toolbar fits the minimum supported window size');
+  assert.equal(await js(`$('lab-selection-controls').scrollWidth <= $('lab-selection-controls').clientWidth`), true, 'selection controls fit with enlarged text');
+  assert.equal(await js(`(() => {
+    const main = document.querySelector('main').getBoundingClientRect();
+    const mode = $('lab-selection-mode').getBoundingClientRect();
+    const clear = $('lab-clear-selection').getBoundingClientRect();
+    return main.top === $('topbar').getBoundingClientRect().bottom && main.bottom <= innerHeight &&
+      mode.top >= 0 && mode.bottom < main.top && mode.right <= innerWidth && clear.right <= innerWidth;
+  })()`), true, 'wrapped toolbar remains visible without clipping the workspace');
   failGame = false;
+  await js(`$('lab-scope').value = 'game'; $('lab-scope').dispatchEvent(new Event('change'))`);
+  await waitUntil(`!$('lab-content').hidden && $('lab-chart-preview').querySelector('svg')`);
+  await js(`$('lab-data-quality').open = false; $('lab-play-selection').open = false; $('lab-definitions').open = false`);
+  await waitUntil(`Number(document.querySelector('#lab-chart-preview .lab-chart-package').getAttribute('font-size')) >= 21`);
+  const controls = await js(`['scope','group','split','chart','metric','ai-open'].map(id => {
+    const rect = $('lab-' + id).getBoundingClientRect();
+    return {left:rect.left, bottom:rect.bottom, width:rect.width};
+  })`);
+  assert.equal(controls[0].left, controls[3].left, 'scope and graphic controls share a column');
+  assert.equal(controls[1].left, controls[4].left, 'group and metric controls share a column');
+  assert.equal(controls[0].width, controls[3].width, 'aligned dropdowns have equal widths');
+  assert.equal(controls[3].bottom, controls[4].bottom);
+  assert.equal(controls[4].bottom, controls[5].bottom, 'actions align with the dropdown baseline');
+  assert.equal(await js(`$('lab-toolbar').scrollWidth <= $('lab-toolbar').clientWidth`), true);
+  assert.ok(await js(`(() => {
+    const label = document.querySelector('#lab-chart-preview .lab-chart-package');
+    return parseFloat(getComputedStyle(label).fontSize) * label.getScreenCTM().a;
+  })()`) >= 21, 'package names remain at least 21 screen pixels with enlarged text, not scaled down with the chart');
+  const barLabels = await js(`Array.from(document.querySelectorAll('#lab-chart-preview [data-bucket]')).map(row => {
+    const bar = row.querySelector('rect').getBoundingClientRect();
+    const count = row.querySelector('.lab-chart-sample').getBoundingClientRect();
+    const value = row.querySelector('.lab-chart-value').getBoundingClientRect();
+    const center = rect => rect.top + rect.height / 2;
+    return {
+      separated: bar.right + 8 <= count.left && count.right + 8 <= value.left,
+      centered: Math.abs(center(count) - center(bar)) < 3 && Math.abs(center(value) - center(bar)) < 3,
+      contained: value.right <= row.closest('svg').getBoundingClientRect().right,
+    };
+  })`);
+  assert.ok(barLabels.length && barLabels.every(row => row.separated && row.centered && row.contained),
+    `play counts sit left of values on the same bar-centered line at laptop size with enlarged text: ${JSON.stringify(barLabels)}`);
+  const laptopLayout = await js(`(() => {
+    const summary = $('lab-summary').getBoundingClientRect();
+    const chart = $('lab-chart-preview').getBoundingClientRect();
+    return {
+      optionalClosed: !$('lab-data-quality').open && !$('lab-play-selection').open && !$('lab-definitions').open,
+      summary: { top: summary.top, bottom: summary.bottom },
+      chart: { top: chart.top, bottom: chart.bottom },
+      viewport: innerHeight,
+    };
+  })()`);
+  assert.ok(laptopLayout.optionalClosed && laptopLayout.summary.top >= 0 &&
+    laptopLayout.summary.bottom < laptopLayout.viewport && laptopLayout.chart.top >= 0 &&
+    laptopLayout.chart.bottom <= laptopLayout.viewport,
+  `summary and a useful chart fit above the fold at 1100x800 with optional sections collapsed: ${JSON.stringify(laptopLayout)}`);
   fixtureSize = 240;
   await js(`$('clear-filters').click(); $('lab-reload').click()`);
-  await waitUntil(`$('lab-summary').textContent.includes('240BAL defense scored snaps') && !$('lab-content').hidden`);
+  await waitUntil(`$('lab-summary').textContent.includes('240Scored snapsBAL defense') && !$('lab-content').hidden`);
   assert.equal(await js(`$('lab-selection-plays').children.length`), 200);
   assert.equal(await js(`$('lab-selection-more').hidden`), false);
   await js(`$('lab-select-filtered').click();
     $('lab-selection-mode').value = 'include'; $('lab-selection-mode').dispatchEvent(new Event('change'));`);
-  assert.match(await js(`$('lab-summary').textContent`), /240BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /240Scored snapsBAL defense/);
   await js(`$('lab-selection-more').click()`);
   assert.equal(await js(`$('lab-selection-plays').children.length`), 240);
   await js(`document.querySelector('#lab-selection-plays [data-selection="230"]').click()`);
-  assert.match(await js(`$('lab-summary').textContent`), /239BAL defense scored snaps/);
+  assert.match(await js(`$('lab-summary').textContent`), /239Scored snapsBAL defense/);
   await js(`$('lab-scope').value = 'range'; $('lab-scope').dispatchEvent(new Event('change'))`);
-  await waitUntil(`$('lab-summary').textContent.includes('480BAL defense scored snaps') && !$('lab-content').hidden`);
+  await waitUntil(`$('lab-summary').textContent.includes('480Scored snapsBAL defense') && !$('lab-content').hidden`);
   assert.equal(await js(`$('lab-selection-mode').value`), 'all');
-  assert.match(await js(`$('lab-selection-count').textContent`), /0 selected/);
+  assert.match(await js(`$('lab-selection-count').textContent`), /All filtered plays included/);
   console.log('ANALYSIS WORKFLOWS PASSED (NO FILM ACCESS)');
   app.exit(0);
 }

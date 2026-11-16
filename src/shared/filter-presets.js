@@ -9,7 +9,7 @@
     'backfield', 'box', 'rushers', 'blitzers', 'motion', 'playAction', 'rpo', 'screen', 'noHuddle', 'coverage', 'manZone',
     'blitz', 'pressure', 'boxCategory', 'defPersonnelGroup'];
   const RANGES = ['airMin', 'airMax', 'yardsMin', 'yardsMax', 'distMin', 'distMax'];
-  const RESULTS = ['', 'key', 'negative', 'sack', 'turnover', 'score', 'big', 'firstdown', 'penalty'];
+  const RESULTS = ['', 'key', 'negative', 'sack', 'incomplete', 'turnover', 'score', 'big', 'firstdown', 'penalty'];
 
   function emptyFilter() {
     return {

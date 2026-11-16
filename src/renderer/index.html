@@ -22,13 +22,27 @@
     <select id="sel-week" title="Game"></select>
     <span class="spacer"></span>
     <span id="status" class="muted"></span>
+    <button id="btn-library" title="Browse games with film">Game library</button>
+    <button id="btn-command" aria-label="Search games and actions" title="Search games and actions (⌘K)">Search</button>
     <button id="btn-update" class="primary" hidden>Update available</button>
-    <button id="btn-share" disabled title="Export selected plays as a video clip">Share</button>
-    <button id="btn-export-data" disabled title="Export play statistics and participation without film">Export data</button>
-    <button id="btn-refresh" title="Re-download schedule and play-by-play">⟳</button>
-    <button id="btn-settings" title="Settings">⚙</button>
-    <button id="btn-help" data-shortcut="help" title="Keyboard shortcuts">?</button>
+    <button id="btn-share" disabled title="Select a play with linked film to export a clip">Export clip</button>
+    <button id="btn-export-data" disabled title="Export play statistics and participation without film">Export stats</button>
+    <button id="btn-refresh" title="Re-download the schedule and selected game's play-by-play">Refresh data</button>
+    <button id="btn-settings" aria-label="Settings" title="Settings">⚙</button>
+    <button id="btn-help" data-shortcut="help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button>
+    <div id="lab-selection-controls" hidden>
+      <label for="lab-selection-mode">Plays to analyze
+        <select id="lab-selection-mode" aria-describedby="lab-selection-count">
+          <option value="all">All filtered plays</option>
+          <option value="include">Only selected plays</option>
+          <option value="exclude">Exclude selected plays</option>
+        </select>
+      </label>
+      <span id="lab-selection-count" class="muted small" role="status" aria-live="polite">All filtered plays included</span>
+      <button id="lab-clear-selection" disabled>Clear play selection</button>
+    </div>
   </header>
+  <div id="app-toast" role="alert" hidden></div>
 
   <main>
     <aside id="sidebar">
@@ -57,14 +71,17 @@
             <option value="key">Key plays</option>
             <option value="negative">Negative plays</option>
             <option value="sack">Sacks</option>
+            <option value="incomplete">Incompletions</option>
             <option value="turnover">Turnovers</option>
             <option value="score">Scores</option>
             <option value="big">Big plays</option>
             <option value="firstdown">First downs</option>
             <option value="penalty">Penalties</option>
+            <option value="bookmark">Bookmarks</option>
           </select>
         </div>
         <small class="muted">Counts show matching plays with other filters applied.</small>
+        <div id="active-filter-chips" class="active-filter-chips" aria-label="Active filters"></div>
         <details class="advanced-filters">
           <summary>More filters <span id="adv-filter-active" class="muted" hidden></span></summary>
           <div class="filter-presets">
@@ -87,31 +104,73 @@
             </div>
             <p id="filter-data-warning" class="small" role="status" aria-live="polite" hidden></p>
           </div>
-          <div class="row range-bounds">
-            <label>Yards gained &ge;
-              <input id="yards-min" type="number" step="1" placeholder="No minimum" title="Minimum yards gained on runs and passes, inclusive; negative values allowed" />
-            </label>
-            <label>Yards gained &le;
-              <input id="yards-max" type="number" step="1" placeholder="No maximum" title="Maximum yards gained on runs and passes, inclusive; negative values allowed" />
-            </label>
+          <div id="adv-choices" class="filter-sections">
+            <details id="filter-situation" class="filter-group" data-filter-group="situation">
+              <summary>Play situation</summary>
+              <div class="row range-bounds">
+                <label>Yards to go &ge;
+                  <input id="dist-min" type="number" min="0" step="1" placeholder="No minimum" title="Minimum distance to a first down, inclusive" />
+                </label>
+                <label>Yards to go &le;
+                  <input id="dist-max" type="number" min="0" step="1" placeholder="No maximum" title="Maximum distance to a first down, inclusive" />
+                </label>
+              </div>
+              <div id="adv-situation" class="adv-choices"></div>
+            </details>
+            <details id="filter-result" class="filter-group" data-filter-group="result">
+              <summary>Play result</summary>
+              <label class="result-filter-choice" for="adv-result-filter">Result
+                <select id="adv-result-filter" data-result-filter aria-label="Filter by play result">
+                  <option value="">All results</option>
+                  <option value="key">Key plays</option>
+                  <option value="negative">Negative plays</option>
+                  <option value="sack">Sacks</option>
+                  <option value="incomplete">Incompletions</option>
+                  <option value="turnover">Turnovers</option>
+                  <option value="score">Scores</option>
+                  <option value="big">Big plays</option>
+                  <option value="firstdown">First downs</option>
+                  <option value="penalty">Penalties</option>
+                  <option value="bookmark">Bookmarks</option>
+                </select>
+              </label>
+              <div class="row range-bounds">
+                <label>Yards gained &ge;
+                  <input id="yards-min" type="number" step="1" placeholder="No minimum" title="Minimum yards gained on runs and passes, inclusive; negative values allowed" />
+                </label>
+                <label>Yards gained &le;
+                  <input id="yards-max" type="number" step="1" placeholder="No maximum" title="Maximum yards gained on runs and passes, inclusive; negative values allowed" />
+                </label>
+              </div>
+            </details>
+            <details id="filter-presnap" class="filter-group" data-filter-group="presnap">
+              <summary>Pre-snap</summary>
+              <div id="adv-presnap" class="adv-choices"></div>
+            </details>
+            <details id="filter-passing" class="filter-group" data-filter-group="passing">
+              <summary>Passing</summary>
+              <div id="adv-passing" class="adv-choices"></div>
+            </details>
+            <details id="filter-receiving" class="filter-group" data-filter-group="receiving">
+              <summary>Receiving</summary>
+              <div class="row range-bounds air-yard-bounds">
+                <label>Air yards &ge;
+                  <input id="air-yards-min" type="number" step="any" placeholder="No minimum" title="Minimum air yards, inclusive; negative values allowed" />
+                </label>
+                <label>Air yards &le;
+                  <input id="air-yards-max" type="number" step="any" placeholder="No maximum" title="Maximum air yards, inclusive; negative values allowed" />
+                </label>
+              </div>
+            </details>
+            <details id="filter-defense" class="filter-group" data-filter-group="defense">
+              <summary>Defense</summary>
+              <div id="adv-defense" class="adv-choices"></div>
+            </details>
+            <details id="filter-players" class="filter-group" data-filter-group="players">
+              <summary>Players</summary>
+              <div id="adv-players" class="adv-choices"></div>
+            </details>
           </div>
-          <div class="row range-bounds air-yard-bounds">
-            <label>Air yards &ge;
-              <input id="air-yards-min" type="number" step="any" placeholder="No minimum" title="Minimum air yards, inclusive; negative values allowed" />
-            </label>
-            <label>Air yards &le;
-              <input id="air-yards-max" type="number" step="any" placeholder="No maximum" title="Maximum air yards, inclusive; negative values allowed" />
-            </label>
-          </div>
-          <div class="row range-bounds">
-            <label>Yards to go &ge;
-              <input id="dist-min" type="number" min="0" step="1" placeholder="No minimum" title="Minimum distance to a first down, inclusive" />
-            </label>
-            <label>Yards to go &le;
-              <input id="dist-max" type="number" min="0" step="1" placeholder="No maximum" title="Maximum distance to a first down, inclusive" />
-            </label>
-          </div>
-          <div id="adv-choices" class="adv-choices"></div>
           <p id="adv-note" class="muted small" hidden>No personnel or charting data for this game yet. Charting (motion, play action, box, blitzers…) covers 2022 onward and updates during the season; personnel, coverage, and players on the field cover 2016 onward and arrive after each season ends.</p>
         </details>
         <div class="filter-footer">
@@ -126,20 +185,21 @@
           <button id="btn-multi-select" aria-pressed="false" title="Toggle multi-select, or Shift-click a play to select a range">Multi-select</button>
         </div>
       </div>
-      <div id="participation-status" hidden role="status" aria-live="polite" aria-atomic="true">
-        <strong id="participation-summary"></strong>
+      <details id="participation-status" hidden>
+        <summary id="participation-summary" role="status" aria-live="polite"></summary>
         <span id="participation-notice"></span>
-      </div>
+      </details>
       <div id="selection-bar" class="row" hidden>
         <span id="selection-count" class="muted" hidden>0 selected</span>
         <span class="spacer"></span>
         <button id="btn-clear-selection" hidden disabled>Clear selection</button>
       </div>
-      <p id="analysis-sidebar-note" class="muted small" hidden>This list shows the selected game's scored snaps for the chosen analysis side and scope. Filters apply here too. Use the analysis play picker or table evidence for plays across a range.</p>
-      <ol id="play-list"></ol>
+      <p id="analysis-sidebar-note" class="muted small" hidden>Selected-game snaps for this side. Use Play evidence or Select plays for analysis for the full scope.</p>
+      <ol id="play-list" role="listbox" aria-label="Plays" tabindex="0"></ol>
       <div id="list-footer" class="muted"></div>
     </aside>
 
+    <div id="sidebar-resizer" role="separator" aria-label="Resize play list" aria-orientation="vertical" aria-valuemin="300" aria-valuemax="560" tabindex="0"></div>
     <section id="viewer">
       <div id="videos">
         <figure class="angle" id="figA">
@@ -173,6 +233,12 @@
               <button id="btn-defense-film" hidden>Choose defense…</button>
               <button id="btn-special-film" hidden>Choose special teams…</button>
             </div>
+            <div class="row film-folder-row">
+              <span class="muted">Film folder</span>
+              <button id="film-folder-choose">Choose folder…</button>
+              <button id="film-folder-clear" hidden>Clear</button>
+            </div>
+            <div id="film-suggestions" hidden aria-live="polite"></div>
             <p id="film-name" class="muted"></p>
             <button id="btn-analyze" hidden>Analyze film</button>
             <div id="progress" hidden>
@@ -188,13 +254,13 @@
         <button id="return-angle">Return angle</button>
       </div>
 
-      <div id="timeline">
+      <div id="timeline" hidden>
         <span id="time-label" class="mono">0:00.00</span>
         <input id="scrub" type="range" min="0" max="1000" value="0" step="1" />
         <span id="frame-label" class="mono"></span>
       </div>
 
-      <div id="transport">
+      <div id="transport" hidden>
         <button data-action="prevPlay" title="Previous play">⏮</button>
         <button data-action="jumpBack" title="Back {N} frames">⏪</button>
         <button data-action="frameBack" title="Back 1 frame">◀︎|</button>
@@ -212,23 +278,35 @@
         <button data-action="nudgeForward" title="End zone 1 frame later">+1f</button>
       </div>
 
-      <div id="play-info">
+      <div id="play-info" hidden>
         <div id="play-head"></div>
         <div id="play-desc"></div>
+        <div class="row play-actions">
+          <button id="play-bookmark" aria-pressed="false" title="Bookmark this play">☆ Bookmark</button>
+          <button id="play-note">Add note</button>
+          <label>Playlist <select id="play-playlist"><option value="">No playlist</option></select></label>
+          <button id="play-playlist-manage">New playlist</button>
+          <button id="play-export-playlist">Export playlist</button>
+        </div>
         <div id="play-adv"></div>
         <details id="on-field" hidden>
           <summary>Players on the field</summary>
           <div id="on-field-lists"></div>
         </details>
-        <div id="fix-bar">
-          <span id="clip-label" class="muted"></span>
-          <button data-action="prevClip" title="Previous clip pair in the film">◀ clip</button>
-          <button data-action="nextClip" title="Next clip pair in the film">clip ▶</button>
-          <button data-action="linkClip" title="Link: this clip shows the selected play. Following plays re-align automatically.">Link clip ↔ play</button>
-          <button data-action="markNoFilm" title="Selected play has no film">No film</button>
-          <button data-action="clearFix" title="Remove correction from selected play">Clear fix</button>
-          <button id="btn-reset-fixes" title="Remove all corrections for this game">Reset all fixes</button>
-        </div>
+        <details id="alignment-tools">
+          <summary>Fix alignment <span id="alignment-summary" class="muted"></span></summary>
+          <div id="alignment-timeline" role="group" aria-label="Corrected play-to-film links"></div>
+          <div id="fix-bar">
+            <span id="clip-label" class="muted"></span>
+            <button data-action="prevClip" title="Previous clip pair in the film">◀ clip</button>
+            <button data-action="nextClip" title="Next clip pair in the film">clip ▶</button>
+            <button data-action="linkClip" title="Link: this clip shows the selected play. Following plays re-align automatically.">Link clip ↔ play</button>
+            <button data-action="markNoFilm" title="Selected play has no film">No film</button>
+            <button data-action="clearFix" title="Remove correction from selected play">Clear fix</button>
+            <button id="btn-reset-fixes" title="Remove all corrections for this game">Reset all fixes</button>
+          </div>
+          <p class="muted small">Choose a play, browse clips, then link the shown clip. Later plays realign around the correction.</p>
+        </details>
       </div>
     </section>
     <section id="analysis-lab" hidden aria-label="Analysis Lab"></section>
@@ -236,7 +314,11 @@
 
   <div id="share" class="overlay" hidden>
     <div class="panel" role="dialog" aria-modal="true" aria-labelledby="share-title">
-      <h2 id="share-title">Create cut up</h2>
+      <h2 id="share-title">Export clip</h2>
+      <div class="export-modes" role="group" aria-label="Export setup">
+        <button id="export-quick-mode" aria-pressed="true">Quick export</button>
+        <button id="export-customize-mode" aria-pressed="false">Customize</button>
+      </div>
       <p id="share-summary"></p>
       <label for="share-angle">Camera angle</label>
       <select id="share-angle">
@@ -246,6 +328,16 @@
         <option value="sideline-first">All sideline, then all end zone · landscape</option>
         <option value="endzone-first">All end zone, then all sideline · landscape</option>
       </select>
+      <div id="export-preset-row" class="row">
+        <label for="export-preset">Export preset</label>
+        <select id="export-preset">
+          <option value="custom">Custom</option>
+          <option value="social">Social vertical</option>
+          <option value="coach">Coach cut-up</option>
+          <option value="review">Review packet</option>
+        </select>
+      </div>
+      <div id="share-advanced" hidden>
       <label for="share-preview-play">Play to edit</label>
       <select id="share-preview-play"></select>
       <div class="cutup-workspace">
@@ -394,6 +486,7 @@
           </details>
         </div>
       </div>
+      </div>
       <p id="share-status" role="status" aria-live="polite"></p>
       <progress id="share-progress" max="1" value="0" hidden></progress>
       <div class="actions">
@@ -429,23 +522,37 @@
   <div id="settings" class="overlay" hidden>
     <div class="panel wide">
       <h2>Settings</h2>
+      <nav id="settings-nav" class="settings-nav" aria-label="Settings sections">
+        <button type="button" data-settings-target="settings-basics">General</button>
+        <button type="button" data-settings-target="settings-film-data">Film &amp; data</button>
+        <button type="button" data-settings-target="settings-export">Export</button>
+        <button type="button" data-settings-target="settings-analysis">Analysis</button>
+        <button type="button" data-settings-target="settings-shortcuts">Shortcuts</button>
+      </nav>
       <div class="row">
         <span id="app-version" class="muted"></span>
         <button id="check-updates">Check for updates…</button>
       </div>
+
       <p id="update-status" class="muted" role="status" aria-live="polite"></p>
       <details class="lab-methods">
         <summary>External services</summary>
-        <p>Optional integrations are configured separately and do not affect Film Room or local analysis.</p>
+        <p>Optional integrations save independently so your API credentials never enter the general settings draft.</p>
         <button id="configure-cloud-ai">Configure cloud questions…</button>
       </details>
-      <div class="grid">
+      <div id="settings-basics" class="grid settings-anchor">
         <label>Jump size (frames) <input id="set-jump" type="number" min="1" max="600" /></label>
         <label>At end of play
           <select id="set-end"><option value="stop">Stop</option><option value="advance">Auto-advance to next play</option><option value="loop">Loop</option></select>
         </label>
         <label>Slow-motion speeds <input id="set-speeds" type="text" placeholder="1, 0.5, 0.25" /></label>
         <label>Default team <select id="set-team"></select></label>
+        <label>Appearance
+          <select id="set-ui-theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">Match system</option></select>
+        </label>
+        <label>Text size
+          <select id="set-text-scale"><option value="0.9">Compact</option><option value="1">Default</option><option value="1.1">Large</option><option value="1.25">Extra large</option></select>
+        </label>
         <label id="player-filter-preference" class="span2">On-field player dropdown order
           <select id="set-player-sort">
             <option value="name">Alphabetical</option>
@@ -454,7 +561,7 @@
           </select>
           <small class="muted">The team being analyzed is always listed first. Play counts follow the active filters and selected players.</small>
         </label>
-        <label class="span2">Film folder (used to auto-find A22 files)
+        <label id="settings-film-data" class="span2 settings-anchor">Film folder (used to auto-find A22 files)
           <span class="row"><input id="set-root" type="text" readonly /><button id="set-root-btn">Choose…</button><button id="set-root-clear">Clear</button></span>
         </label>
         <label class="span2">Participation CSV folder (automatically imports nflpro-*.csv)
@@ -462,9 +569,16 @@
         </label>
         <label><input id="set-auto" type="checkbox" /> Analyze film automatically when opened</label>
         <label><input id="set-skipnofilm" type="checkbox" /> Next/previous play skips plays without film</label>
-        <label>Cut sensitivity (scene score threshold) <input id="set-cut" type="number" min="0.03" max="0.5" step="0.01" /></label>
+        <label id="settings-analysis" class="settings-anchor">Play-cut detection
+          <select id="set-cut-preset"><option value="auto">Automatic — match the play-by-play (recommended)</option><option value="0.1">Standard</option><option value="0.06">More sensitive</option><option value="custom">Custom</option></select>
+          <input id="set-cut" type="number" min="0.03" max="0.5" step="0.01" aria-label="Custom scene score threshold" hidden />
+          <small id="set-cut-hint" class="muted"></small>
+        </label>
+        <label>Play list width
+          <input id="set-sidebar-width" type="range" min="300" max="560" step="10" />
+        </label>
       </div>
-      <h3>Clip export defaults</h3>
+      <h3 id="settings-export" class="settings-anchor">Clip export defaults</h3>
       <div class="grid">
         <label>Trim from each clip start (seconds)
           <input id="set-export-trim" type="number" min="0" step="any" required />
@@ -473,7 +587,7 @@
           <input id="set-overlay-seconds" type="number" min="0" step="any" required />
         </label>
       </div>
-      <h3>Play breakdown defaults</h3>
+      <h3 class="settings-anchor">Play breakdown defaults</h3>
       <div class="grid">
         <label>Default format
           <select id="set-report-format">
@@ -483,8 +597,16 @@
         </label>
         <label><input id="set-report-advanced" type="checkbox" /> Include advanced statistics by default</label>
       </div>
-      <p class="muted small">Choose the advanced fields to include when enabled. Unavailable values stay blank in CSV and are marked in text/PDF.</p>
-      <div id="set-report-fields" class="grid"></div>
+      <label>Advanced field preset
+        <select id="set-report-preset"><option value="basic">Basic</option><option value="coach">Coach</option><option value="everything">Everything</option><option value="custom">Custom</option></select>
+      </label>
+      <details>
+        <summary>Customize advanced fields</summary>
+        <p class="muted small">Unavailable values stay blank in CSV and are marked in text/PDF.</p>
+        <div id="set-report-fields" class="grid"></div>
+      </details>
+      <details id="settings-advanced" class="settings-advanced">
+      <summary>Advanced key-play definitions</summary>
       <h3>Key plays</h3>
       <div class="grid">
         <label><input id="kp-turnovers" type="checkbox" /> Turnovers (INT, fumble lost, on downs)</label>
@@ -495,8 +617,9 @@
         <label><input id="kp-fourth" type="checkbox" /> 4th-down conversions</label>
         <label>Negative play: loss of ≥ yards (0 = sacks only) <input id="kp-loss" type="number" min="0" max="30" /></label>
       </div>
-      <h3>Shortcuts <span class="muted small">click a key to replace it, × to remove, + to add</span></h3>
+      <h3 id="settings-shortcuts" class="settings-anchor">Shortcuts <span class="muted small">click a key to replace it, × to remove, + to add</span></h3>
       <table id="shortcut-table"></table>
+      </details>
       <div class="actions">
         <button id="set-reset">Restore defaults</button>
         <span class="spacer"></span>
@@ -504,6 +627,58 @@
         <button id="set-save" class="primary">Save</button>
       </div>
     </div>
+  </div>
+
+  <div id="first-run" class="overlay" hidden>
+    <section class="panel" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
+      <h2 id="first-run-title">Welcome to AMP22</h2>
+      <p>Get from game data to your first play in four steps. You can still browse stats without film.</p>
+      <ol class="onboarding-steps">
+        <li><strong>Choose your team and game</strong><span>Use the selectors at the top.</span></li>
+        <li><strong>Choose a film folder or file</strong><span>AMP22 never copies or changes your original video.</span></li>
+        <li><strong>Analyze once</strong><span>A full game can take about 3–5 minutes; you can use Analysis Lab while it runs.</span></li>
+        <li><strong>Click a play</strong><span>Use the arrows or keyboard to move play by play.</span></li>
+      </ol>
+      <div class="actions"><button id="first-run-dismiss" class="primary">Get started</button><button id="first-run-skip">Don't show again</button></div>
+    </section>
+  </div>
+
+  <div id="command-palette" class="overlay" hidden>
+    <section class="panel command-panel" role="dialog" aria-modal="true" aria-labelledby="command-title">
+      <h2 id="command-title">Go to a game or action</h2>
+      <input id="command-search" type="search" placeholder="Search games, settings, exports…" autocomplete="off" />
+      <ol id="command-results" role="listbox"></ol>
+      <p class="muted small">↑ ↓ to choose · Enter to open · Esc to close · ⌘K to open</p>
+    </section>
+  </div>
+
+  <div id="game-library" class="overlay" hidden>
+    <section class="panel wide" role="dialog" aria-modal="true" aria-labelledby="library-title">
+      <div class="row"><h2 id="library-title">Game library</h2><span class="spacer"></span><button id="library-close">Close</button></div>
+      <p class="muted">Games with saved film appear first. Film in your configured folder is suggested automatically.</p>
+      <div class="row"><button id="library-analyze-new">Analyze saved film not yet analyzed</button><span id="library-status" class="muted" role="status"></span></div>
+      <div id="library-games"></div>
+    </section>
+  </div>
+
+  <div id="film-coverage-dialog" class="overlay" hidden>
+    <section class="panel" role="dialog" aria-modal="true" aria-labelledby="film-coverage-title" aria-describedby="film-coverage-summary">
+      <h2 id="film-coverage-title">Some plays have no film</h2>
+      <p id="film-coverage-summary"></p>
+      <p id="film-coverage-detail" class="muted"></p>
+      <div class="actions"><span class="spacer"></span><button id="film-coverage-dismiss">Not now</button><button id="film-coverage-review">Review unmatched plays</button><button id="film-coverage-reanalyze" class="primary">Re-analyze automatically</button></div>
+    </section>
+  </div>
+
+  <div id="play-note-dialog" class="overlay" hidden>
+    <section class="panel" role="dialog" aria-modal="true" aria-labelledby="play-note-title">
+      <h2 id="play-note-title">Play note</h2>
+      <label for="play-note-text">Private note for this game and play</label>
+      <textarea id="play-note-text" maxlength="1000" rows="5"></textarea>
+      <label for="play-note-tags">Tags (comma-separated)</label>
+      <input id="play-note-tags" maxlength="200" placeholder="red zone, blitz pickup" />
+      <div class="actions"><span id="play-note-status" class="muted" role="status"></span><span class="spacer"></span><button id="play-note-cancel">Cancel</button><button id="play-note-save" class="primary">Save note</button></div>
+    </section>
   </div>
 
   <dialog id="cloud-ai-settings" class="panel" aria-labelledby="cloud-ai-title">

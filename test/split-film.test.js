@@ -138,11 +138,11 @@ test('clip browsing stays in the selected unit and a missing special-teams file 
   assert.equal(r.S.curPair, -1);
   assert.equal(r.S.range, null);
   assert.equal(r.navClip(1, false), false);
-  assert.match(r.element('message').innerHTML, /special-teams file/);
+  assert.match(r.element('film-setup-message').innerHTML, /special-teams file/);
   r.S.curPair = 0;
   await r.setAnchor(r.S.plays[4], r.pairKey(r.S.pairs[0]));
   assert.equal(r.corrections().anchors, undefined);
-  assert.match(r.element('status').textContent, /offense, defense, or special-teams file/);
+  assert.match(r.element('app-toast').textContent, /offense, defense, or special-teams file/);
 });
 
 test('selecting a missing split source opens viewer film setup without losing loaded sources', async () => {
@@ -386,7 +386,7 @@ test('source-open failures are reported without assigning the other unit to miss
     return open(file);
   };
   await r.openSplitFilms();
-  assert.match(r.element('status').textContent, /offense: Film was moved/);
+  assert.match(r.element('app-toast').textContent, /offense: Film was moved/);
   assert.deepEqual(Array.from(r.S.mapping), [null, 0, null, 1, null]);
 });
 
