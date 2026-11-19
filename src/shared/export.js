@@ -40,6 +40,17 @@
     return { ...range, aStart: range.aStart + seconds, bStart: range.bStart + seconds, len: range.len - seconds - endSeconds };
   }
 
+  function durationHistory(values) {
+    return (Array.isArray(values) ? values : []).filter(value => Number.isFinite(value) && value > 0).slice(-30);
+  }
+
+  function suggestedDuration(values) {
+    const sorted = durationHistory(values).sort((a, b) => a - b);
+    if (sorted.length < 3) return null;
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
   function exportSequence(clips, mode) {
     if (!MODES.includes(mode)) throw new Error('Choose a valid export angle');
     const angles = mode === 'sideline-first' ? ['sideline', 'endzone']
@@ -101,5 +112,5 @@
     return mode === 'both' ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
   }
 
-  return { START_PAD, END_TRIM_FRAMES, MODES, OVERLAY_PRESETS, overlayPosition, overlayBounds, clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions };
+  return { START_PAD, END_TRIM_FRAMES, MODES, OVERLAY_PRESETS, overlayPosition, overlayBounds, clipRange, trimRange, durationHistory, suggestedDuration, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions };
 });

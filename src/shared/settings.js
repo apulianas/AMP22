@@ -47,6 +47,10 @@
     cutThreshold: 0.1,
     skipNoFilm: true,
     exportTrim: 0,
+    exportLearnDuration: true,
+    exportDurations: [],
+    snapLearning: true,
+    snapSamples: [],
     overlaySeconds: 3,
     overlayPosition: { preset: 'original' },
     overlayLocations: [],
@@ -73,6 +77,10 @@
     out.keyPlays = Object.assign({}, DEFAULT_SETTINGS.keyPlays, s.keyPlays || {});
     out.playReport = reports.mergeOptions(s.playReport);
     out.filterPresets = filterPresets.savedPresets(s.filterPresets);
+    out.exportDurations = clipExport.durationHistory(s.exportDurations);
+    out.exportLearnDuration = typeof s.exportLearnDuration === 'boolean' ? s.exportLearnDuration : true;
+    out.snapSamples = tracking.snapSamples(s.snapSamples);
+    out.snapLearning = typeof s.snapLearning === 'boolean' ? s.snapLearning : true;
     out.highlightDefaults = tracking.defaults(s.highlightDefaults || {});
     try { out.overlayTheme = s.overlayTheme == null ? null : overlay.theme(s.overlayTheme); }
     catch { out.overlayTheme = null; }

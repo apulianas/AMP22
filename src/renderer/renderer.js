@@ -42,6 +42,7 @@ const S = {
   curPlay: -1,
   curPair: -1,
   range: null, // {aStart, bStart, len}
+  filmSnap: null,
   playing: false,
   speedIdx: 0,
   filter: PRESETS.emptyFilter(),
@@ -375,6 +376,7 @@ function applySettings(s) {
     renderList();
     renderInfo();
   }
+  highlightEditor?.refresh();
 }
 
 /* ---------------- schedule / selection ---------------- */
@@ -631,6 +633,11 @@ function renderFilmSetup() {
   $('film-setup-close').hidden = !ready || !!S.analyzing;
   $('timeline').hidden = !ready;
   $('transport').hidden = !ready;
+  if (!ready) {
+    S.filmSnap = null;
+    $('film-snap-tools').hidden = true;
+    $('film-snap-marker').hidden = true;
+  }
   $('alignment-tools').hidden = !ready;
   $('film-folder-clear').hidden = !S.settings?.filmRoot;
   $('film-folder-choose').textContent = S.settings?.filmRoot ? 'Change folder…' : 'Choose folder…';
@@ -1504,6 +1511,120 @@ function renderInfo() {
   const linked = p && S.mapping[S.curPlay] === S.curPair;
   $('clip-label').textContent = pairInfo + (p && S.curPair >= 0 && !linked ? '  (browsing — not linked to this play)' : '');
   updateOffsetLabel();
+  renderFilmSnap();
+}
+
+function filmClipKey(pair, film, play) {
+  return JSON.stringify([S.sel.team, play.playId, film.path, film.size, film.mtimeMs,
+    pair.sideline.start, pair.sideline.end, pair.endzone.start, pair.endzone.end]);
+}
+
+function currentSnapClip() {
+  const pair = S.pairs[S.curPair], play = S.plays[S.curPlay];
+  if (!S.range || !pair || !play || !S.sel.gameId || S.mapping[S.curPlay] !== S.curPair) return null;
+  const film = pair.film || S.film;
+  if (!film) return null;
+  const highlightKey = filmClipKey(pair, film, play);
+  return { ...S.range, highlightKey, gameId: S.sel.gameId, play, trim: 0, trimEnd: 0,
+    snapMark: S.gameData.snapMarks?.[highlightKey] || null };
+}
+
+function clipSnap(clip) {
+  if (Number.isFinite(clip.snapMark?.time) && clip.snapMark.time >= 0 && clip.snapMark.time < clip.len) {
+    return { time: clip.snapMark.time, confirmed: true };
+  }
+  if (S.settings.snapLearning === false) return null;
+  return A22.tracking.expectedSnap(S.settings.snapSamples, { ...clip, type: clip.play?.playType || '' });
+}
+
+let snapSaving = false;
+
+function renderFilmSnap() {
+  const clip = currentSnapClip();
+  S.filmSnap = clip ? clipSnap(clip) : null;
+  $('film-snap-tools').hidden = !clip;
+  const marker = $('film-snap-marker');
+  marker.hidden = !S.filmSnap;
+  if (!clip) return;
+  $('film-mark-snap').disabled = snapSaving || S.exporting;
+  $('film-clear-snap').disabled = snapSaving || S.exporting || !S.filmSnap?.confirmed;
+  $('film-go-snap').disabled = !S.filmSnap;
+  $('film-snap-status').textContent = S.filmSnap || S.settings.snapLearning !== false
+    ? A22.tracking.snapLabel(S.filmSnap) : 'Snap learning is off. You can still mark this play.';
+  if (S.filmSnap) {
+    marker.style.setProperty('--snap-position', S.filmSnap.time / clip.len);
+    marker.classList.toggle('confirmed', S.filmSnap.confirmed);
+  }
+}
+
+function snapSample(clip, trimmed = false) {
+  const time = clip.snapMark.time;
+  return { id: JSON.stringify([clip.gameId, String(clip.play.playId)]), offset: time,
+    leadIn: trimmed && clip.trim > 0 && time >= clip.trim && time < clip.len - (clip.trimEnd ?? 0) ? time - clip.trim : null,
+    type: clip.play?.playType || '' };
+}
+
+async function saveClipSnap(clip, time) {
+  if (snapSaving || S.exporting) throw new Error('Wait for the current snap save or export to finish.');
+  if (!clip.gameId || !clip.highlightKey || clip.play?.playId == null || !Number.isFinite(clip.len) || clip.len <= 0 ||
+      time !== null && (!Number.isFinite(time) || time < 0 || time >= clip.len)) {
+    throw new Error('The snap must be inside this original clip.');
+  }
+  snapSaving = true;
+  renderFilmSnap();
+  updateExportOptions();
+  try {
+    const saved = await window.api.getGame(clip.gameId);
+    const marks = { ...saved.snapMarks };
+    if (time === null) delete marks[clip.highlightKey];
+    else marks[clip.highlightKey] = { time };
+    const data = await window.api.saveGame(clip.gameId, { snapMarks: marks });
+    clip.snapMark = time === null ? null : { time };
+    if (S.sel.gameId === clip.gameId) S.gameData = data;
+    for (const draft of S.exportDraft?.clips || []) {
+      if (draft.gameId === clip.gameId && draft.highlightKey === clip.highlightKey) {
+        draft.snapMark = clip.snapMark;
+        draft.snapTrimRecorded = false;
+        for (const [camera, value] of Object.entries(draft.highlights || {})) {
+          value.snap = time === null ? null : (camera === 'sideline' ? draft.aStart : draft.bStart) + time;
+        }
+      }
+    }
+    let warning = '';
+    try {
+      const sampleId = JSON.stringify([clip.gameId, String(clip.play.playId)]);
+      const samples = time === null ? (S.settings.snapSamples || []).filter(sample => sample.id !== sampleId)
+        : S.settings.snapLearning === false ? S.settings.snapSamples
+          : A22.tracking.recordSnap(S.settings.snapSamples, snapSample(clip));
+      if (time === null || S.settings.snapLearning !== false) {
+        S.settings = mergeSettings(await window.api.saveSettings({ ...S.settings, snapSamples: samples }));
+      }
+    } catch (error) {
+      warning = `Snap ${time === null ? 'cleared' : 'saved'}, but local learning could not be saved: ${error.message}`;
+    }
+    return { warning };
+  } finally {
+    snapSaving = false;
+    renderFilmSnap();
+    updateExportOptions();
+    highlightEditor?.refresh();
+  }
+}
+
+async function markFilmSnap(clear = false) {
+  const clip = currentSnapClip();
+  if (!clip) return;
+  try {
+    if (!clear) {
+      const video = vidA();
+      if (video.readyState < 2 || video.seeking || video._pending != null) throw new Error('Wait for the selected frame to finish loading before marking the snap.');
+      pause();
+    }
+    const result = await saveClipSnap(clip, clear ? null : currentRel());
+    if (result.warning) setStatus(result.warning, true);
+  } catch (error) {
+    setStatus(`Could not ${clear ? 'clear' : 'mark'} snap: ${error.message}`, true);
+  }
 }
 
 function playAnnotation(play = S.plays[S.curPlay]) {
@@ -2015,12 +2136,12 @@ function openShare() {
       if (pairIdx == null || !S.pairs[pairIdx]) throw new Error(`${P.clockLabel(S.plays[i])} has no linked film. Deselect it or link its film before exporting.`);
       const pair = S.pairs[pairIdx];
       const film = pair.film || S.film;
-      const highlightKey = JSON.stringify([S.sel.team, S.plays[i].playId, film.path, film.size, film.mtimeMs,
-        pair.sideline.start, pair.sideline.end, pair.endzone.start, pair.endzone.end]);
+      const highlightKey = filmClipKey(pair, film, S.plays[i]);
       return {
         ...A22.clipExport.clipRange(pair, film.info.fps || 59.94, offsetFrames(pairIdx)),
         file: film.path, url: film.url, info: film.info, fps: film.info.fps || 59.94,
         play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim, trimEnd: 0, highlightKey, gameId: S.sel.gameId,
+        snapMark: S.gameData.snapMarks?.[highlightKey] || null,
         highlights: structuredClone(S.gameData.playerHighlights?.[highlightKey] || {}),
       };
     });
@@ -2073,7 +2194,7 @@ function applyExportPreset(preset, persist = true) {
 }
 
 function trimmedExportClips() {
-  return S.exportDraft.clips.map(({ trim, trimEnd, ...clip }, i) => {
+  return S.exportDraft.clips.map(({ trim, trimEnd, trimEdited, durationRecorded, snapMark, snapTrimRecorded, ...clip }, i) => {
     try { return A22.clipExport.trimRange(clip, trim, trimEnd); }
     catch (e) { throw new Error(`Play ${i + 1} (${P.clockLabel(clip.play)}): ${e.message}`); }
   });
@@ -2092,7 +2213,7 @@ function updateExportOptions() {
     $('share-status').classList.remove('error');
     const tracking = !!highlightEditor?.busy() && !$('share-clean').checked;
     if (tracking) $('share-status').textContent = 'Player tracking is running in the background. Finish or cancel tracking before exporting highlights, or choose Clean export.';
-    $('share-export').disabled = S.exporting || positionSaving || tracking;
+    $('share-export').disabled = S.exporting || positionSaving || snapSaving || tracking;
   } catch (e) {
     $('share-status').textContent = e.message;
     $('share-status').classList.add('error');
@@ -2361,7 +2482,84 @@ function selectTrimPlay() {
   if (!clip) return;
   $('share-trim').value = clip.trim;
   $('share-trim-end').value = clip.trimEnd ?? 0;
+  renderDurationSuggestion();
   queueTrimPreview();
+}
+
+function renderDurationSuggestion() {
+  const history = S.settings.exportDurations || [];
+  const enabled = S.settings.exportLearnDuration !== false;
+  const duration = enabled ? A22.clipExport.suggestedDuration(history) : null;
+  const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+  const available = !!clip && Number.isFinite(clip.trim) && clip.trim >= 0 && clip.len > clip.trim;
+  $('share-learn-duration').checked = enabled;
+  $('share-learn-duration').disabled = S.exporting || positionSaving;
+  $('share-duration-forget').disabled = !history.length || S.exporting || positionSaving;
+  $('share-duration-apply').disabled = duration === null || !available || S.exporting || positionSaving;
+  $('share-duration-status').textContent = !enabled ? 'Duration learning is off. Saved history is not used.'
+    : duration === null ? `Learning locally: ${history.length}/3 manually trimmed clips exported. Suggestions appear after 3.`
+      : `Suggested: ${duration.toFixed(2)}s per camera, based on the median of your last ${history.length} manually trimmed exports. Apply keeps this start and adjusts the end${available && duration > clip.len - clip.trim ? '; this clip is shorter, so it will use the available film' : ''}. Review before exporting.`;
+}
+
+function applyDurationSuggestion() {
+  if (S.exporting || positionSaving || S.settings.exportLearnDuration === false) return;
+  const duration = A22.clipExport.suggestedDuration(S.settings.exportDurations);
+  const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
+  if (!clip || duration === null) return;
+  try {
+    A22.clipExport.trimRange(clip, clip.trim, 0);
+    clip.trimEnd = Math.max(0, clip.len - clip.trim - duration);
+    clip.trimEdited = false;
+    selectTrimPlay();
+    updateExportOptions();
+  } catch (error) {
+    $('share-duration-status').textContent = `Cannot apply duration: ${error.message}`;
+  }
+}
+
+async function saveDurationPreference(forget = false) {
+  if (S.exporting || positionSaving) return;
+  const enabled = $('share-learn-duration').checked;
+  let failure = '';
+  positionSaving = true;
+  renderDurationSuggestion();
+  updateExportOptions();
+  try {
+    S.settings = mergeSettings(await window.api.saveSettings({
+      ...S.settings,
+      ...(forget ? { exportDurations: [] } : { exportLearnDuration: enabled }),
+    }));
+  } catch (error) {
+    failure = `Could not save duration preference: ${error.message}`;
+  } finally {
+    positionSaving = false;
+    renderDurationSuggestion();
+    if (failure) $('share-duration-status').textContent = failure;
+    updateExportOptions();
+  }
+}
+
+async function learnExportPreferences() {
+  const clips = S.settings.exportLearnDuration === false ? []
+    : S.exportDraft.clips.filter(clip => clip.trimEdited && !clip.durationRecorded);
+  const snapped = S.settings.snapLearning === false ? []
+    : S.exportDraft.clips.filter(clip => clip.trimEdited && !clip.snapTrimRecorded &&
+      Number.isFinite(clip.snapMark?.time) && clip.snapMark.time >= clip.trim && clip.snapMark.time < clip.len - (clip.trimEnd ?? 0));
+  if (!clips.length && !snapped.length) return;
+  const durations = clips.map(clip => A22.clipExport.trimRange(clip, clip.trim, clip.trimEnd).len);
+  try {
+    let samples = S.settings.snapSamples;
+    for (const clip of snapped) samples = A22.tracking.recordSnap(samples, snapSample(clip, true));
+    S.settings = mergeSettings(await window.api.saveSettings({
+      ...S.settings, exportDurations: A22.clipExport.durationHistory([...(S.settings.exportDurations || []), ...durations]),
+      snapSamples: samples,
+    }));
+    clips.forEach(clip => { clip.durationRecorded = true; });
+    snapped.forEach(clip => { clip.snapTrimRecorded = true; });
+  } catch (error) {
+    $('share-status').textContent += ` · Video saved, but local editing learning could not be saved: ${error.message}`;
+    $('share-status').classList.add('error');
+  }
 }
 
 function queueTrimPreview() {
@@ -2389,7 +2587,7 @@ function updateReportOptions() {
 }
 
 async function exportSelection() {
-  if (!S.exportDraft || S.exporting || positionSaving || highlightEditor?.busy() && !$('share-clean').checked) return;
+  if (!S.exportDraft || S.exporting || positionSaving || snapSaving || highlightEditor?.busy() && !$('share-clean').checked) return;
   highlightEditor?.pause();
   S.exporting = true;
   highlightEditor?.refresh();
@@ -2466,12 +2664,15 @@ async function exportSelection() {
         $('share-status').classList.add('error');
       }
       if (warnings.size) $('share-status').textContent += ` · Headshot notices: ${[...warnings].join('; ')}`;
+      await learnExportPreferences();
     }
   } catch (e) {
     $('share-status').textContent = S.exportCancelRequested ? 'Export cancelled.' : `Export failed: ${e.message}`;
     $('share-status').classList.toggle('error', !S.exportCancelRequested);
   } finally {
     S.exporting = false;
+    renderDurationSuggestion();
+    renderFilmSnap();
     highlightEditor?.refresh();
     $('share-angle').disabled = false;
     $('share-clean').disabled = false;
@@ -2680,6 +2881,7 @@ async function nudge(delta) {
   S.range = computeRange(S.curPair);
   if (!S.playing) seekRel(rel);
   updateOffsetLabel();
+  renderFilmSnap();
 }
 
 /* ---------------- actions ---------------- */
@@ -2834,6 +3036,9 @@ function renderSettings() {
   $('set-jump').value = draft.jumpFrames;
   $('set-end').value = draft.endOfPlay;
   $('set-speeds').value = draft.speeds.join(', ');
+  $('set-snap-learning').checked = draft.snapLearning;
+  $('set-snap-forget').disabled = !draft.snapSamples?.length;
+  $('set-snap-history').textContent = `${draft.snapSamples?.length || 0} learned plays. Clearing takes effect when you save Settings; confirmed markers remain.`;
   $('set-player-sort').value = draft.playerFilterSort;
   $('set-ui-theme').value = draft.uiTheme;
   $('set-text-scale').value = String(draft.textScale);
@@ -2883,6 +3088,7 @@ function readSettingsForm() {
   d.jumpFrames = Number($('set-jump').value);
   d.endOfPlay = $('set-end').value;
   d.speeds = $('set-speeds').value.split(/[,\s]+/).map(Number).filter((x) => x > 0 && x <= 4);
+  d.snapLearning = $('set-snap-learning').checked;
   d.defaultTeam = $('set-team').value;
   d.playerFilterSort = $('set-player-sort').value;
   d.uiTheme = $('set-ui-theme').value;
@@ -3040,6 +3246,18 @@ function wire() {
     appearance: currentOverlayAppearance,
     mode: () => $('share-angle').value,
     renderPreview: drawCutupPreview,
+    getSnap: clipSnap,
+    saveSnap: saveClipSnap,
+    snapLearning: () => S.settings.snapLearning,
+    isExporting: () => S.exporting,
+    onTrim: clip => {
+      clip.snapTrimRecorded = false;
+      $('share-trim').value = clip.trim;
+      $('share-trim-end').value = clip.trimEnd ?? 0;
+      positionFrames = null;
+      renderDurationSuggestion();
+      updateExportOptions();
+    },
     openPlayer: () => { $('highlight-section').open = true; },
     themes: () => [
       ...Object.keys(A22.teams.TEAMS).map(id => ({ value: `team-${id}`, label: A22.teams.teamName(id), theme: A22.overlay.teamTheme(id) })),
@@ -3469,10 +3687,16 @@ function wire() {
   $('share-theme-delete').addEventListener('click', () => saveThemePreference('delete'));
   $('share-theme-default').addEventListener('click', () => saveThemePreference('default'));
   $('share-preview-play').addEventListener('change', selectTrimPlay);
+  $('share-duration-apply').addEventListener('click', applyDurationSuggestion);
+  $('share-duration-forget').addEventListener('click', () => saveDurationPreference(true));
+  $('share-learn-duration').addEventListener('change', () => saveDurationPreference());
   for (const [id, field] of [['share-trim', 'trim'], ['share-trim-end', 'trimEnd']]) $(id).addEventListener('input', () => {
     const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
     if (!clip) return;
     clip[field] = $(id).valueAsNumber;
+    clip.trimEdited = true;
+    clip.snapTrimRecorded = false;
+    renderDurationSuggestion();
     updateExportOptions();
     queueTrimPreview();
   });
@@ -3652,6 +3876,13 @@ function wire() {
   });
 
   const scrub = $('scrub');
+  $('film-mark-snap').addEventListener('click', () => markFilmSnap());
+  $('film-clear-snap').addEventListener('click', () => markFilmSnap(true));
+  $('film-go-snap').addEventListener('click', () => {
+    if (!S.filmSnap || !currentSnapClip()) return;
+    pause();
+    seekRel(S.filmSnap.time);
+  });
   scrub.addEventListener('input', () => {
     S.scrubbing = true;
     if (S.playing) pause();
@@ -3746,6 +3977,11 @@ function wire() {
       filterPresets: S.settings.filterPresets,
     })));
     capture = null;
+    renderSettings();
+  });
+  $('set-snap-forget').addEventListener('click', () => {
+    readSettingsForm();
+    draft.snapSamples = [];
     renderSettings();
   });
   $('set-cancel').addEventListener('click', () => {

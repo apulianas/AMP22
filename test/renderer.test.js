@@ -19,13 +19,14 @@ function renderer() {
     setTimeout: () => 1,
     clearTimeout() {},
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    A22: { plays, settings, clipExport, advanced, reports, filterPresets, analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
+    A22: { plays, settings, clipExport, advanced, reports, filterPresets, tracking: require('../src/shared/tracking'), analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
     window: { addEventListener() {}, open: () => null },
     document: {
       querySelectorAll: () => [],
       getElementById(id) {
         if (!elements.has(id)) elements.set(id, {
           innerHTML: '', textContent: '', querySelector: () => null,
+          style: { setProperty(name, value) { this[name] = value; } },
           setAttribute(name, value) { this[name] = value; },
           focus() {},
           classList: { toggle() {}, add() {}, remove() {} },
@@ -40,7 +41,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, filmWeightsFor, filmCoverage, checkFilmCoverage, syncFilterControls, setResultFilter, prepareAnalysisEntry, ADV_CHOICES, choiceOptions };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, filmWeightsFor, filmCoverage, checkFilmCoverage, syncFilterControls, setResultFilter, prepareAnalysisEntry, renderDurationSuggestion, applyDurationSuggestion, saveDurationPreference, exportSelection, currentSnapClip, clipSnap, saveClipSnap, renderFilmSnap, learnExportPreferences, ADV_CHOICES, choiceOptions };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -55,6 +56,220 @@ function renderer() {
   api.derivePlays();
   return { ...api, elements, context, visible: () => Array.from(api.S.visible) };
 }
+
+test('confirmed snaps persist per film/play, replace training examples, survive opt-out, and clear cleanly', async () => {
+  const r = renderer();
+  const el = id => r.context.document.getElementById(id);
+  r.S.settings = settings.mergeSettings({});
+  r.S.sel = { gameId: 'game', team: 'BAL' };
+  r.S.curPlay = r.S.curPair = 0;
+  r.S.mapping[0] = 0;
+  const film = { path: '/split-offense.mp4', size: 100, mtimeMs: 200 };
+  r.S.pairs = [{ film, sideline: { start: 10, end: 22 }, endzone: { start: 40, end: 52 } }];
+  r.S.range = { aStart: 10.008, bStart: 40.108, len: 11 };
+  let stored = {};
+  r.context.window.api = {
+    getGame: async () => structuredClone(stored),
+    saveGame: async (id, patch) => { assert.equal(id, 'game'); stored = { ...stored, ...patch }; return structuredClone(stored); },
+    saveSettings: async value => value,
+  };
+  const clip = r.currentSnapClip();
+  assert.ok(clip.highlightKey.includes('/split-offense.mp4'));
+  stored.playerHighlights = { [clip.highlightKey]: {
+    sideline: { snap: null }, endzone: { snap: null },
+  } };
+  await r.saveClipSnap(clip, 3.2);
+  assert.equal(stored.snapMarks[clip.highlightKey].time, 3.2);
+  assert.equal(stored.playerHighlights[clip.highlightKey].sideline.snap, null,
+    'saving a Film Room marker cannot overwrite unrelated or background tracking data');
+  assert.equal(r.S.settings.snapSamples.length, 1);
+  assert.equal(r.S.settings.snapSamples[0].leadIn, null);
+  assert.equal(r.S.filmSnap.confirmed, true);
+  assert.equal(el('film-snap-marker').style['--snap-position'], 3.2 / 11);
+  await r.saveClipSnap(clip, 3.5);
+  assert.equal(r.S.settings.snapSamples.length, 1);
+  assert.equal(r.S.settings.snapSamples[0].offset, 3.5);
+  r.S.settings.snapLearning = false;
+  r.renderFilmSnap();
+  assert.equal(r.S.filmSnap.time, 3.5, 'opting out does not hide confirmed snaps');
+  await r.saveClipSnap(clip, null);
+  assert.equal(Object.keys(stored.snapMarks).length, 0);
+  assert.equal(r.S.settings.snapSamples.length, 0);
+  assert.equal(r.S.filmSnap, null);
+  assert.equal(el('film-snap-marker').hidden, true);
+  await assert.rejects(() => r.saveClipSnap(clip, 11), /inside this original clip/);
+  r.S.mapping[0] = 1;
+  r.renderFilmSnap();
+  assert.equal(el('film-snap-tools').hidden, true, 'browsing an unlinked film cannot mark the selected play');
+});
+
+test('learned Film Room markers are selection-only estimates, not writes, and disappear for a different source or no film', () => {
+  const r = renderer();
+  const el = id => r.context.document.getElementById(id);
+  r.S.settings = settings.mergeSettings({ snapSamples: [3, 3.2, 3.4].map((offset, i) => ({
+    id: String(i), offset, leadIn: 1, type: 'pass',
+  })) });
+  r.S.sel = { gameId: 'game', team: 'BAL' };
+  r.S.curPlay = r.S.curPair = 0;
+  r.S.mapping[0] = 0;
+  r.S.range = { aStart: 10, bStart: 40, len: 10 };
+  r.S.film = { path: '/film.mp4', size: 1, mtimeMs: 2 };
+  r.S.pairs = [{ sideline: { start: 10, end: 20 }, endzone: { start: 40, end: 50 } }];
+  r.renderFilmSnap();
+  assert.equal(r.S.filmSnap.time, 3.2);
+  assert.equal(r.S.filmSnap.confirmed, false);
+  assert.match(el('film-snap-status').textContent, /Not video detection/);
+  const key = r.currentSnapClip().highlightKey;
+  r.S.gameData.snapMarks = { [key]: { time: 4 } };
+  r.renderFilmSnap();
+  assert.equal(r.S.filmSnap.time, 4);
+  r.S.film.size = 999;
+  r.renderFilmSnap();
+  assert.equal(r.S.filmSnap.confirmed, false, 'a replacement film never inherits an old confirmed mark');
+  r.S.range = null;
+  r.renderFilmSnap();
+  assert.equal(r.S.filmSnap, null);
+  assert.equal(el('film-snap-marker').hidden, true);
+});
+
+test('snap persistence preserves game context across navigation and surfaces game or learning save failures', async () => {
+  const r = renderer();
+  r.S.settings = settings.mergeSettings({});
+  r.S.sel.gameId = 'original';
+  const clip = { gameId: 'original', highlightKey: 'key', aStart: 10, bStart: 20, len: 10, trim: 1, play: { playId: 1, playType: 'run' } };
+  let resolveSave;
+  r.context.window.api = {
+    getGame: async () => ({}),
+    saveGame: async () => new Promise(resolve => { resolveSave = resolve; }),
+    saveSettings: async () => { throw new Error('settings disk full'); },
+  };
+  const saving = r.saveClipSnap(clip, 3);
+  await new Promise(resolve => setImmediate(resolve));
+  r.S.sel.gameId = 'new-game';
+  r.S.gameData = { untouched: true };
+  resolveSave({ snapMarks: { key: { time: 3 } } });
+  const result = await saving;
+  assert.equal(r.S.gameData.untouched, true);
+  assert.equal(clip.snapMark.time, 3, 'a failed model save does not lose a successfully persisted marker');
+  assert.match(result.warning, /settings disk full/);
+  r.context.window.api.saveGame = async () => { throw new Error('game disk full'); };
+  await assert.rejects(() => r.saveClipSnap(clip, 4), /game disk full/);
+  assert.equal(clip.snapMark.time, 3, 'failed marker writes do not appear confirmed');
+});
+
+test('successful manually trimmed exports teach snap lead-in only when a snap was confirmed', async () => {
+  const r = renderer();
+  r.S.settings = settings.mergeSettings({ exportLearnDuration: false });
+  r.S.exportDraft = { clips: [
+    { gameId: 'game', highlightKey: 'confirmed', play: { playId: 1 }, len: 12, trim: 2, trimEnd: 1, snapMark: { time: 3.5 }, trimEdited: true },
+    { gameId: 'game', highlightKey: 'unmarked', play: { playId: 2 }, len: 12, trim: 2, trimEnd: 1, trimEdited: true },
+  ] };
+  let writes = 0;
+  r.context.window.api = { saveSettings: async value => { writes++; return value; } };
+  await r.learnExportPreferences();
+  assert.equal(r.S.settings.snapSamples.length, 1);
+  assert.equal(r.S.settings.snapSamples[0].leadIn, 1.5);
+  await r.learnExportPreferences();
+  assert.equal(writes, 1);
+  assert.equal(r.S.settings.exportDurations.length, 0, 'snap and duration learning opt-outs are independent');
+  r.S.exportDraft.clips = [{ ...r.S.exportDraft.clips[0], highlightKey: 'replacement-film',
+    snapMark: { time: 4 }, snapTrimRecorded: false }];
+  await r.learnExportPreferences();
+  assert.equal(r.S.settings.snapSamples.length, 1, 'replacing or re-analyzing film does not add another vote for the same game/play');
+  assert.equal(r.S.settings.snapSamples[0].leadIn, 2);
+});
+
+test('learned duration is explicit, preserves the start, caps at available film, and can be disabled or forgotten', async () => {
+  const r = renderer();
+  vm.runInContext('queueTrimPreview = updateExportOptions = () => {};', r.context);
+  const el = id => r.context.document.getElementById(id);
+  const clip = { aStart: 10, bStart: 30, len: 12, trim: 2, trimEnd: 0, trimEdited: true };
+  r.S.settings = settings.mergeSettings({ exportDurations: [7, 7.5, 8] });
+  r.S.exportDraft = { clips: [clip] };
+  el('share-preview-play').value = '0';
+  r.renderDurationSuggestion();
+  assert.equal(clip.trimEnd, 0, 'suggestions never automatically trim');
+  assert.match(el('share-duration-status').textContent, /7.50s per camera/);
+  r.applyDurationSuggestion();
+  assert.equal(clip.trim, 2);
+  assert.equal(clip.trimEnd, 2.5);
+  assert.equal(clip.trimEdited, false, 'accepted suggestions alone do not reinforce the learned duration');
+  clip.len = 6;
+  r.applyDurationSuggestion();
+  assert.equal(clip.trimEnd, 0, 'a suggestion never extends a source clip');
+  const writes = [];
+  r.context.window.api = { saveSettings: async value => { writes.push(value); return value; } };
+  el('share-learn-duration').checked = false;
+  await r.saveDurationPreference();
+  assert.equal(r.S.settings.exportLearnDuration, false);
+  assert.equal(el('share-duration-apply').disabled, true);
+  await r.saveDurationPreference(true);
+  assert.deepEqual(Array.from(r.S.settings.exportDurations), []);
+  assert.equal(writes.length, 2);
+  r.context.window.api.saveSettings = async () => { throw new Error('disk full'); };
+  el('share-learn-duration').checked = true;
+  await r.saveDurationPreference();
+  assert.equal(el('share-learn-duration').checked, false);
+  assert.equal(el('share-learn-duration').disabled, false);
+  assert.match(el('share-duration-status').textContent, /disk full/);
+});
+
+test('editing learning records manual trims only after successful exports, once per draft play', async () => {
+  const r = renderer();
+  vm.runInContext('updateThemeControls = updatePositionControls = updateReportOptions = () => {}; currentOverlayAppearance = () => ({});', r.context);
+  const el = id => r.context.document.getElementById(id);
+  r.S.settings = settings.mergeSettings({});
+  r.S.exportDraft = {
+    file: '/film.mp4', team: 'BAL', matchup: 'Game',
+    clips: [
+      { aStart: 1, bStart: 30, len: 10, trim: 1, trimEnd: 1.5, trimEdited: true,
+        gameId: 'game', highlightKey: 'manual', snapMark: { time: 2 }, play: r.S.plays[0] },
+      { aStart: 50, bStart: 80, len: 10, trim: 0, trimEnd: 0, play: r.S.plays[1] },
+    ],
+  };
+  el('share-angle').value = 'sideline';
+  el('share-clean').checked = true;
+  el('share-report-format').value = 'none';
+  let cancelled = true, failExport = false, failSave = false;
+  const writes = [];
+  r.context.window.api = {
+    exportClips: async request => {
+      assert.equal('trimEdited' in request.clips[0], false);
+      assert.equal('snapMark' in request.clips[0], false);
+      if (failExport) throw new Error('encoder failed');
+      return { cancelled, path: '/clip.mp4' };
+    },
+    saveSettings: async value => {
+      if (failSave) throw new Error('disk full');
+      writes.push(value);
+      return value;
+    },
+  };
+  await r.exportSelection();
+  assert.equal(writes.length, 0, 'cancelled exports do not train');
+  assert.equal(r.S.settings.snapSamples.length, 0);
+  cancelled = false;
+  failExport = true;
+  await r.exportSelection();
+  assert.equal(writes.length, 0, 'failed exports do not train');
+  assert.equal(r.S.settings.snapSamples.length, 0);
+  failExport = false;
+  await r.exportSelection();
+  assert.deepEqual(Array.from(r.S.settings.exportDurations), [7.5]);
+  assert.equal(r.S.settings.snapSamples[0].leadIn, 1);
+  await r.exportSelection();
+  assert.equal(writes.length, 1, 'repeat exports do not duplicate samples');
+  const clip = r.S.exportDraft.clips[0];
+  clip.durationRecorded = false;
+  r.S.settings.exportLearnDuration = false;
+  await r.exportSelection();
+  assert.equal(writes.length, 1, 'opt-out disables collection');
+  r.S.settings.exportLearnDuration = true;
+  failSave = true;
+  await r.exportSelection();
+  assert.match(el('share-status').textContent, /Video saved, but local editing learning could not be saved: disk full/);
+  assert.equal(clip.durationRecorded, false);
+});
 
 test('workspace film selection restores play IDs, including unlinked or filtered-out plays', () => {
   const r = renderer();

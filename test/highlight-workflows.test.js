@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const tracking = require('../src/shared/tracking');
 const overlay = require('../src/shared/overlay');
 
-function editor({ deferred = false, mode, renderPreview } = {}) {
+function editor({ deferred = false, mode, renderPreview, snapSupport = false } = {}) {
   const elements = new Map(), requests = [], writes = [], defaults = [], pending = [], cancellations = [], busyChanges = [];
   let progress;
   function element(id) {
@@ -48,7 +48,9 @@ function editor({ deferred = false, mode, renderPreview } = {}) {
     } },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer/player-highlights.js'), 'utf8'), context);
-  let clean = false, failWrites = false;
+  let clean = false, failWrites = false, exporting = false, failSnaps = false;
+  const trims = [];
+  const snaps = [];
   const instance = context.A22.createHighlightEditor({
     defaults: () => tracking.DEFAULTS, appearance: () => ({ accent: '#aabbcc', background: '#112233', text: '#ffffff', outline: '#000000', opacity: 0.9 }),
     isClean: () => clean, players: () => [], onBusy: value => busyChanges.push(value),
@@ -57,19 +59,147 @@ function editor({ deferred = false, mode, renderPreview } = {}) {
     preparePhoto: value => value,
     mode: mode ? () => mode : undefined,
     renderPreview,
+    getSnap: snapSupport ? clip => clip.snapMark ? { ...clip.snapMark, confirmed: true }
+      : tracking.expectedSnap([1, 2, 3].map(id => ({ id: String(id), offset: 2, leadIn: null, type: '' })), clip) : undefined,
+    saveSnap: snapSupport ? async (clip, time) => {
+      if (failSnaps) throw new Error('disk full');
+      snaps.push({ clip, time });
+      clip.snapMark = time === null ? null : { time };
+    } : undefined,
+    isExporting: () => exporting,
+    onTrim: clip => trims.push({ trim: clip.trim, trimEnd: clip.trimEnd }),
     themes: () => [{ value: 'team-BAL', label: 'Baltimore Ravens', theme: overlay.teamTheme('BAL') }],
   });
   const clip = { file: '/film.mp4', url: 'file:///film.mp4', aStart: 10, bStart: 30, len: 5, trim: 0, fps: 30, info: { width: 1920, height: 1080 }, highlights: {} };
   element('highlight-angle').value = 'sideline';
   return {
-    instance, clip, requests, writes, defaults, context, pending, cancellations, busyChanges,
+    instance, clip, requests, writes, defaults, context, pending, cancellations, busyChanges, trims, snaps,
     progress: value => progress(value),
     el: id => element('highlight-' + id),
     setClean: value => { clean = value; },
+    setExporting: value => { exporting = value; instance.refresh(); },
     failWrites: () => { failWrites = true; },
+    failSnaps: () => { failSnaps = true; },
     async settle() { await new Promise(resolve => setImmediate(resolve)); },
   };
 }
+
+test('play-level snap markers work without highlights, convert both cameras and keep confirmed cutoffs consistent', async () => {
+  const r = editor({ snapSupport: true, mode: 'both' });
+  r.instance.select(r.clip);
+  assert.equal(r.el('snap-marker').style['--snap-position'], 0.4);
+  assert.match(r.el('play-snap-status').textContent, /Expected snap/);
+  assert.equal(r.el('clear-play-snap').disabled, true);
+  r.el('angle').value = 'endzone';
+  r.el('angle').fire('change');
+  r.el('video').currentTime = 32.5;
+  await r.el('mark-play-snap').fire('click');
+  assert.equal(r.snaps[0].time, 2.5, 'stored timing is camera-independent, relative to the original clip');
+  assert.deepEqual(r.clip.highlights, {}, 'marking a snap does not enable a player highlight');
+  assert.equal(r.requests.length, 0, 'local snap marking does not start tracking or decode extra frames');
+  assert.match(r.el('play-snap-status').textContent, /confirmed/);
+  r.el('go-play-snap').fire('click');
+  assert.equal(r.el('video').currentTime, 32.5);
+  assert.equal(r.el('other-video').currentTime, 12.5);
+  r.el('enabled').checked = true;
+  r.el('enabled').fire('change');
+  assert.equal(r.clip.highlights.endzone.snap, 32.5, 'new highlights inherit only confirmed snap cutoffs');
+  r.clip.highlights.sideline = { ...r.clip.highlights.endzone, snap: 12.5 };
+  r.el('video').currentTime = 33;
+  await r.el('mark-play-snap').fire('click');
+  assert.equal(r.clip.highlights.sideline.snap, 13);
+  assert.equal(r.clip.highlights.endzone.snap, 33);
+  await r.el('clear-play-snap').fire('click');
+  assert.equal(r.clip.highlights.sideline.snap, null);
+  assert.equal(r.clip.highlights.endzone.snap, null);
+  assert.match(r.el('play-snap-status').textContent, /Expected snap/);
+});
+
+test('snap marking rejects unloaded frames, surfaces persistence failures and is frozen during export', async () => {
+  const r = editor({ snapSupport: true });
+  r.instance.select(r.clip);
+  r.el('video').seeking = true;
+  await r.el('mark-play-snap').fire('click');
+  assert.equal(r.snaps.length, 0);
+  assert.match(r.el('status').textContent, /finish loading/);
+  r.el('video').seeking = false;
+  r.failSnaps();
+  await r.el('mark-play-snap').fire('click');
+  assert.match(r.el('status').textContent, /disk full/);
+  assert.equal(r.clip.snapMark, undefined);
+  r.setExporting(true);
+  assert.equal(r.el('mark-play-snap').disabled, true);
+  await r.el('mark-play-snap').fire('click');
+  assert.equal(r.snaps.length, 0);
+});
+
+test('timeline handles trim both cameras, seek boundary frames, clamp crossings, and stay usable for clean clips', () => {
+  const r = editor({ mode: 'both' });
+  r.instance.select(r.clip);
+  r.setClean(true);
+  r.el('trim-start').value = 1.01;
+  r.el('trim-start').fire('input');
+  assert.equal(r.clip.trim, 1, 'handle snaps to a frame');
+  assert.equal(r.el('video').currentTime, 11);
+  assert.equal(r.el('other-video').currentTime, 31);
+  assert.equal(r.clip.trimEdited, true);
+  r.el('trim-end').value = 4;
+  r.el('trim-end').fire('input');
+  assert.equal(r.clip.trimEnd, 1);
+  assert.ok(Math.abs(r.el('video').currentTime - 13.999) < 1e-9, 'end previews just before the exclusive boundary, even when source cuts are not frame aligned');
+  assert.ok(Math.abs(r.el('other-video').currentTime - 33.999) < 1e-9);
+  assert.equal(r.el('time').style['--trim-start'], '20%');
+  assert.equal(r.el('time').style['--trim-end'], '80%');
+  assert.match(r.el('trim-end')['aria-valuetext'], /exclusive end/);
+  assert.equal(r.el('trim-start').step, 1 / 30);
+  assert.equal(r.trims.length, 2);
+  r.el('trim-start').value = 5;
+  r.el('trim-start').fire('input');
+  assert.ok(Math.abs(r.clip.len - r.clip.trim - r.clip.trimEnd - 1 / 30) < 1e-9);
+  r.el('trim-end').value = 0;
+  r.el('trim-end').fire('input');
+  assert.ok(r.clip.len - r.clip.trim - r.clip.trimEnd > 0, 'handles cannot cross');
+  r.el('trim-start').value = 0;
+  r.el('trim-start').fire('input');
+  r.el('trim-end').value = 5;
+  r.el('trim-end').fire('input');
+  assert.equal(r.clip.trim, 0);
+  assert.equal(r.clip.trimEnd, 0, 'full original extent can be restored');
+  r.setExporting(true);
+  assert.equal(r.el('trim-start').disabled, true);
+  r.el('trim-start').value = 2;
+  r.el('trim-start').fire('input');
+  assert.equal(r.clip.trim, 0, 'export freezes trim controls');
+  assert.equal(r.requests.length, 0, 'trimming never runs player tracking');
+});
+
+test('one-frame handle moves synchronize both cameras and survive metadata loading', () => {
+  const r = editor({ mode: 'both' });
+  r.instance.select(r.clip);
+  r.el('trim-end').value = 4;
+  r.el('trim-end').fire('input');
+  r.el('trim-end').value = 4 - 1 / 30;
+  r.el('trim-end').fire('input');
+  assert.ok(Math.abs(r.el('other-video').currentTime - r.el('video').currentTime - 20) < 1e-9,
+    'a move smaller than playback sync tolerance still synchronizes the preview exactly');
+  const target = r.el('video').currentTime;
+  r.el('video').fire('loadedmetadata');
+  assert.equal(r.el('video').currentTime, target, 'metadata does not reset an end-handle preview to the start');
+});
+
+test('trim handles preview the selected end-zone angle and synchronize sideline on sub-frame clips', () => {
+  const r = editor({ mode: 'endzone' });
+  r.clip.len = 0.02;
+  r.instance.select(r.clip);
+  r.el('trim-start').value = 0.02;
+  r.el('trim-start').fire('input');
+  r.el('trim-end').value = 0;
+  r.el('trim-end').fire('input');
+  assert.equal(r.clip.trim, 0);
+  assert.equal(r.clip.trimEnd, 0);
+  assert.ok(Math.abs(r.el('video').currentTime - 30.019) < 1e-9);
+  assert.ok(Math.abs(r.el('other-video').currentTime - 10.019) < 1e-9);
+});
 
 test('original-extent timeline preserves source frames through both trims and camera changes', async () => {
   const previews = [];

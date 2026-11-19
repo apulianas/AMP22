@@ -49,7 +49,22 @@ button:disabled { opacity: .4; cursor: default; }
 #highlight-section { margin: 12px 0; }
 #highlight-section summary { cursor: pointer; font-weight: 600; }
 #highlight-canvas { display: block; width: 100%; height: auto; margin: 10px 0; cursor: crosshair; background: #000; }
-#highlight-time { width: 100%; appearance: none; background: transparent; height: 20px; cursor: pointer; }
+#highlight-time { width: 100%; margin: 0; padding: 0; border: 0; appearance: none; background: transparent; height: 20px; cursor: pointer; }
+.trim-labels { justify-content: space-between; }
+.trim-handles { position: relative; height: 28px; margin-top: 4px; }
+.trim-handles::before { content: ''; position: absolute; left: 7px; right: 7px; top: 13px; height: 2px; background: var(--muted); }
+.trim-handles input {
+  position: absolute; inset: 0; width: 100%; height: 28px; margin: 0; padding: 0; border: 0;
+  appearance: none; background: transparent; pointer-events: none;
+}
+.trim-handles input::-webkit-slider-runnable-track { height: 28px; background: transparent; }
+.trim-handles input::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 28px; border: 2px solid var(--text); border-radius: 3px;
+  background: var(--accent); pointer-events: auto; cursor: ew-resize;
+}
+#highlight-trim-end::-webkit-slider-thumb { background: var(--panel2); }
+.trim-handles input:focus-visible { z-index: 1; }
+.trim-handles input:disabled::-webkit-slider-thumb { cursor: default; opacity: .4; }
 #highlight-time::-webkit-slider-runnable-track {
   height: 8px; border-radius: 4px;
   background: linear-gradient(to right, var(--neg) 0% var(--trim-start, 0%), var(--accent) var(--trim-start, 0%) var(--trim-end, 100%), var(--neg) var(--trim-end, 100%) 100%);
@@ -255,7 +270,17 @@ main { display: flex; flex: 1; min-height: 0; }
 
 #timeline { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--border); }
 #timeline[hidden] { display: none; }
-#scrub { flex: 1; padding: 0; accent-color: var(--accent); background: none; border: 0; }
+.snap-timeline { position: relative; }
+.film-scrub-track { flex: 1; min-width: 80px; }
+#scrub { display: block; width: 100%; margin: 0; padding: 0; accent-color: var(--accent); background: none; border: 0; }
+.snap-marker {
+  position: absolute; left: calc(7px + (100% - 14px) * var(--snap-position)); top: -3px; bottom: -3px;
+  width: 0; border-left: 2px dashed var(--accent); pointer-events: none;
+}
+.snap-marker.confirmed { border-left-style: solid; border-left-color: var(--run); }
+.snap-marker[hidden], .snap-tools[hidden] { display: none; }
+.snap-tools { flex-wrap: wrap; padding: 4px 10px; background: var(--panel); }
+#film-snap-status { flex: 1; min-width: 180px; }
 #transport { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--panel); }
 #transport[hidden] { display: none; }
 #transport button { min-width: 38px; }

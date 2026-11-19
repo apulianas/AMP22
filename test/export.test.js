@@ -9,6 +9,15 @@ const { clipRange, trimRange, exportSequence, selectedIndices, selectionRange, s
 const { validateRequest, segmentArgs, exportClips } = require('../src/main/export');
 const { run, probe, previewFrame } = require('../src/main/media');
 const { ffmpegPath } = require('../src/main/ffpaths');
+const { suggestedDuration } = require('../src/shared/export');
+
+test('duration suggestions require three actual edits and use a recent median robust to outliers', () => {
+  assert.equal(suggestedDuration(), null);
+  assert.equal(suggestedDuration([7, 8, null, '7', -1]), null);
+  assert.equal(suggestedDuration([7, 7.5, 8]), 7.5);
+  assert.equal(suggestedDuration([7, 7.5, 8, 60]), 7.75);
+  assert.equal(suggestedDuration([...Array(30).fill(60), ...Array(30).fill(7.5)]), 7.5);
+});
 
 function cardHeader(mode) {
   const { width, height } = dimensions(mode);

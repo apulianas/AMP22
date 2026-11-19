@@ -5,6 +5,30 @@ const s = require('../src/shared/settings');
 
 const ev = (key, mods = {}) => Object.assign({ key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, mods);
 
+test('snap learning settings round-trip independently of duration learning and sanitize stored examples', () => {
+  const saved = s.mergeSettings({ snapLearning: false, snapSamples: [
+    { id: 'one', offset: 3, leadIn: 1, type: 'pass' }, { id: 'bad', offset: -1, leadIn: null },
+  ] });
+  const restored = s.mergeSettings(JSON.parse(JSON.stringify(saved)));
+  assert.equal(restored.snapLearning, false);
+  assert.equal(restored.exportLearnDuration, true);
+  assert.deepEqual(restored.snapSamples, [{ id: 'one', offset: 3, leadIn: 1, type: 'pass' }]);
+  assert.equal(s.mergeSettings({ snapLearning: 'false' }).snapLearning, true);
+  assert.deepEqual(s.mergeSettings({ snapSamples: null }).snapSamples, []);
+});
+
+test('local duration learning persists its opt-out and bounded valid history', () => {
+  const saved = s.mergeSettings({ exportLearnDuration: false, exportDurations: [7, null, -1, '8', NaN, Infinity, 0, 8, 7.5] });
+  assert.deepEqual(saved.exportDurations, [7, 8, 7.5]);
+  const restored = s.mergeSettings(JSON.parse(JSON.stringify(saved)));
+  assert.equal(restored.exportLearnDuration, false);
+  assert.deepEqual(restored.exportDurations, [7, 8, 7.5]);
+  assert.deepEqual(s.mergeSettings({ exportDurations: {} }).exportDurations, []);
+  assert.equal(s.mergeSettings({ exportLearnDuration: 'false' }).exportLearnDuration, true);
+  assert.deepEqual(s.mergeSettings({ exportDurations: Array.from({ length: 40 }, (_, i) => i + 1) }).exportDurations,
+    Array.from({ length: 30 }, (_, i) => i + 11));
+});
+
 test('player dropdown ordering defaults to alphabetical and persists only supported preferences', () => {
   assert.equal(s.mergeSettings({}).playerFilterSort, 'name');
   for (const playerFilterSort of ['name', 'plays', 'position']) {
