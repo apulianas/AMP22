@@ -2,7 +2,7 @@
 
 const fs = require('fs/promises');
 const path = require('path');
-const { run, probe } = require('./media');
+const { run, probe, frameStart } = require('./media');
 const { ffmpegPath } = require('./ffpaths');
 const { MODES, dimensions, exportSequence, overlayPosition } = require('../shared/export');
 const highlights = require('./highlight-export');
@@ -48,9 +48,10 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeco
   const centered = clean || overlayPosition(position).preset !== 'original';
   const args = ['-hide_banner', '-v', 'error', '-xerror', '-nostats', '-progress', 'pipe:1', '-y'];
   const duration = clip.len.toFixed(6);
-  const input = (start) => args.push('-ss', start.toFixed(6), '-t', duration, '-i', file);
-  input(mode === 'endzone' ? clip.bStart : clip.aStart);
-  if (mode === 'both') input(clip.bStart);
+  const input = (start, len = clip.len) => args.push('-ss', start.toFixed(6), '-t', len.toFixed(6), '-i', file);
+  if (mode === 'endzone') input(clip.bStart, clip.bLen);
+  else input(clip.aStart, clip.aLen);
+  if (mode === 'both') input(clip.bStart, clip.bLen);
   const cardIndex = mode === 'both' ? 2 : 1;
   if (!clean) args.push('-framerate', String(fps), '-i', 'card.png');
   if (!clean) markers.forEach((_marker, index) => args.push('-loop', '1', '-framerate', String(fps), '-i', `highlight-${index}.png`));
@@ -81,6 +82,28 @@ function segmentArgs(file, clip, mode, hasAudio, fps, clean = false, overlaySeco
   return args;
 }
 
+const SEEK_MARGIN = 0.0005;
+
+/**
+ * Moves each seek back to the start of the frame the preview shows at the trim start, keeping the end fixed.
+ * `shown` holds that frame's time for aStart and bStart (null when unknown). The output keeps whole frames
+ * because ffmpeg's output duration only retains frames that end within it.
+ */
+function frameAlignedClip(clip, angle, shown = {}, fps = 30) {
+  const aligned = { ...clip };
+  const keys = angle === 'both' ? ['aStart', 'bStart'] : [angle === 'endzone' ? 'bStart' : 'aStart'];
+  const outputs = keys.map((key) => {
+    const frame = shown[key];
+    const shift = Number.isFinite(frame) && frame <= clip[key] ? clip[key] - frame + SEEK_MARGIN : 0;
+    const usable = shift > 0 && shift < 1 && clip[key] - shift >= 0;
+    aligned[key] = usable ? clip[key] - shift : clip[key];
+    aligned[key === 'aStart' ? 'aLen' : 'bLen'] = clip.len + (usable ? shift : 0);
+    return usable ? Math.ceil((clip.len + shift - SEEK_MARGIN) * fps - 0.01) / fps + SEEK_MARGIN : clip.len;
+  });
+  aligned.len = Math.min(...outputs);
+  return aligned;
+}
+
 async function exportClips(request, destination, { signal, onProgress = () => {} } = {}) {
   const { file, mode, clips, clean = false } = validateRequest(request);
   const segments = exportSequence(clips, mode);
@@ -108,8 +131,17 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
   try {
     for (let i = 0; i < segments.length; i++) {
       signal?.throwIfAborted();
-      const { clip, mode: angle } = segments[i];
-      const sourceFile = clip.file || file;
+      const { clip: requested, mode: angle } = segments[i];
+      const sourceFile = requested.file || file;
+      const info = sources.get(sourceFile);
+      const shown = {};
+      for (const key of angle === 'both' ? ['aStart', 'bStart'] : [angle === 'endzone' ? 'bStart' : 'aStart']) {
+        shown[key] = await frameStart(sourceFile, requested[key], { startTime: info.startTime, signal }).catch((error) => {
+          if (signal?.aborted) throw error;
+          return null;
+        });
+      }
+      const clip = frameAlignedClip(requested, angle, shown, fps);
       const card = path.join(temp, 'card.png');
       if (!clean) await fs.writeFile(card, Buffer.from(clip.card.split(',')[1], 'base64'));
       const markers = clean ? [] : highlights.descriptors(clip, angle, sources.get(sourceFile), overlayPosition(request.overlayPosition).preset !== 'original');
@@ -136,11 +168,11 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
           pending = lines.pop();
           for (const line of lines) {
             const m = /^out_time_us=(\d+)/.exec(line);
-            if (m) onProgress({ fraction: Math.min(0.98, (done + Math.min(clip.len, Number(m[1]) / 1e6)) / total * 0.98), message: `Exporting clip ${i + 1} of ${segments.length}` });
+            if (m) onProgress({ fraction: Math.min(0.98, (done + Math.min(requested.len, Number(m[1]) / 1e6)) / total * 0.98), message: `Exporting clip ${i + 1} of ${segments.length}` });
           }
         },
       });
-      done += clip.len;
+      done += requested.len;
     }
     signal?.throwIfAborted();
     onProgress({ fraction: 0.98, message: 'Joining clips' });
@@ -158,4 +190,4 @@ async function exportClips(request, destination, { signal, onProgress = () => {}
   }
 }
 
-module.exports = { validateRequest, segmentArgs, exportClips };
+module.exports = { validateRequest, segmentArgs, frameAlignedClip, exportClips };

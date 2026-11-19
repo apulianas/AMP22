@@ -183,7 +183,7 @@ test('learned duration is explicit, preserves the start, caps at available film,
   const r = renderer();
   vm.runInContext('queueTrimPreview = updateExportOptions = () => {};', r.context);
   const el = id => r.context.document.getElementById(id);
-  const clip = { aStart: 10, bStart: 30, len: 12, trim: 2, trimEnd: 0, trimEdited: true };
+  const clip = { aStart: 10, bStart: 30, len: 12, fps: 30, trim: 2, trimEnd: 0, trimEdited: true };
   r.S.settings = settings.mergeSettings({ exportDurations: [7, 7.5, 8] });
   r.S.exportDraft = { clips: [clip] };
   el('share-preview-play').value = '0';
@@ -194,6 +194,9 @@ test('learned duration is explicit, preserves the start, caps at available film,
   assert.equal(clip.trim, 2);
   assert.equal(clip.trimEnd, 2.5);
   assert.equal(clip.trimEdited, false, 'accepted suggestions alone do not reinforce the learned duration');
+  r.S.settings.exportDurations = [7, 7.51, 8];
+  r.applyDurationSuggestion();
+  assert.ok(Math.abs(clip.trimEnd - 2.5) < 1e-9, 'the applied end lands on a whole frame');
   clip.len = 6;
   r.applyDurationSuggestion();
   assert.equal(clip.trimEnd, 0, 'a suggestion never extends a source clip');

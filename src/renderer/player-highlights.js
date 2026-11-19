@@ -141,8 +141,10 @@
         $('trim-' + boundary + '-label').textContent = `${value.toFixed(2)}s`;
       }
       if (!clip) return;
-      $('time').style.setProperty('--trim-start', `${clip.trim / clip.len * 100}%`);
-      $('time').style.setProperty('--trim-end', `${(clip.len - (clip.trimEnd ?? 0)) / clip.len * 100}%`);
+      // Match the 14px thumbs so removed portions line up with the handles and playhead.
+      const track = ratio => `calc(7px + (100% - 14px) * ${ratio})`;
+      $('time').style.setProperty('--trim-start', clip.trim > 0 ? track(clip.trim / clip.len) : '0%');
+      $('time').style.setProperty('--trim-end', clip.trimEnd > 0 ? track((clip.len - clip.trimEnd) / clip.len) : '100%');
       syncSnapMarker();
     }
     function syncSnapMarker() {

@@ -148,8 +148,8 @@ test('timeline handles trim both cameras, seek boundary frames, clamp crossings,
   assert.equal(r.clip.trimEnd, 1);
   assert.ok(Math.abs(r.el('video').currentTime - 13.999) < 1e-9, 'end previews just before the exclusive boundary, even when source cuts are not frame aligned');
   assert.ok(Math.abs(r.el('other-video').currentTime - 33.999) < 1e-9);
-  assert.equal(r.el('time').style['--trim-start'], '20%');
-  assert.equal(r.el('time').style['--trim-end'], '80%');
+  assert.equal(r.el('time').style['--trim-start'], 'calc(7px + (100% - 14px) * 0.2)');
+  assert.equal(r.el('time').style['--trim-end'], 'calc(7px + (100% - 14px) * 0.8)');
   assert.match(r.el('trim-end')['aria-valuetext'], /exclusive end/);
   assert.equal(r.el('trim-start').step, 1 / 30);
   assert.equal(r.trims.length, 2);
@@ -216,8 +216,8 @@ test('original-extent timeline preserves source frames through both trims and ca
   assert.equal(r.el('time').max, 5);
   assert.equal(r.el('video').currentTime, 11);
   assert.equal(r.el('other-video').currentTime, 31);
-  assert.equal(r.el('time').style['--trim-start'], '20%');
-  assert.equal(r.el('time').style['--trim-end'], '70%');
+  assert.equal(r.el('time').style['--trim-start'], 'calc(7px + (100% - 14px) * 0.2)');
+  assert.equal(r.el('time').style['--trim-end'], 'calc(7px + (100% - 14px) * 0.7)');
   r.el('time').value = 0.5;
   r.el('time').fire('input');
   r.el('video').fire('seeked');

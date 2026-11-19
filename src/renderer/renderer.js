@@ -2350,7 +2350,11 @@ function drawCutupPreview({ canvas, clip, angle, video, otherVideo, time, drawTr
   const { width, height } = A22.clipExport.dimensions(mode);
   canvas.width = width;
   canvas.height = height;
-  const previewHeight = Math.max(120, $('highlight-editor').clientHeight - ($('highlight-progress-panel').hidden ? 190 : 270));
+  // Fit the video above the trim, snap, and playback rows so those controls stay visible without scrolling.
+  const editor = $('highlight-editor');
+  const top = editor.getBoundingClientRect().top - editor.scrollTop;
+  const controlsBottom = editor.querySelector('.cutup-transport').getBoundingClientRect().bottom - top;
+  const previewHeight = Math.max(120, editor.clientHeight - (controlsBottom - canvas.getBoundingClientRect().height) - 8);
   canvas.style.width = `min(100%, ${previewHeight * width / height}px)`;
   canvas.style.margin = '10px auto';
   const ctx = canvas.getContext('2d');
@@ -2477,11 +2481,16 @@ async function savePositionPreference(action) {
   }
 }
 
+function showTrimFields(clip) {
+  // Fields show milliseconds; the draft keeps the exact frame-snapped trims.
+  $('share-trim').value = Number(clip.trim.toFixed(3));
+  $('share-trim-end').value = Number((clip.trimEnd ?? 0).toFixed(3));
+}
+
 function selectTrimPlay() {
   const clip = S.exportDraft?.clips[Number($('share-preview-play').value)];
   if (!clip) return;
-  $('share-trim').value = clip.trim;
-  $('share-trim-end').value = clip.trimEnd ?? 0;
+  showTrimFields(clip);
   renderDurationSuggestion();
   queueTrimPreview();
 }
@@ -2508,7 +2517,12 @@ function applyDurationSuggestion() {
   if (!clip || duration === null) return;
   try {
     A22.clipExport.trimRange(clip, clip.trim, 0);
-    clip.trimEnd = Math.max(0, clip.len - clip.trim - duration);
+    const fps = clip.fps || S.fps;
+    let end = clip.trim + duration;
+    if (Number.isFinite(fps) && fps > 0) {
+      end = end >= clip.len - 0.5 / fps ? clip.len : Math.max(clip.trim + 1 / fps, Math.round(end * fps) / fps);
+    }
+    clip.trimEnd = Math.max(0, clip.len - end);
     clip.trimEdited = false;
     selectTrimPlay();
     updateExportOptions();
@@ -3038,7 +3052,10 @@ function renderSettings() {
   $('set-speeds').value = draft.speeds.join(', ');
   $('set-snap-learning').checked = draft.snapLearning;
   $('set-snap-forget').disabled = !draft.snapSamples?.length;
-  $('set-snap-history').textContent = `${draft.snapSamples?.length || 0} learned plays. Clearing takes effect when you save Settings; confirmed markers remain.`;
+  const learned = draft.snapSamples?.length || 0;
+  $('set-snap-history').textContent = !learned && S.settings.snapSamples?.length
+    ? 'Learned timing will be forgotten when you save Settings. Confirmed markers remain.'
+    : `${learned} learned play${learned === 1 ? '' : 's'}.`;
   $('set-player-sort').value = draft.playerFilterSort;
   $('set-ui-theme').value = draft.uiTheme;
   $('set-text-scale').value = String(draft.textScale);
@@ -3252,8 +3269,7 @@ function wire() {
     isExporting: () => S.exporting,
     onTrim: clip => {
       clip.snapTrimRecorded = false;
-      $('share-trim').value = clip.trim;
-      $('share-trim-end').value = clip.trimEnd ?? 0;
+      showTrimFields(clip);
       positionFrames = null;
       renderDurationSuggestion();
       updateExportOptions();

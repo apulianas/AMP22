@@ -6,9 +6,9 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const { clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions, overlayPosition, overlayBounds } = require('../src/shared/export');
-const { validateRequest, segmentArgs, exportClips } = require('../src/main/export');
-const { run, probe, previewFrame } = require('../src/main/media');
-const { ffmpegPath } = require('../src/main/ffpaths');
+const { validateRequest, segmentArgs, frameAlignedClip, exportClips } = require('../src/main/export');
+const { run, probe, frameStart, previewFrame } = require('../src/main/media');
+const { ffmpegPath, ffprobePath } = require('../src/main/ffpaths');
 const { suggestedDuration } = require('../src/shared/export');
 
 test('duration suggestions require three actual edits and use a recent median robust to outliers', () => {
@@ -89,6 +89,26 @@ test('combined decimal trims retain source starts and crop the end in all export
       assert.equal(args[args.indexOf('-t') + 1], '2.000000');
       assert.match(args[args.indexOf('-filter_complex') + 1], /enable='lt\(t,0.5\)'/);
     }
+  }
+});
+
+test('exports seek to the frame shown at each trim start while keeping the trim end', () => {
+  const range = { aStart: 10.01, bStart: 20.005, len: 2 };
+  const both = frameAlignedClip(range, 'both', { aStart: 10, bStart: 20 }, 30);
+  assert.ok(Math.abs(both.aStart - 9.9995) < 1e-9 && Math.abs(both.bStart - 19.9995) < 1e-9);
+  assert.ok(Math.abs(both.aStart + both.aLen - 12.01) < 1e-9 && Math.abs(both.bStart + both.bLen - 22.005) < 1e-9);
+  const args = segmentArgs('/film.mp4', both, 'both', true, 30, true);
+  const inputs = args.flatMap((arg, i) => arg === '-ss' ? [[args[i + 1], args[i + 3]]] : []);
+  assert.deepEqual(inputs, [['9.999500', '2.010500'], ['19.999500', '2.005500']]);
+  assert.equal(args[args.lastIndexOf('-t') + 1], (61 / 30 + 0.0005).toFixed(6), 'output keeps the partial first and last frames');
+  assert.ok(Math.abs(frameAlignedClip({ ...range, aStart: 10 }, 'sideline', { aStart: 10 }, 30).len - 2.0005) < 1e-9);
+  const endzone = frameAlignedClip(range, 'endzone', { bStart: 20 }, 30);
+  assert.equal(endzone.aStart, range.aStart);
+  const endzoneArgs = segmentArgs('/film.mp4', endzone, 'endzone', true, 30, true);
+  assert.equal(endzoneArgs[endzoneArgs.indexOf('-ss') + 1], '19.999500');
+  for (const shown of [{}, { aStart: null }, { aStart: 10.02 }, { aStart: 8 }]) {
+    const unchanged = frameAlignedClip(range, 'sideline', shown);
+    assert.deepEqual([unchanged.aStart, unchanged.len], [range.aStart, range.len]);
   }
 });
 
@@ -259,6 +279,12 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
     await fs.writeFile(previewPath, Buffer.from(preview.split(',')[1], 'base64'));
     assert.ok(isBlue(await frame(previewPath, 0, 100, 100)));
     await assert.rejects(previewFrame(file, 999), /No preview/);
+    assert.ok(Math.abs(await frameStart(file, 0.25) - 0.2) < 1e-6);
+    const firstFrame = path.join(temp, 'first-frame.mp4');
+    await exportClips({ file, mode: 'sideline', clean: true, clips: [trimRange({ aStart: 0, bStart: 4.5, len: 1 }, 0.25)] }, firstFrame);
+    const { stdout: frames } = await run(ffprobePath(), ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+      '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', firstFrame]);
+    assert.equal(Number(frames.trim()), 8, 'the frame shown at 0.25s through the trim end');
     for (const mode of ['sideline-first', 'endzone-first']) {
       const output = path.join(temp, `${mode}.mp4`);
       await exportClips({ file, mode, clean: true, clips: [
@@ -281,7 +307,7 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
       const after = await frame(output, 0.8, x, y);
       assert.ok(mode === 'both' ? after.every((v) => v < 40) : mode.startsWith('endzone') ? isBlue(after) : isRed(after));
       const info = await probe(output);
-      assert.ok(Math.abs(info.duration - (mode.endsWith('-first') ? 2 : 1)) < 0.15, `${mode}: both trims determine duration`);
+      assert.ok(Math.abs(info.duration - (mode.endsWith('-first') ? 2 : 1)) < 0.25, `${mode}: both trims determine duration`);
       if (mode.endsWith('-first')) {
         assert.ok((await frame(output, 1.2, x, y)).every(v => v > 220), 'overlay starts again at the second retained angle');
         assert.ok((mode === 'sideline-first' ? isBlue : isRed)(await frame(output, 1.8, x, y)));

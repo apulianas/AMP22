@@ -579,12 +579,6 @@
           <select id="set-end"><option value="stop">Stop</option><option value="advance">Auto-advance to next play</option><option value="loop">Loop</option></select>
         </label>
         <label>Slow-motion speeds <input id="set-speeds" type="text" placeholder="1, 0.5, 0.25" /></label>
-        <div>
-          <label><input id="set-snap-learning" type="checkbox" /> Learn expected snap timing on this device</label>
-          <p class="muted small">Uses confirmed snaps and their trim context, not background video analysis. Confirmed markers remain when learning is off.</p>
-          <button id="set-snap-forget" type="button">Forget learned snap timing</button>
-          <span id="set-snap-history" class="muted small" role="status"></span>
-        </div>
         <label>Default team <select id="set-team"></select></label>
         <label>Appearance
           <select id="set-ui-theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">Match system</option></select>
@@ -592,6 +586,12 @@
         <label>Text size
           <select id="set-text-scale"><option value="0.9">Compact</option><option value="1">Default</option><option value="1.1">Large</option><option value="1.25">Extra large</option></select>
         </label>
+        <div class="span2">
+          <label><input id="set-snap-learning" type="checkbox" /> Learn expected snap timing on this device</label>
+          <p class="muted small">Uses confirmed snaps and their trim context, not background video analysis. Confirmed markers remain when learning is off.</p>
+          <button id="set-snap-forget" type="button">Forget learned snap timing</button>
+          <span id="set-snap-history" class="muted small" role="status"></span>
+        </div>
         <label id="player-filter-preference" class="span2">On-field player dropdown order
           <select id="set-player-sort">
             <option value="name">Alphabetical</option>

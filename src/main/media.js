@@ -61,6 +61,20 @@ async function probe(file) {
   };
 }
 
+/** Start time of the video frame displayed at `time` (the last frame starting at or before it). */
+async function frameStart(file, time, { startTime = 0, signal } = {}) {
+  const at = startTime + time;
+  const { stdout } = await run(ffprobePath(), ['-v', 'error', '-select_streams', 'v:0',
+    '-read_intervals', `${Math.max(0, at - 2).toFixed(6)}%${(at + 0.5).toFixed(6)}`,
+    '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file], { signal });
+  let best = null;
+  for (const line of stdout.split('\n')) {
+    const pts = line.trim() ? Number(line.trim().split(',')[0]) - startTime : NaN;
+    if (Number.isFinite(pts) && pts <= time + 1e-6 && (best === null || pts > best)) best = pts;
+  }
+  return best;
+}
+
 /** Fast scene-cut scan. Returns [{time, score}] for frames with score > candidateThreshold. */
 function detectScenes(file, duration, { candidateThreshold = 0.06, onProgress, signal } = {}) {
   const scores = [];
@@ -197,4 +211,4 @@ async function analyzeFilm(file, { onProgress = () => {}, signal, cutThreshold =
   };
 }
 
-module.exports = { ANALYSIS_VERSION, run, probe, previewFrame, detectScenes, grabGray, classifyClips, analyzeFilm, buildPairs, mapLimit };
+module.exports = { ANALYSIS_VERSION, run, probe, frameStart, previewFrame, detectScenes, grabGray, classifyClips, analyzeFilm, buildPairs, mapLimit };

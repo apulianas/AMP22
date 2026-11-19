@@ -256,8 +256,9 @@ async function exerciseWorkflows({ app, win }) {
   const originalLength = await js(`S.exportDraft.clips[0].len`);
   assert.equal(await js(`Number($('highlight-time').max)`), originalLength);
   assert.ok(Math.abs(await js(`trimmedExportClips()[0].len`) - (originalLength - 0.75)) < 1e-9);
-  assert.ok(await js(`Number.parseFloat($('highlight-time').style.getPropertyValue('--trim-start')) > 0`));
-  assert.ok(await js(`Number.parseFloat($('highlight-time').style.getPropertyValue('--trim-end')) < 100`));
+  const trimStop = name => js(`Number($('highlight-time').style.getPropertyValue('${name}').match(/\\* ([\\d.]+)\\)$/)?.[1])`);
+  assert.ok(await trimStop('--trim-start') > 0);
+  assert.ok(await trimStop('--trim-end') < 1);
   for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
     await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'));`);
     await until(`positionFrames?.mode === '${mode}' && highlightEditor.ready()`);
