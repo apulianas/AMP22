@@ -50,6 +50,7 @@
   A22.createHighlightEditor = function (options) {
     const video = $('video'), otherVideo = $('other-video'), canvas = $('canvas');
     let clip = null, angle = 'sideline', busy = false, requestedTime = 0;
+    let pendingSeek = null, seekFrame = null;
     let job = null, running = null, analysisQueue = Promise.resolve();
     let offense = [], offenseTime = null, suggestion = null;
     let saving = Promise.resolve();
@@ -67,6 +68,10 @@
     const time = () => video.currentTime;
     const retained = () => !!clip && time() >= start() && time() < end();
     function requireRetained() {
+      if (!frameReady()) {
+        status('Wait for the selected frame to finish loading before editing player annotations.', true);
+        return false;
+      }
       if (retained()) return true;
       status('This frame is removed. Seek inside the retained range before editing player annotations.', true);
       return false;
@@ -258,9 +263,17 @@
           ctx.fillText(String(index + 1), viewport.x + p.x * viewport.w + 9, viewport.y + p.y * viewport.h);
         });
       }
-      $('time').value = Math.max(0, time() - base());
-      $('time-label').textContent = `${Math.max(0, time() - base()).toFixed(2)} / ${clip.len.toFixed(2)}s`;
-      $('time').setAttribute('aria-valuetext', `${(time() - base()).toFixed(2)} seconds from original start; ${retained() ? 'retained' : 'removed'}`);
+      if (pendingSeek === null) updateTime(time() - base());
+    }
+    function updateTime(relative) {
+      $('time').value = Math.max(0, relative);
+      $('time-label').textContent = `${Math.max(0, relative).toFixed(2)} / ${clip.len.toFixed(2)}s`;
+      const inside = relative >= clip.trim && relative < clip.len - (clip.trimEnd ?? 0);
+      $('time').setAttribute('aria-valuetext', `${relative.toFixed(2)} seconds from original start; ${inside ? 'retained' : 'removed'}`);
+    }
+    function frameReady() {
+      return !!clip && pendingSeek === null && video.readyState >= 2 && !video.seeking &&
+        (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking);
     }
     function stopPlayback() { video.pause(); otherVideo.pause(); $('play').textContent = 'Play preview'; }
     function syncOther(exact = false) {
@@ -269,6 +282,7 @@
       if (Math.abs(otherVideo.currentTime - target) > (exact ? 0.000001 : 0.04)) otherVideo.currentTime = target;
     }
     function seek(relative) {
+      if (!clip) return;
       stopPlayback();
       const target = Math.min(base() + clip.len - 0.001, Math.max(base(), base() + relative));
       if (offenseTime !== null && Math.abs(target - offenseTime) > 0.06) {
@@ -277,13 +291,35 @@
         syncControls();
       }
       requestedTime = target - base();
-      video.currentTime = target;
-      syncOther(true);
+      pendingSeek = requestedTime;
+      updateTime(requestedTime);
+      flushSeek();
     }
-    video.addEventListener('seeked', draw);
+    function flushSeek(force = false) {
+      if (!clip || pendingSeek === null || !video.readyState) return;
+      const both = options.mode?.() === 'both';
+      if (!force && (seekFrame !== null || video.seeking || both && (!otherVideo.readyState || otherVideo.seeking))) return;
+      if (seekFrame !== null) cancelAnimationFrame(seekFrame);
+      seekFrame = null;
+      const relative = pendingSeek;
+      pendingSeek = null;
+      if (Math.abs(video.currentTime - (base() + relative)) > 0.000001) video.currentTime = base() + relative;
+      syncOther(true);
+      if (!video.seeking && (!both || !otherVideo.seeking)) draw();
+    }
+    function onSeeked() {
+      if (!clip || video.seeking || options.mode?.() === 'both' && otherVideo.seeking) return;
+      draw();
+      // Paint the completed frame before decoding the latest drag position; never restart an in-flight seek.
+      if (pendingSeek !== null && seekFrame === null) seekFrame = requestAnimationFrame(() => {
+        seekFrame = null;
+        flushSeek();
+      });
+    }
+    video.addEventListener('seeked', onSeeked);
     video.addEventListener('loadedmetadata', () => { if (clip) seek(requestedTime); });
-    otherVideo.addEventListener('loadedmetadata', () => syncOther(true));
-    otherVideo.addEventListener('seeked', draw);
+    otherVideo.addEventListener('loadedmetadata', () => { flushSeek(); syncOther(true); });
+    otherVideo.addEventListener('seeked', onSeeked);
     for (const source of [video, otherVideo]) {
       source.addEventListener('loadeddata', draw);
       source.addEventListener('error', () => status('Cut-up preview could not open this film.', true));
@@ -309,6 +345,7 @@
     $('play').addEventListener('click', () => {
       if (!clip) return;
       if (!video.paused) { stopPlayback(); return; }
+      flushSeek(true);
       if (time() < start() || time() >= end() - 0.001) video.currentTime = start();
       syncOther();
       Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
@@ -317,7 +354,7 @@
     });
     $('time').addEventListener('input', () => seek(Number($('time').value)));
     $('mark-play-snap').addEventListener('click', () => {
-      if (!clip || video.readyState < 2 || video.seeking || options.mode?.() === 'both' && (otherVideo.readyState < 2 || otherVideo.seeking)) {
+      if (!frameReady()) {
         status('Wait for the selected frame to finish loading before marking the snap.', true);
         return;
       }
@@ -347,8 +384,8 @@
       seek(boundary === 'start' ? clip.trim : Math.max(clip.trim, clip.len - (clip.trimEnd ?? 0) - 0.001));
       options.onTrim?.(clip);
     });
-    $('back').addEventListener('click', () => seek(time() - base() - 1 / clip.fps));
-    $('forward').addEventListener('click', () => seek(time() - base() + 1 / clip.fps));
+    $('back').addEventListener('click', () => { if (clip) seek((pendingSeek ?? time() - base()) - 1 / clip.fps); });
+    $('forward').addEventListener('click', () => { if (clip) seek((pendingSeek ?? time() - base()) + 1 / clip.fps); });
     $('review-stop').addEventListener('click', () => {
       const last = track()?.points.findLast(p => p.t >= start() && p.t < end());
       if (!last) return;
@@ -357,7 +394,7 @@
     });
     canvas.addEventListener('click', event => {
       if (!clip || options.isClean() || video.readyState < 2 || $('tool').value === 'overlay') return;
-      if (video.seeking || options.mode?.() === 'both' && otherVideo.seeking) {
+      if (!frameReady()) {
         status('Wait for the selected video frame to finish loading before placing a player.', true);
         return;
       }
@@ -573,7 +610,9 @@
     $('angle').addEventListener('change', () => select(clip, true));
 
     function select(next, preserveTime = false) {
-      const relative = clip && next === clip && preserveTime ? Math.max(0, time() - base()) : next?.trim || 0;
+      const relative = clip && next === clip && preserveTime ? Math.max(0, pendingSeek ?? time() - base()) : next?.trim || 0;
+      if (seekFrame !== null) cancelAnimationFrame(seekFrame);
+      seekFrame = pendingSeek = null;
       requestedTime = relative;
       stopPlayback();
       if (next && job && saveKey(next) === saveKey(job.clip)) next.highlights = job.clip.highlights;
@@ -594,8 +633,8 @@
       syncTrimHandles();
       if (!clip) return;
       $('time').max = clip.len;
-      $('time').value = relative;
       $('time').step = 1 / clip.fps;
+      updateTime(relative);
       $('player').replaceChildren(new Option('Custom name / no roster identity', ''));
       playerChoices = options.players(clip);
       for (const p of playerChoices) $('player').add(new Option(`${p.team || ''} ${p.number ? '#' + p.number : ''} ${p.name || p.id}`, p.id));
@@ -606,7 +645,7 @@
       $('player').value = track()?.id || '';
       syncControls();
       if (video.src !== clip.url) video.src = clip.url;
-      else seek(relative);
+      else { seek(relative); flushSeek(true); }
       if (otherVideo.src !== clip.url) otherVideo.src = clip.url;
       else syncOther();
       status(busy ? 'Tracking continues in the background. You can preview, edit, or close Share.'
@@ -618,7 +657,7 @@
     return {
       select,
       relativeTime: () => clip ? Math.max(0, time() - base()) : 0,
-      ready: () => !!clip && video.readyState >= 2 && !video.seeking && (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking),
+      ready: frameReady,
       busy: () => busy,
       pause: stopPlayback,
       refresh: () => { $('controls').disabled = !clip || options.isClean(); syncTrimHandles(); syncThemeControls(); draw(); },

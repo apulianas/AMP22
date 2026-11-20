@@ -1270,6 +1270,42 @@ test('update notes render as text and automatic checks do not interrupt playback
   assert.equal(modal.open, false);
 });
 
+test('playback shortcuts control the export preview without stealing typing, checkbox input or key repeats', () => {
+  const r = renderer();
+  const el = id => r.context.document.getElementById(id);
+  el('settings').hidden = el('command-palette').hidden = true;
+  el('share').hidden = el('share-advanced').hidden = el('highlight-editor').hidden = false;
+  r.S.keymap = settings.buildKeymap(settings.DEFAULT_SETTINGS.shortcuts);
+  let plays = 0, prevented = 0;
+  el('highlight-play').click = () => plays++;
+  const press = (target, key = ' ', repeat = false) => r.handleKeydown({
+    target, key, repeat, preventDefault() { prevented++; },
+  });
+  press({ tagName: 'INPUT', type: 'range' });
+  press({ tagName: 'BUTTON' }, 'k');
+  assert.equal(plays, 2);
+  press({ tagName: 'BUTTON' }, ' ', true);
+  assert.equal(plays, 2, 'holding Space does not repeatedly toggle playback');
+  assert.equal(prevented, 3, 'Space never activates a focused snap or export button as well');
+  for (const target of [
+    { tagName: 'INPUT', type: 'text' }, { tagName: 'INPUT', type: 'number' },
+    { tagName: 'INPUT', type: 'checkbox' }, { tagName: 'TEXTAREA' },
+    { tagName: 'SELECT' }, { isContentEditable: true },
+  ]) press(target);
+  assert.equal(prevented, 3, 'editing controls retain their native keyboard behavior');
+  r.S.exporting = true;
+  press({ tagName: 'BUTTON' });
+  r.S.exporting = false;
+  el('share-advanced').hidden = true;
+  press({ tagName: 'BUTTON' });
+  assert.equal(plays, 2, 'export-in-progress and Quick export never start hidden video');
+  el('share-advanced').hidden = false;
+  r.S.keymap = new Map([['P', 'playPause']]);
+  press({ tagName: 'BUTTON' });
+  press({ tagName: 'BUTTON' }, 'p');
+  assert.equal(plays, 3, 'custom playback shortcuts work in the preview too');
+});
+
 test('film setup occupies the empty viewer and becomes an optional panel after analysis', () => {
   const r = renderer();
   const el = (id) => r.context.document.getElementById(id);

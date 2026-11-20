@@ -2348,8 +2348,8 @@ function drawCutupPreview({ canvas, clip, angle, video, otherVideo, time, drawTr
   const clean = $('share-clean').checked;
   positionBounds = null;
   const { width, height } = A22.clipExport.dimensions(mode);
-  canvas.width = width;
-  canvas.height = height;
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
   // Fit the video above the trim, snap, and playback rows so those controls stay visible without scrolling.
   const editor = $('highlight-editor');
   const top = editor.getBoundingClientRect().top - editor.scrollTop;
@@ -3194,7 +3194,16 @@ function handleKeydown(e) {
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     return;
   }
-  if (!$('settings').hidden || !$('share').hidden) return;
+  if (!$('settings').hidden) return;
+  if (!$('share').hidden) {
+    if (!S.exporting && !$('share-advanced').hidden && !$('highlight-editor').hidden &&
+        !isTextTarget(e.target) && e.target.type !== 'checkbox' &&
+        S.keymap.get(comboFromEvent(e)) === 'playPause') {
+      e.preventDefault();
+      if (!e.repeat) $('highlight-play').click();
+    }
+    return;
+  }
   if (e.target.classList.contains('play-check') && e.key === ' ') return;
   if (isTextTarget(e.target)) {
     if (e.target.id === 'search' && (e.key === 'Enter' || e.key === 'ArrowDown')) { e.preventDefault(); e.target.blur(); if (S.visible.length) selectPlay(S.visible[0]); }
@@ -3207,6 +3216,7 @@ function handleKeydown(e) {
   if (!id) return;
   if (!$('help').hidden && id !== 'help') toggleOverlay('help', false);
   e.preventDefault();
+  if (id === 'playPause' && e.repeat) return;
   if (e.target && e.target.blur && e.target.tagName === 'BUTTON') e.target.blur();
   runAction(id);
 }

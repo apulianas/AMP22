@@ -9,6 +9,8 @@ const overlay = require('../src/shared/overlay');
 
 function editor({ deferred = false, mode, renderPreview, snapSupport = false } = {}) {
   const elements = new Map(), requests = [], writes = [], defaults = [], pending = [], cancellations = [], busyChanges = [];
+  const animationFrames = new Map();
+  let frameId = 0;
   let progress;
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
@@ -32,7 +34,9 @@ function editor({ deferred = false, mode, renderPreview, snapSupport = false } =
   const context = vm.createContext({
     A22: { tracking, overlay },
     document: { getElementById: element, createElement: () => element('created-canvas') },
-    structuredClone, requestAnimationFrame() {},
+    structuredClone,
+    requestAnimationFrame(callback) { animationFrames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame(id) { animationFrames.delete(id); },
     Option: function (name, value) { this.name = name; this.value = value; },
     window: { api: {
       onTrackingProgress: callback => { progress = callback; },
@@ -75,6 +79,11 @@ function editor({ deferred = false, mode, renderPreview, snapSupport = false } =
   return {
     instance, clip, requests, writes, defaults, context, pending, cancellations, busyChanges, trims, snaps,
     progress: value => progress(value),
+    paint() {
+      const callbacks = [...animationFrames.values()];
+      animationFrames.clear();
+      callbacks.forEach(callback => callback());
+    },
     el: id => element('highlight-' + id),
     setClean: value => { clean = value; },
     setExporting: value => { exporting = value; instance.refresh(); },
@@ -83,6 +92,93 @@ function editor({ deferred = false, mode, renderPreview, snapSupport = false } =
     async settle() { await new Promise(resolve => setImmediate(resolve)); },
   };
 }
+
+test('scrubbing presents completed paired frames, coalesces pending seeks and keeps the playhead at the latest request', async () => {
+  const shown = [];
+  const r = editor({ mode: 'both', snapSupport: true, renderPreview: value => {
+    shown.push([value.video.currentTime, value.otherVideo.currentTime]);
+    return { sideline: { x: 0, y: 0, w: 960, h: 540 } };
+  } });
+  r.instance.select(r.clip);
+  shown.length = 0;
+  const seeks = [];
+  for (const id of ['video', 'other-video']) {
+    const video = r.el(id);
+    let current = video.currentTime;
+    Object.defineProperty(video, 'currentTime', {
+      get: () => current,
+      set(value) { current = value; video.seeking = true; seeks.push([id, value]); },
+    });
+  }
+  for (const value of [1, 2, 3]) {
+    r.el('time').value = value;
+    r.el('time').fire('input');
+  }
+  assert.deepEqual(seeks, [['video', 11], ['other-video', 31]], 'in-flight decoding is not restarted on every input');
+  assert.equal(Number(r.el('time').value), 3);
+  r.el('video').seeking = false;
+  r.el('video').fire('seeked');
+  assert.equal(shown.length, 0, 'paired previews wait for both matching frames');
+  r.el('other-video').seeking = false;
+  r.el('other-video').fire('seeked');
+  assert.deepEqual(shown, [[11, 31]], 'a completed frame is shown while the drag continues');
+  assert.equal(Number(r.el('time').value), 3, 'completed older frames never pull the thumb backward');
+  assert.equal(r.instance.ready(), false);
+  await r.el('mark-play-snap').fire('click');
+  assert.equal(r.snaps.length, 0, 'a pending requested frame cannot save the older displayed frame as the snap');
+  r.paint();
+  assert.deepEqual(seeks.slice(2), [['video', 13], ['other-video', 33]], 'only the latest request is decoded next');
+  for (const id of ['video', 'other-video']) {
+    r.el(id).seeking = false;
+    r.el(id).fire('seeked');
+  }
+  assert.deepEqual(shown.at(-1), [13, 33]);
+  assert.equal(r.instance.ready(), true);
+  assert.equal(Number(r.el('time').value), 3);
+});
+
+test('preview initializes its playhead before metadata and discards queued seeks when changing clips', () => {
+  const r = editor();
+  r.clip.trim = 1;
+  r.el('video').readyState = 0;
+  r.el('other-video').readyState = 0;
+  r.instance.select(r.clip);
+  assert.equal(Number(r.el('time').value), 1);
+  assert.equal(r.el('time-label').textContent, '1.00 / 5.00s');
+  r.el('time').value = 2;
+  r.el('time').fire('input');
+  assert.equal(Number(r.el('time').value), 2);
+  r.el('video').readyState = r.el('other-video').readyState = 2;
+  r.el('video').fire('loadedmetadata');
+  assert.equal(r.el('video').currentTime, 12);
+  r.el('video').seeking = true;
+  r.el('time').value = 4;
+  r.el('time').fire('input');
+  r.el('video').seeking = false;
+  r.el('video').fire('seeked');
+  const next = { ...r.clip, aStart: 50, bStart: 70, trim: 0.5 };
+  r.instance.select(next);
+  r.paint();
+  assert.equal(r.el('video').currentTime, 50.5);
+  assert.equal(r.el('other-video').currentTime, 70.5);
+  assert.equal(Number(r.el('time').value), 0.5);
+});
+
+test('starting playback applies the latest queued scrub position rather than replaying an older seek', async () => {
+  const r = editor({ mode: 'both' });
+  r.instance.select(r.clip);
+  r.el('video').seeking = r.el('other-video').seeking = true;
+  r.el('time').value = 3;
+  r.el('time').fire('input');
+  await r.el('play').fire('click');
+  assert.equal(r.el('video').currentTime, 13);
+  assert.equal(r.el('other-video').currentTime, 33);
+  assert.equal(r.el('video').paused, false);
+  assert.equal(r.el('other-video').paused, false);
+  r.el('play').fire('click');
+  assert.equal(r.el('video').paused, true);
+  assert.equal(r.el('other-video').paused, true);
+});
 
 test('play-level snap markers work without highlights, convert both cameras and keep confirmed cutoffs consistent', async () => {
   const r = editor({ snapSupport: true, mode: 'both' });
