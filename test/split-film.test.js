@@ -45,7 +45,7 @@ function renderer({ cached = true, timers = { setTimeout: () => 1, clearTimeout(
   const context = vm.createContext({
     structuredClone,
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
-    A22: { align, plays, settings, clipExport, advanced, reports, tracking: require('../src/shared/tracking'), filterPresets: require('../src/shared/filter-presets'), teams: require('../src/shared/teams'), overlay: require('../src/shared/overlay') },
+    A22: { align, plays, settings, clipExport, advanced, reports, tracking: require('../src/shared/tracking'), filterPresets: require('../src/shared/filter-presets'), teams: require('../src/shared/teams'), overlay: require('../src/shared/overlay'), rewind: require('../src/shared/rewind') },
     window: { addEventListener() {}, api },
     document: { getElementById: element, querySelectorAll: () => [] },
   });

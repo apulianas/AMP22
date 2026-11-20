@@ -2143,6 +2143,7 @@ function openShare() {
         play: S.plays[i], playNumber: i + 1, trim: S.settings.exportTrim, trimEnd: 0, highlightKey, gameId: S.sel.gameId,
         snapMark: S.gameData.snapMarks?.[highlightKey] || null,
         highlights: structuredClone(S.gameData.playerHighlights?.[highlightKey] || {}),
+        rewinds: [],
       };
     });
     const matchup = S.game ? `${S.game.awayTeam} at ${S.game.homeTeam} · ${S.game.season} · Week ${S.game.week}` : 'AMP22';
@@ -2194,9 +2195,12 @@ function applyExportPreset(preset, persist = true) {
 }
 
 function trimmedExportClips() {
-  return S.exportDraft.clips.map(({ trim, trimEnd, trimEdited, durationRecorded, snapMark, snapTrimRecorded, ...clip }, i) => {
-    try { return A22.clipExport.trimRange(clip, trim, trimEnd); }
-    catch (e) { throw new Error(`Play ${i + 1} (${P.clockLabel(clip.play)}): ${e.message}`); }
+  return S.exportDraft.clips.map(({ trim, trimEnd, trimEdited, durationRecorded, snapMark, snapTrimRecorded, rewinds, ...clip }, i) => {
+    try {
+      const range = A22.clipExport.trimRange(clip, trim, trimEnd);
+      const resolved = A22.rewind.resolve(rewinds, trim, trimEnd ?? 0, clip.len, clip.fps);
+      return resolved.length ? { ...range, rewinds: resolved } : range;
+    } catch (e) { throw new Error(`Play ${i + 1} (${P.clockLabel(clip.play)}): ${e.message}`); }
   });
 }
 
@@ -2392,7 +2396,10 @@ function drawCutupPreview({ canvas, clip, angle, video, otherVideo, time, drawTr
   $('share-position-status').textContent = clean ? 'Clean export: overlays are disabled.'
     : !positionBounds ? 'Play information is hidden at this time; player highlights keep their own timing.'
     : `Choose Move play information to drag the card.${warnings?.size ? ` Headshot notices: ${[...warnings].join('; ')}` : ''}`;
-  $('share-preview-status').textContent = `${(clip.len - clip.trim - (clip.trimEnd ?? 0)).toFixed(2)} seconds retained${mode === 'both' ? ' per camera' : ''}.${mode.endsWith('-first') ? ' Preview camera changes do not change export block order.' : ''}`;
+  const retained = clip.len - clip.trim - (clip.trimEnd ?? 0);
+  const rewound = A22.rewind.resolve(clip.rewinds, clip.trim, clip.trimEnd ?? 0, clip.len, clip.fps);
+  const added = rewound.length ? A22.rewind.outputSeconds(rewound, clip.fps, Math.round(retained * clip.fps)) - Math.round(retained * clip.fps) / clip.fps : 0;
+  $('share-preview-status').textContent = `${retained.toFixed(2)} seconds retained${mode === 'both' ? ' per camera' : ''}${added > 0.005 ? `, plus ${added.toFixed(2)}s of rewind` : ''}.${mode.endsWith('-first') ? ' Preview camera changes do not change export block order.' : ''}`;
   positionFrames = { clip, mode };
   return viewports;
 }
@@ -3183,6 +3190,7 @@ function handleKeydown(e) {
   }
   if (e.key === 'Escape') {
     if (S.exporting) return;
+    if (highlightEditor?.closeRewind()) { e.preventDefault(); return; }
     const activeOverlay = [...document.querySelectorAll('.overlay')].find((overlay) => !overlay.hidden);
     if (activeOverlay) {
       if (!$('settings').hidden) applyComfortSettings(S.settings);
@@ -3277,6 +3285,7 @@ function wire() {
     saveSnap: saveClipSnap,
     snapLearning: () => S.settings.snapLearning,
     isExporting: () => S.exporting,
+    onRewind: () => updateExportOptions(),
     onTrim: clip => {
       clip.snapTrimRecorded = false;
       showTrimFields(clip);

@@ -19,7 +19,7 @@ function renderer() {
     setTimeout: () => 1,
     clearTimeout() {},
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    A22: { plays, settings, clipExport, advanced, reports, filterPresets, tracking: require('../src/shared/tracking'), analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay') },
+    A22: { plays, settings, clipExport, advanced, reports, filterPresets, tracking: require('../src/shared/tracking'), analysis: require('../src/shared/analysis'), teams: require('../src/shared/teams'), align: require('../src/shared/align'), overlay: require('../src/shared/overlay'), rewind: require('../src/shared/rewind') },
     window: { addEventListener() {}, open: () => null },
     document: {
       querySelectorAll: () => [],
@@ -41,7 +41,7 @@ function renderer() {
   vm.runInContext(`
     updateSelection = () => {};
     selectPlay = (i) => { S.curPlay = i; };
-    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, filmWeightsFor, filmCoverage, checkFilmCoverage, syncFilterControls, setResultFilter, prepareAnalysisEntry, renderDurationSuggestion, applyDurationSuggestion, saveDurationPreference, exportSelection, currentSnapClip, clipSnap, saveClipSnap, renderFilmSnap, learnExportPreferences, ADV_CHOICES, choiceOptions };
+    globalThis.renderer = { S, derivePlays, renderList, navPlay, renderAdvancedFilters, setAdvancedChoice, removePlayerFilter, renderInfo, popAngle, updateAngleButtons, renderUpdate, checkUpdates, closeUpdate, handleKeydown, renderFilmSetup, refreshParticipation, chooseFilterPreset, saveFilterPreset, filterChoiceCount, renderFilterCounts, clearAllFilters, renderOffenseOptions, selectFirstLinked, filmWeightsFor, filmCoverage, checkFilmCoverage, syncFilterControls, setResultFilter, prepareAnalysisEntry, renderDurationSuggestion, applyDurationSuggestion, saveDurationPreference, exportSelection, trimmedExportClips, currentSnapClip, clipSnap, saveClipSnap, renderFilmSnap, learnExportPreferences, ADV_CHOICES, choiceOptions };
   `, context);
   const api = context.renderer;
   api.S.settings = { keyPlays: {}, skipNoFilm: false };
@@ -1527,4 +1527,20 @@ test('yardage and distance bounds apply to scrimmage plays and combine with adva
   r.S.filter.choices = { rpo: 'true', coverage: 'Cover 3' };
   r.renderAdvancedFilters();
   assert.deepEqual({ ...r.S.filter.choices }, { coverage: 'Cover 3' }, 'selections unavailable in the loaded game are cleared');
+});
+
+test('export clips carry only the rewinds the trimmed range keeps, timed from the new start', () => {
+  const r = renderer();
+  const clip = { play: {}, file: '/film.mp4', aStart: 10, bStart: 30, len: 10, fps: 30, trim: 2, trimEnd: 3, trimEdited: true,
+    rewinds: [
+      { id: 'early', at: 1.5, seconds: 1, speed: 2, color: 0 },
+      { id: 'late', at: 8.5, seconds: 1, speed: 2, color: 1 },
+      { id: 'long', at: 4, seconds: 5, speed: 1, color: 2 },
+    ] };
+  r.S.exportDraft = { clips: [clip, { play: {}, file: '/film.mp4', aStart: 10, bStart: 30, len: 4, fps: 30, trim: 0, rewinds: [] }] };
+  const [trimmed, plain] = r.trimmedExportClips();
+  assert.equal(trimmed.aStart, 12);
+  assert.deepEqual(JSON.parse(JSON.stringify(trimmed.rewinds)), [{ at: 2, seconds: 1.966667, speed: 1 }]);
+  assert.equal('rewinds' in plain, false, 'clips without rewinds keep the plain export shape');
+  assert.equal('trimEdited' in trimmed, false);
 });

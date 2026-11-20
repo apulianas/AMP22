@@ -1,7 +1,7 @@
 /* global A22 */
 (function () {
   'use strict';
-  const T = A22.tracking;
+  const T = A22.tracking, R = A22.rewind;
   const $ = id => document.getElementById(`highlight-${id}`);
 
   function graphic(track, appearance, width, photo) {
@@ -51,6 +51,8 @@
     const video = $('video'), otherVideo = $('other-video'), canvas = $('canvas');
     let clip = null, angle = 'sideline', busy = false, requestedTime = 0;
     let pendingSeek = null, seekFrame = null;
+    // Rewind playback: `reverse` is the rewind being stepped backward, `consumed` those already played.
+    let reverse = null, consumed = new Set(), loop = null, rewinds = [];
     let job = null, running = null, analysisQueue = Promise.resolve();
     let offense = [], offenseTime = null, suggestion = null;
     let saving = Promise.resolve();
@@ -67,6 +69,14 @@
     const end = () => base() + clip.len - (clip.trimEnd ?? 0);
     const time = () => video.currentTime;
     const retained = () => !!clip && time() >= start() && time() < end();
+    const rewindTimeline = A22.createRewindTimeline({
+      clip: () => clip,
+      locked: () => !!options.isExporting?.(),
+      ready: () => frameReady(),
+      pause: () => stopPlayback(),
+      playhead: () => time() - base(),
+      changed: () => { stopPlayback(); options.onRewind?.(clip); draw(); },
+    });
     function requireRetained() {
       if (!frameReady()) {
         status('Wait for the selected frame to finish loading before editing player annotations.', true);
@@ -145,12 +155,13 @@
         input.setAttribute('aria-valuetext', `${value.toFixed(2)} seconds from original start${boundary === 'end' ? '; exclusive end' : ''}`);
         $('trim-' + boundary + '-label').textContent = `${value.toFixed(2)}s`;
       }
-      if (!clip) return;
+      if (!clip) { rewindTimeline.sync(); return; }
       // Match the 14px thumbs so removed portions line up with the handles and playhead.
       const track = ratio => `calc(7px + (100% - 14px) * ${ratio})`;
       $('time').style.setProperty('--trim-start', clip.trim > 0 ? track(clip.trim / clip.len) : '0%');
       $('time').style.setProperty('--trim-end', clip.trimEnd > 0 ? track((clip.len - clip.trimEnd) / clip.len) : '100%');
       syncSnapMarker();
+      rewindTimeline.sync();
     }
     function syncSnapMarker() {
       const value = clip && options.getSnap?.(clip);
@@ -253,6 +264,7 @@
               : value.points.length === 1 ? job?.value === value ? 'Position placed. Tracking in the background; you can keep using the preview.'
                 : 'Position placed only. Click the player to track again.'
                 : 'Showing a saved tracked position. Review that the circle stays on the intended player.';
+      if (reverse) $('preview-state').textContent = `Previewing rewind ${reverse.number} backward at ${reverse.speed}×. The preview steps frame by frame; the export plays it smoothly with reversed audio.`;
       const viewport = viewports[angle];
       if (offenseTime !== null && Math.abs(t - offenseTime) < 0.06) {
         ctx.strokeStyle = '#ffffff';
@@ -275,7 +287,11 @@
       return !!clip && pendingSeek === null && video.readyState >= 2 && !video.seeking &&
         (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking);
     }
-    function stopPlayback() { video.pause(); otherVideo.pause(); $('play').textContent = 'Play preview'; }
+    function stopPlayback() {
+      reverse = null;
+      video.pause(); otherVideo.pause();
+      $('play').textContent = 'Play preview';
+    }
     function syncOther(exact = false) {
       if (!clip || !otherVideo.readyState) return;
       const target = base(otherAngle()) + time() - base();
@@ -324,8 +340,48 @@
       source.addEventListener('loadeddata', draw);
       source.addEventListener('error', () => status('Cut-up preview could not open this film.', true));
     }
+    // The rewinds the trimmed play will actually perform, in playing order and original-clip time.
+    function activeRewinds() {
+      return (clip.rewinds || []).map(rewind => {
+        const value = R.effective(rewind, clip.trim, clip.trimEnd ?? 0, clip.len, clip.fps);
+        return value && { ...value, span: R.span(value, clip.fps), number: rewind.color + 1, source: rewind };
+      }).filter(Boolean).sort((a, b) => a.span.turn - b.span.turn);
+    }
+    function startReverse(item) {
+      consumed.add(item.source);
+      reverse = { ...item, began: performance.now() };
+      video.pause(); otherVideo.pause();
+      pendingSeek = item.span.turn;
+      flushSeek(true);
+      draw();
+    }
+    function rewindDue() {
+      if (reverse) return false;
+      const relative = time() - base();
+      const item = rewinds.find(value => !consumed.has(value.source) && relative >= value.span.turn - 0.000001);
+      if (!item) return false;
+      startReverse(item);
+      return true;
+    }
+    function stepReverse() {
+      const { span, speed, began } = reverse, frame = 1 / clip.fps;
+      const wanted = span.turn - (performance.now() - began) / 1000 * speed;
+      if (wanted > span.start - frame / 2) {
+        const target = Math.max(span.start, Math.round(wanted * clip.fps) / clip.fps);
+        if (pendingSeek === null && Math.abs(time() - base() - target) < 1e-6) return;
+        pendingSeek = target;
+        updateTime(target);
+        flushSeek();
+        return;
+      }
+      // The earliest rewound frame has been shown; forward play resumes on the frame after it.
+      reverse = null;
+      pendingSeek = span.start + frame;
+      flushSeek(true);
+      startForward();
+    }
     function stopAtEnd() {
-      if (!clip || video.paused || time() < end()) return;
+      if (!clip || video.paused || rewindDue() || time() < end()) return;
       stopPlayback();
       video.currentTime = Math.max(start(), end() - 0.001);
       syncOther();
@@ -336,21 +392,37 @@
       draw();
     });
     function animate() {
-      stopAtEnd();
-      if (video.paused) return;
-      if (options.mode?.() === 'both') syncOther();
-      draw();
-      requestAnimationFrame(animate);
+      loop = null;
+      if (reverse) stepReverse();
+      else {
+        stopAtEnd();
+        if (!reverse) {
+          if (video.paused) return;
+          if (options.mode?.() === 'both') syncOther();
+          draw();
+        }
+      }
+      if (reverse || !video.paused) loop = requestAnimationFrame(animate);
+    }
+    function startLoop() {
+      if (loop !== null) cancelAnimationFrame(loop);
+      animate();
+    }
+    function startForward() {
+      syncOther();
+      return Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
+        .then(() => { $('play').textContent = 'Pause preview'; startLoop(); })
+        .catch(error => { stopPlayback(); status(`Preview failed: ${error.message}`, true); });
     }
     $('play').addEventListener('click', () => {
       if (!clip) return;
-      if (!video.paused) { stopPlayback(); return; }
+      if (!video.paused || reverse) { stopPlayback(); return; }
       flushSeek(true);
-      if (time() < start() || time() >= end() - 0.001) video.currentTime = start();
-      syncOther();
-      Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
-        .then(() => { $('play').textContent = 'Pause preview'; animate(); })
-        .catch(error => { stopPlayback(); status(`Preview failed: ${error.message}`, true); });
+      // Scrubbing to the end parks one millisecond short of it, so anywhere in the last frame counts as the end.
+      if (time() < start() || time() >= end() - 1.5 / clip.fps) video.currentTime = start();
+      rewinds = activeRewinds();
+      consumed = new Set(rewinds.filter(value => value.span.turn < time() - base() - 0.5 / clip.fps).map(value => value.source));
+      startForward();
     });
     $('time').addEventListener('input', () => seek(Number($('time').value)));
     $('mark-play-snap').addEventListener('click', () => {
@@ -660,6 +732,7 @@
       ready: frameReady,
       busy: () => busy,
       pause: stopPlayback,
+      closeRewind: () => rewindTimeline.close(true),
       refresh: () => { $('controls').disabled = !clip || options.isClean(); syncTrimHandles(); syncThemeControls(); draw(); },
       async export(clips, mode, appearance, centered) {
         if (busy) throw new Error('Finish or cancel background player tracking before exporting highlights.');
