@@ -256,8 +256,17 @@
 
       <div id="timeline" hidden>
         <span id="time-label" class="mono">0:00.00</span>
-        <input id="scrub" type="range" min="0" max="1000" value="0" step="1" />
+        <div class="snap-timeline film-scrub-track">
+          <input id="scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Film timeline" />
+          <span id="film-snap-marker" class="snap-marker" aria-hidden="true" hidden></span>
+        </div>
         <span id="frame-label" class="mono"></span>
+      </div>
+      <div id="film-snap-tools" class="row snap-tools" hidden>
+        <button id="film-mark-snap" class="mark-snap" type="button">Mark snap here</button>
+        <button id="film-go-snap" type="button" disabled>Go to snap</button>
+        <button id="film-clear-snap" type="button" disabled>Clear snap</button>
+        <span id="film-snap-status" class="muted small" role="status" aria-live="polite"></span>
       </div>
 
       <div id="transport" hidden>
@@ -355,10 +364,48 @@
           <video id="highlight-other-video" preload="auto" muted playsinline hidden></video>
           <canvas id="highlight-canvas" tabindex="0" role="img" aria-label="Live cut-up preview. Move play information or select a player's torso using the Edit on video control." hidden></canvas>
           <label for="highlight-time">Original clip timeline · red portions removed</label>
-          <input id="highlight-time" type="range" min="0" max="1" step="0.1" />
+          <div class="row small trim-labels">
+            <label for="highlight-trim-start">Start <output id="highlight-trim-start-label"></output></label>
+            <label for="highlight-trim-end">End <output id="highlight-trim-end-label"></output></label>
+          </div>
+          <div class="trim-handles" role="group" aria-label="Drag clip boundaries; arrow keys adjust one frame">
+            <input id="highlight-trim-start" type="range" min="0" max="1" step="0.1" aria-label="Clip start" />
+            <input id="highlight-trim-end" type="range" min="0" max="1" step="0.1" aria-label="Clip end (exclusive)" />
+          </div>
+          <div id="highlight-rewind-timeline" class="rewind-timeline">
+            <div id="highlight-rewind-markers" class="rewind-markers" role="group" aria-label="Rewinds in this play"></div>
+            <div class="snap-timeline">
+              <input id="highlight-time" type="range" min="0" max="1" value="0" step="0.1" />
+              <span id="highlight-snap-marker" class="snap-marker" aria-hidden="true" hidden></span>
+            </div>
+            <div id="highlight-rewind-lanes" class="rewind-lanes" hidden></div>
+            <div id="highlight-rewind-popover" class="rewind-popover" role="dialog" aria-labelledby="highlight-rewind-title" hidden>
+              <div class="rewind-fields">
+                <strong id="highlight-rewind-title">Rewind</strong>
+                <label>Length (s) <span id="highlight-rewind-seconds-hint" class="muted"></span>
+                  <input id="highlight-rewind-seconds" type="number" min="0.05" max="6" step="0.1" />
+                </label>
+                <label>Speed (×)
+                  <input id="highlight-rewind-speed" type="number" min="0.5" max="4" step="0.25" />
+                </label>
+                <button id="highlight-rewind-delete" type="button">Delete</button>
+                <button id="highlight-rewind-close" class="rewind-close" type="button" aria-label="Close rewind editor">✕</button>
+              </div>
+              <p id="highlight-rewind-summary" class="muted small"></p>
+            </div>
+          </div>
+          <p class="muted small">Drag the start/end handles above the scrub bar. Arrow keys move one frame. End previews the last retained frame.</p>
+          <div class="row snap-tools">
+            <button id="highlight-mark-play-snap" class="mark-snap" type="button">Mark snap here</button>
+            <button id="highlight-go-play-snap" type="button" disabled>Go to snap</button>
+            <button id="highlight-clear-play-snap" type="button" disabled>Clear snap</button>
+            <button id="highlight-add-rewind" type="button" title="Play backward from the playhead, then replay that footage">◀◀ Add rewind here</button>
+          </div>
+          <p id="highlight-play-snap-status" class="muted small" role="status" aria-live="polite"></p>
+          <p id="highlight-rewind-status" class="muted small" role="status" aria-live="polite"></p>
           <div class="row cutup-transport">
             <button id="highlight-back" type="button" aria-label="Back 1 frame">Back 1 frame</button>
-            <button id="highlight-play" type="button">Play preview</button>
+            <button id="highlight-play" type="button" data-shortcut="playPause" title="Play / pause preview">Play preview</button>
             <button id="highlight-forward" type="button" aria-label="Forward 1 frame">Forward 1 frame</button>
             <span id="highlight-time-label" class="mono"></span>
           </div>
@@ -383,6 +430,12 @@
               <button id="share-trim-end-current" type="button">End clip at current frame</button>
             </p>
             <p class="muted small">Applies to both cameras. Red timeline portions are removed; preview playback uses the retained range. Start uses your Settings default; end starts at 0.</p>
+            <p><label><input id="share-learn-duration" type="checkbox" /> Learn duration from my exported trims on this device</label></p>
+            <p id="share-duration-status" class="muted small" role="status" aria-live="polite"></p>
+            <p class="row">
+              <button id="share-duration-apply" type="button" disabled>Use suggested duration</button>
+              <button id="share-duration-forget" type="button">Forget learned durations</button>
+            </p>
           </fieldset>
           <details id="highlight-section">
             <summary>Player highlight · this play / camera</summary>
@@ -553,6 +606,12 @@
         <label>Text size
           <select id="set-text-scale"><option value="0.9">Compact</option><option value="1">Default</option><option value="1.1">Large</option><option value="1.25">Extra large</option></select>
         </label>
+        <div class="span2">
+          <label><input id="set-snap-learning" type="checkbox" /> Learn expected snap timing on this device</label>
+          <p class="muted small">Uses confirmed snaps and their trim context, not background video analysis. Confirmed markers remain when learning is off.</p>
+          <button id="set-snap-forget" type="button">Forget learned snap timing</button>
+          <span id="set-snap-history" class="muted small" role="status"></span>
+        </div>
         <label id="player-filter-preference" class="span2">On-field player dropdown order
           <select id="set-player-sort">
             <option value="name">Alphabetical</option>
@@ -744,6 +803,7 @@
   <script src="../shared/analysis.js"></script>
   <script src="../shared/reports.js"></script>
   <script src="../shared/export.js"></script>
+  <script src="../shared/rewind.js"></script>
   <script src="../shared/overlay.js"></script>
   <script src="../shared/tracking.js"></script>
   <script src="../shared/filter-presets.js"></script>
@@ -752,6 +812,7 @@
   <script src="../shared/analysis-ai.js"></script>
   <script src="analysis-lab.js"></script>
   <script src="cloud-ai-settings.js"></script>
+  <script src="player-rewinds.js"></script>
   <script src="player-highlights.js"></script>
   <script src="renderer.js"></script>
 </body>

@@ -69,6 +69,47 @@
     return sorted[Math.floor(sorted.length / 2)];
   }
 
+  function snapSamples(values) {
+    const result = new Map();
+    for (const value of Array.isArray(values) ? values : []) {
+      if (!value || typeof value.id !== 'string' || !value.id ||
+          !Number.isFinite(value.offset) || value.offset < 0 ||
+          !(value.leadIn === null || Number.isFinite(value.leadIn) && value.leadIn >= 0 && value.leadIn <= value.offset)) continue;
+      result.delete(value.id);
+      result.set(value.id, { id: value.id, offset: value.offset, leadIn: value.leadIn,
+        type: typeof value.type === 'string' ? value.type : '' });
+    }
+    return [...result.values()].slice(-60);
+  }
+
+  function recordSnap(values, sample) {
+    const valid = snapSamples([sample]);
+    if (!valid.length) throw new Error('Invalid confirmed snap timing.');
+    return snapSamples([...snapSamples(values), valid[0]]);
+  }
+
+  function expectedSnap(values, { len, trim = 0, trimEnd = 0, type = '' }) {
+    if (![len, trim, trimEnd].every(Number.isFinite) || trim < 0 || trimEnd < 0 || trim + trimEnd >= len) return null;
+    const all = snapSamples(values);
+    const matching = all.filter(sample => sample.type === type);
+    let samples = matching.length >= 3 ? matching : all;
+    if (samples.length < 3) return null;
+    const trimmed = samples.filter(sample => sample.leadIn !== null);
+    const useTrim = trim > 0 && trimmed.length >= 3;
+    if (useTrim) samples = trimmed;
+    const times = samples.map(sample => useTrim ? trim + sample.leadIn : sample.offset);
+    const time = median(times);
+    if (time < trim || time >= len - trimEnd) return null;
+    return { time, confirmed: false, count: samples.length, basis: useTrim ? 'trim' : 'original',
+      spread: median(times.map(value => Math.abs(value - time))) };
+  }
+
+  function snapLabel(value) {
+    if (!value) return 'No in-range estimate yet. Mark snaps to learn timing (at least 3 plays).';
+    return value.confirmed ? `Snap: ${value.time.toFixed(2)}s (confirmed)`
+      : `Expected snap: ${value.time.toFixed(2)}s (local timing estimate; ${value.count} examples, typical variation ${value.spread.toFixed(2)}s). Not video detection.`;
+  }
+
   function cameraShift(previous, next, width, height, players) {
     const samples = [];
     for (let y = 16; y < height - 16; y += 12) for (let x = 16; x < width - 16; x += 12) {
@@ -147,5 +188,5 @@
     return result;
   }
 
-  return { RATE, MAX_SECONDS, MAX_POINTS, DEFAULTS, defaults, validateTrack, position, visible, appearance, cameraShift, patchMotion, suggestSnap, geometry, intervals };
+  return { RATE, MAX_SECONDS, MAX_POINTS, DEFAULTS, defaults, validateTrack, position, visible, appearance, snapSamples, recordSnap, expectedSnap, snapLabel, cameraShift, patchMotion, suggestSnap, geometry, intervals };
 });

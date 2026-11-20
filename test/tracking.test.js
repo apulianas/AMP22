@@ -18,6 +18,38 @@ const track = patch => ({
   points: [{ t: 10, x: 0.3, y: 0.5 }, { t: 10.1, x: 0.4, y: 0.6 }], ...patch,
 });
 
+test('local snap timing uses confirmed examples, bounded deduplication and robust play-type medians', () => {
+  const sample = (id, offset, type = 'pass', leadIn = null) => ({ id, offset, type, leadIn });
+  let samples = [];
+  for (const [i, offset] of [3, 3.2, 20].entries()) samples = T.recordSnap(samples, sample(String(i), offset));
+  assert.equal(T.expectedSnap(samples.slice(0, 2), { len: 30 }), null, 'no invented cold-start snap');
+  assert.equal(T.expectedSnap(samples, { len: 30, type: 'pass' }).time, 3.2);
+  samples = T.recordSnap(samples, sample('2', 3.4));
+  assert.equal(samples.length, 3, 'correcting one play replaces its example');
+  const estimate = T.expectedSnap([...samples, sample('run1', 6, 'run'), sample('run2', 6.5, 'run'), sample('run3', 7, 'run')], { len: 12, type: 'run' });
+  assert.equal(estimate.time, 6.5);
+  assert.equal(estimate.count, 3);
+  assert.equal(estimate.confirmed, false);
+  assert.equal(estimate.spread, 0.5);
+  assert.equal(T.snapSamples(Array.from({ length: 80 }, (_, i) => sample(String(i), i))).length, 60);
+  assert.deepEqual(T.snapSamples([{}, sample('x', -1), sample('x', NaN), sample('x', 2, 'pass', 3)]), []);
+  assert.throws(() => T.recordSnap([], sample('bad', -1)), /Invalid confirmed/);
+});
+
+test('confirmed trim context estimates pre-snap lead-in without extending or guessing outside retained film', () => {
+  const samples = [4, 6, 8].map((offset, i) => ({ id: String(i), offset, leadIn: 1.5, type: 'pass' }));
+  assert.equal(T.expectedSnap(samples, { len: 12 }).time, 6, 'Film Room uses source-cut offsets');
+  const trimmed = T.expectedSnap(samples, { len: 12, trim: 2, trimEnd: 1 });
+  assert.equal(trimmed.time, 3.5);
+  assert.equal(trimmed.basis, 'trim');
+  assert.equal(T.expectedSnap(samples, { len: 12, trim: 2, trimEnd: 9 }), null);
+  assert.equal(T.expectedSnap(samples, { len: 3 }), null);
+  assert.equal(T.expectedSnap(samples, { len: 12, trim: NaN }), null);
+  assert.equal(T.expectedSnap(samples, { len: 12, trim: 12 }), null);
+  assert.equal(T.expectedSnap(samples.map(sample => ({ ...sample, leadIn: null })), { len: 12, trim: 2 }).time, 6,
+    'trim-only edits do not invent snap labels');
+});
+
 test('highlight defaults are opt-in, validated, and persisted without importing or analyzing film', () => {
   const settings = mergeSettings({ highlightDefaults: { mode: 'presnap', radius: 0.05, showName: false, showPhoto: false } });
   assert.deepEqual(settings.highlightDefaults, { mode: 'presnap', radius: 0.05, showName: false, showPhoto: false });

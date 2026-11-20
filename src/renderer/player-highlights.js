@@ -1,7 +1,7 @@
 /* global A22 */
 (function () {
   'use strict';
-  const T = A22.tracking;
+  const T = A22.tracking, R = A22.rewind;
   const $ = id => document.getElementById(`highlight-${id}`);
 
   function graphic(track, appearance, width, photo) {
@@ -49,14 +49,17 @@
 
   A22.createHighlightEditor = function (options) {
     const video = $('video'), otherVideo = $('other-video'), canvas = $('canvas');
-    let clip = null, angle = 'sideline', busy = false;
+    let clip = null, angle = 'sideline', busy = false, requestedTime = 0;
+    let pendingSeek = null, seekFrame = null;
+    // Rewind playback: `reverse` is the rewind being stepped backward, `consumed` those already played.
+    let reverse = null, consumed = new Set(), loop = null, rewinds = [];
     let job = null, running = null, analysisQueue = Promise.resolve();
     let offense = [], offenseTime = null, suggestion = null;
     let saving = Promise.resolve();
     const saveErrors = new Map();
     const saveKey = value => value.highlightKey || value;
     let photoRevision = 0;
-    let viewports = null, themeChoices = [], themeSaving = false, playerChoices = [];
+    let viewports = null, themeChoices = [], themeSaving = false, playerChoices = [], snapSaving = false;
     const photos = new Map();
     const graphics = new WeakMap();
     const base = (camera = angle) => camera === 'sideline' ? clip.aStart : clip.bStart;
@@ -66,7 +69,19 @@
     const end = () => base() + clip.len - (clip.trimEnd ?? 0);
     const time = () => video.currentTime;
     const retained = () => !!clip && time() >= start() && time() < end();
+    const rewindTimeline = A22.createRewindTimeline({
+      clip: () => clip,
+      locked: () => !!options.isExporting?.(),
+      ready: () => frameReady(),
+      pause: () => stopPlayback(),
+      playhead: () => time() - base(),
+      changed: () => { stopPlayback(); options.onRewind?.(clip); draw(); },
+    });
     function requireRetained() {
+      if (!frameReady()) {
+        status('Wait for the selected frame to finish loading before editing player annotations.', true);
+        return false;
+      }
       if (retained()) return true;
       status('This frame is removed. Seek inside the retained range before editing player annotations.', true);
       return false;
@@ -94,7 +109,9 @@
     function ensureTrack() {
       if (!track()) {
         clip.highlights ||= {};
-        clip.highlights[angle] = { ...T.defaults(options.defaults()), name: '', id: null, points: [], snap: null };
+        const marked = options.getSnap?.(clip);
+        clip.highlights[angle] = { ...T.defaults(options.defaults()), name: '', id: null, points: [],
+          snap: marked?.confirmed ? base() + marked.time : null };
       }
       return track();
     }
@@ -125,6 +142,69 @@
         : first && last
           ? `${points.length} saved positions; first ${(first.t - start()).toFixed(2)}s, last ${(last.t - start()).toFixed(2)}s of ${(end() - start()).toFixed(2)}s. Gaps and footage after the last position are not highlighted. Use Go to last tracked frame to continue a stopped track.`
           : 'No track in this retained clip. Click the player on the film to start background tracking. Choosing a name or pressing Play preview alone does not run tracking.';
+    }
+    function syncTrimHandles() {
+      for (const boundary of ['start', 'end']) {
+        const input = $('trim-' + boundary);
+        input.disabled = !clip || !!options.isExporting?.();
+        if (!clip) continue;
+        const value = boundary === 'start' ? clip.trim : clip.len - (clip.trimEnd ?? 0);
+        input.max = clip.len;
+        input.step = 1 / clip.fps;
+        input.value = value;
+        input.setAttribute('aria-valuetext', `${value.toFixed(2)} seconds from original start${boundary === 'end' ? '; exclusive end' : ''}`);
+        $('trim-' + boundary + '-label').textContent = `${value.toFixed(2)}s`;
+      }
+      if (!clip) { rewindTimeline.sync(); return; }
+      // Match the 14px thumbs so removed portions line up with the handles and playhead.
+      const track = ratio => `calc(7px + (100% - 14px) * ${ratio})`;
+      $('time').style.setProperty('--trim-start', clip.trim > 0 ? track(clip.trim / clip.len) : '0%');
+      $('time').style.setProperty('--trim-end', clip.trimEnd > 0 ? track((clip.len - clip.trimEnd) / clip.len) : '100%');
+      syncSnapMarker();
+      rewindTimeline.sync();
+    }
+    function syncSnapMarker() {
+      const value = clip && options.getSnap?.(clip);
+      $('snap-marker').hidden = !value;
+      $('mark-play-snap').disabled = !clip || snapSaving || !!options.isExporting?.() || !options.saveSnap;
+      $('clear-play-snap').disabled = $('mark-play-snap').disabled || !value?.confirmed;
+      $('go-play-snap').disabled = !value || !!options.isExporting?.();
+      $('play-snap-status').textContent = !value && options.snapLearning?.() === false
+        ? 'Snap learning is off. You can still mark this play.' : T.snapLabel(value);
+      if (value) {
+        $('snap-marker').style.setProperty('--snap-position', value.time / clip.len);
+        $('snap-marker').classList.toggle('confirmed', value.confirmed);
+      }
+    }
+    async function savePlaySnap(relative, enableTrack = false) {
+      if (!clip || snapSaving || options.isExporting?.() || !options.saveSnap) return;
+      const current = clip, camera = angle;
+      snapSaving = true;
+      syncSnapMarker();
+      try {
+        const result = await options.saveSnap(current, relative);
+        if (enableTrack && !current.highlights?.[camera]) {
+          current.highlights ||= {};
+          current.highlights[camera] = { ...T.defaults(options.defaults()), name: '', id: null, points: [], snap: null };
+        }
+        let changed = false;
+        for (const [name, value] of Object.entries(current.highlights || {})) {
+          if (!['sideline', 'endzone'].includes(name)) continue;
+          value.snap = relative === null ? null : (name === 'sideline' ? current.aStart : current.bStart) + relative;
+          changed = true;
+        }
+        if (changed) await persist(current);
+        if (clip === current) {
+          syncControls();
+          draw();
+          if (!saveErrors.has(saveKey(current))) status(result?.warning || (relative === null ? 'Snap cleared.' : 'Snap confirmed and saved locally.'), !!result?.warning);
+        }
+      } catch (error) {
+        status(`Snap could not be saved: ${error.message}`, true);
+      } finally {
+        snapSaving = false;
+        syncSnapMarker();
+      }
     }
     function syncThemeControls(value = track() || options.defaults()) {
       if (!options.themes) return;
@@ -184,6 +264,7 @@
               : value.points.length === 1 ? job?.value === value ? 'Position placed. Tracking in the background; you can keep using the preview.'
                 : 'Position placed only. Click the player to track again.'
                 : 'Showing a saved tracked position. Review that the circle stays on the intended player.';
+      if (reverse) $('preview-state').textContent = `Previewing rewind ${reverse.number} backward at ${reverse.speed}×. The preview steps frame by frame; the export plays it smoothly with reversed audio.`;
       const viewport = viewports[angle];
       if (offenseTime !== null && Math.abs(t - offenseTime) < 0.06) {
         ctx.strokeStyle = '#ffffff';
@@ -194,17 +275,30 @@
           ctx.fillText(String(index + 1), viewport.x + p.x * viewport.w + 9, viewport.y + p.y * viewport.h);
         });
       }
-      $('time').value = Math.max(0, time() - base());
-      $('time-label').textContent = `${Math.max(0, time() - base()).toFixed(2)} / ${clip.len.toFixed(2)}s`;
-      $('time').setAttribute('aria-valuetext', `${(time() - base()).toFixed(2)} seconds from original start; ${retained() ? 'retained' : 'removed'}`);
+      if (pendingSeek === null) updateTime(time() - base());
     }
-    function stopPlayback() { video.pause(); otherVideo.pause(); $('play').textContent = 'Play preview'; }
-    function syncOther() {
+    function updateTime(relative) {
+      $('time').value = Math.max(0, relative);
+      $('time-label').textContent = `${Math.max(0, relative).toFixed(2)} / ${clip.len.toFixed(2)}s`;
+      const inside = relative >= clip.trim && relative < clip.len - (clip.trimEnd ?? 0);
+      $('time').setAttribute('aria-valuetext', `${relative.toFixed(2)} seconds from original start; ${inside ? 'retained' : 'removed'}`);
+    }
+    function frameReady() {
+      return !!clip && pendingSeek === null && video.readyState >= 2 && !video.seeking &&
+        (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking);
+    }
+    function stopPlayback() {
+      reverse = null;
+      video.pause(); otherVideo.pause();
+      $('play').textContent = 'Play preview';
+    }
+    function syncOther(exact = false) {
       if (!clip || !otherVideo.readyState) return;
       const target = base(otherAngle()) + time() - base();
-      if (Math.abs(otherVideo.currentTime - target) > 0.04) otherVideo.currentTime = target;
+      if (Math.abs(otherVideo.currentTime - target) > (exact ? 0.000001 : 0.04)) otherVideo.currentTime = target;
     }
     function seek(relative) {
+      if (!clip) return;
       stopPlayback();
       const target = Math.min(base() + clip.len - 0.001, Math.max(base(), base() + relative));
       if (offenseTime !== null && Math.abs(target - offenseTime) > 0.06) {
@@ -212,19 +306,82 @@
         offenseTime = null;
         syncControls();
       }
-      video.currentTime = target;
-      syncOther();
+      requestedTime = target - base();
+      pendingSeek = requestedTime;
+      updateTime(requestedTime);
+      flushSeek();
     }
-    video.addEventListener('seeked', draw);
-    video.addEventListener('loadedmetadata', () => { if (clip) seek(clip.trim); });
-    otherVideo.addEventListener('loadedmetadata', syncOther);
-    otherVideo.addEventListener('seeked', draw);
+    function flushSeek(force = false) {
+      if (!clip || pendingSeek === null || !video.readyState) return;
+      const both = options.mode?.() === 'both';
+      if (!force && (seekFrame !== null || video.seeking || both && (!otherVideo.readyState || otherVideo.seeking))) return;
+      if (seekFrame !== null) cancelAnimationFrame(seekFrame);
+      seekFrame = null;
+      const relative = pendingSeek;
+      pendingSeek = null;
+      if (Math.abs(video.currentTime - (base() + relative)) > 0.000001) video.currentTime = base() + relative;
+      syncOther(true);
+      if (!video.seeking && (!both || !otherVideo.seeking)) draw();
+    }
+    function onSeeked() {
+      if (!clip || video.seeking || options.mode?.() === 'both' && otherVideo.seeking) return;
+      draw();
+      // Paint the completed frame before decoding the latest drag position; never restart an in-flight seek.
+      if (pendingSeek !== null && seekFrame === null) seekFrame = requestAnimationFrame(() => {
+        seekFrame = null;
+        flushSeek();
+      });
+    }
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('loadedmetadata', () => { if (clip) seek(requestedTime); });
+    otherVideo.addEventListener('loadedmetadata', () => { flushSeek(); syncOther(true); });
+    otherVideo.addEventListener('seeked', onSeeked);
     for (const source of [video, otherVideo]) {
       source.addEventListener('loadeddata', draw);
       source.addEventListener('error', () => status('Cut-up preview could not open this film.', true));
     }
+    // The rewinds the trimmed play will actually perform, in playing order and original-clip time.
+    function activeRewinds() {
+      return (clip.rewinds || []).map(rewind => {
+        const value = R.effective(rewind, clip.trim, clip.trimEnd ?? 0, clip.len, clip.fps);
+        return value && { ...value, span: R.span(value, clip.fps), number: rewind.color + 1, source: rewind };
+      }).filter(Boolean).sort((a, b) => a.span.turn - b.span.turn);
+    }
+    function startReverse(item) {
+      consumed.add(item.source);
+      reverse = { ...item, began: performance.now() };
+      video.pause(); otherVideo.pause();
+      pendingSeek = item.span.turn;
+      flushSeek(true);
+      draw();
+    }
+    function rewindDue() {
+      if (reverse) return false;
+      const relative = time() - base();
+      const item = rewinds.find(value => !consumed.has(value.source) && relative >= value.span.turn - 0.000001);
+      if (!item) return false;
+      startReverse(item);
+      return true;
+    }
+    function stepReverse() {
+      const { span, speed, began } = reverse, frame = 1 / clip.fps;
+      const wanted = span.turn - (performance.now() - began) / 1000 * speed;
+      if (wanted > span.start - frame / 2) {
+        const target = Math.max(span.start, Math.round(wanted * clip.fps) / clip.fps);
+        if (pendingSeek === null && Math.abs(time() - base() - target) < 1e-6) return;
+        pendingSeek = target;
+        updateTime(target);
+        flushSeek();
+        return;
+      }
+      // The earliest rewound frame has been shown; forward play resumes on the frame after it.
+      reverse = null;
+      pendingSeek = span.start + frame;
+      flushSeek(true);
+      startForward();
+    }
     function stopAtEnd() {
-      if (!clip || video.paused || time() < end()) return;
+      if (!clip || video.paused || rewindDue() || time() < end()) return;
       stopPlayback();
       video.currentTime = Math.max(start(), end() - 0.001);
       syncOther();
@@ -235,24 +392,72 @@
       draw();
     });
     function animate() {
-      stopAtEnd();
-      if (video.paused) return;
-      if (options.mode?.() === 'both') syncOther();
-      draw();
-      requestAnimationFrame(animate);
+      loop = null;
+      if (reverse) stepReverse();
+      else {
+        stopAtEnd();
+        if (!reverse) {
+          if (video.paused) return;
+          if (options.mode?.() === 'both') syncOther();
+          draw();
+        }
+      }
+      if (reverse || !video.paused) loop = requestAnimationFrame(animate);
+    }
+    function startLoop() {
+      if (loop !== null) cancelAnimationFrame(loop);
+      animate();
+    }
+    function startForward() {
+      syncOther();
+      return Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
+        .then(() => { $('play').textContent = 'Pause preview'; startLoop(); })
+        .catch(error => { stopPlayback(); status(`Preview failed: ${error.message}`, true); });
     }
     $('play').addEventListener('click', () => {
       if (!clip) return;
-      if (!video.paused) { stopPlayback(); return; }
-      if (time() < start() || time() >= end() - 0.001) video.currentTime = start();
-      syncOther();
-      Promise.all([video.play(), ...(options.mode?.() === 'both' ? [otherVideo.play()] : [])])
-        .then(() => { $('play').textContent = 'Pause preview'; animate(); })
-        .catch(error => { stopPlayback(); status(`Preview failed: ${error.message}`, true); });
+      if (!video.paused || reverse) { stopPlayback(); return; }
+      flushSeek(true);
+      // Scrubbing to the end parks one millisecond short of it, so anywhere in the last frame counts as the end.
+      if (time() < start() || time() >= end() - 1.5 / clip.fps) video.currentTime = start();
+      rewinds = activeRewinds();
+      consumed = new Set(rewinds.filter(value => value.span.turn < time() - base() - 0.5 / clip.fps).map(value => value.source));
+      startForward();
     });
     $('time').addEventListener('input', () => seek(Number($('time').value)));
-    $('back').addEventListener('click', () => seek(time() - base() - 1 / clip.fps));
-    $('forward').addEventListener('click', () => seek(time() - base() + 1 / clip.fps));
+    $('mark-play-snap').addEventListener('click', () => {
+      if (!frameReady()) {
+        status('Wait for the selected frame to finish loading before marking the snap.', true);
+        return;
+      }
+      stopPlayback();
+      return savePlaySnap(time() - base());
+    });
+    $('clear-play-snap').addEventListener('click', () => savePlaySnap(null));
+    $('go-play-snap').addEventListener('click', () => {
+      const value = clip && options.getSnap?.(clip);
+      if (value) seek(value.time);
+    });
+    for (const boundary of ['start', 'end']) $('trim-' + boundary).addEventListener('input', () => {
+      if (!clip || options.isExporting?.()) return;
+      const frame = 1 / clip.fps;
+      const value = Number($('trim-' + boundary).value);
+      if (!Number.isFinite(value)) return;
+      const snapped = value >= clip.len - frame / 2 ? clip.len : Math.round(value * clip.fps) / clip.fps;
+      if (boundary === 'start') {
+        clip.trim = Math.max(0, Math.min(snapped, clip.len - (clip.trimEnd ?? 0) - frame));
+      } else {
+        const endTime = Math.min(clip.len, Math.max(snapped, clip.trim + Math.min(frame, clip.len - clip.trim)));
+        clip.trimEnd = clip.len - endTime;
+      }
+      clip.trimEdited = true;
+      syncTrimHandles();
+      syncControls();
+      seek(boundary === 'start' ? clip.trim : Math.max(clip.trim, clip.len - (clip.trimEnd ?? 0) - 0.001));
+      options.onTrim?.(clip);
+    });
+    $('back').addEventListener('click', () => { if (clip) seek((pendingSeek ?? time() - base()) - 1 / clip.fps); });
+    $('forward').addEventListener('click', () => { if (clip) seek((pendingSeek ?? time() - base()) + 1 / clip.fps); });
     $('review-stop').addEventListener('click', () => {
       const last = track()?.points.findLast(p => p.t >= start() && p.t < end());
       if (!last) return;
@@ -261,7 +466,7 @@
     });
     canvas.addEventListener('click', event => {
       if (!clip || options.isClean() || video.readyState < 2 || $('tool').value === 'overlay') return;
-      if (video.seeking || options.mode?.() === 'both' && otherVideo.seeking) {
+      if (!frameReady()) {
         status('Wait for the selected video frame to finish loading before placing a player.', true);
         return;
       }
@@ -324,6 +529,7 @@
       syncControls(); persist(); loadPhoto(); draw();
     });
     function setSnap(value) {
+      if (options.saveSnap) return savePlaySnap(value === null ? null : value - base(), true);
       ensureTrack().snap = value;
       syncControls(); persist(); draw();
     }
@@ -476,7 +682,10 @@
     $('angle').addEventListener('change', () => select(clip, true));
 
     function select(next, preserveTime = false) {
-      const relative = clip && next === clip && preserveTime ? Math.max(0, time() - base()) : next?.trim || 0;
+      const relative = clip && next === clip && preserveTime ? Math.max(0, pendingSeek ?? time() - base()) : next?.trim || 0;
+      if (seekFrame !== null) cancelAnimationFrame(seekFrame);
+      seekFrame = pendingSeek = null;
+      requestedTime = relative;
       stopPlayback();
       if (next && job && saveKey(next) === saveKey(job.clip)) next.highlights = job.clip.highlights;
       clip = next;
@@ -493,12 +702,11 @@
       photoRevision++;
       $('editor').hidden = !clip;
       setBusy(busy);
+      syncTrimHandles();
       if (!clip) return;
       $('time').max = clip.len;
-      $('time').value = relative;
       $('time').step = 1 / clip.fps;
-      $('time').style.setProperty('--trim-start', `${clip.trim / clip.len * 100}%`);
-      $('time').style.setProperty('--trim-end', `${(clip.len - (clip.trimEnd ?? 0)) / clip.len * 100}%`);
+      updateTime(relative);
       $('player').replaceChildren(new Option('Custom name / no roster identity', ''));
       playerChoices = options.players(clip);
       for (const p of playerChoices) $('player').add(new Option(`${p.team || ''} ${p.number ? '#' + p.number : ''} ${p.name || p.id}`, p.id));
@@ -509,7 +717,7 @@
       $('player').value = track()?.id || '';
       syncControls();
       if (video.src !== clip.url) video.src = clip.url;
-      else seek(relative);
+      else { seek(relative); flushSeek(true); }
       if (otherVideo.src !== clip.url) otherVideo.src = clip.url;
       else syncOther();
       status(busy ? 'Tracking continues in the background. You can preview, edit, or close Share.'
@@ -521,10 +729,11 @@
     return {
       select,
       relativeTime: () => clip ? Math.max(0, time() - base()) : 0,
-      ready: () => !!clip && video.readyState >= 2 && !video.seeking && (options.mode?.() !== 'both' || otherVideo.readyState >= 2 && !otherVideo.seeking),
+      ready: frameReady,
       busy: () => busy,
       pause: stopPlayback,
-      refresh: () => { $('controls').disabled = !clip || options.isClean(); syncThemeControls(); draw(); },
+      closeRewind: () => rewindTimeline.close(true),
+      refresh: () => { $('controls').disabled = !clip || options.isClean(); syncTrimHandles(); syncThemeControls(); draw(); },
       async export(clips, mode, appearance, centered) {
         if (busy) throw new Error('Finish or cancel background player tracking before exporting highlights.');
         await saving;

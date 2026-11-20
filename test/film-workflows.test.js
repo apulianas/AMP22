@@ -107,6 +107,18 @@ async function exerciseWorkflows({ app, win }) {
     assert.ok(Math.abs(await js('vidA().currentTime - S.range.aStart')) < 0.001);
     assert.ok(Math.abs(await js('vidB().currentTime - S.range.bStart')) < 0.001);
   }
+  const space = () => {
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+  };
+  assert.equal(await js(`vidA().paused && Number($('scrub').value) === 0`), true, 'the timeline starts at zero before first playback');
+  await js(`$('scrub').focus()`);
+  space();
+  await until(`S.playing && !vidA().paused && !vidB().paused`);
+  space();
+  await until(`!S.playing && vidA().paused && vidB().paused`);
+  await js(`seekRel(0)`);
+  await until(settled);
   assert.equal(await js(`$('film-setup').hidden`), true);
   assert.equal(await js(`$('film-setup-toggle').hidden`), false);
   assert.equal(await js(`(() => {
@@ -174,6 +186,17 @@ async function exerciseWorkflows({ app, win }) {
   assert.equal(await js(`$('share-trim').value`), '0.25');
   assert.equal(await js(`$('share-overlay-seconds').value`), '1.75');
   await until(`!$('highlight-canvas').hidden && positionFrames !== null`);
+  assert.equal(await js(`$('highlight-video').paused &&
+    Math.abs(Number($('highlight-time').value) - S.exportDraft.clips[0].trim) <= 0.5 / S.exportDraft.clips[0].fps + 0.000001`),
+    true, 'the initial preview playhead is at the retained start without pressing Play');
+  await js(`$('highlight-mark-play-snap').focus()`);
+  space();
+  await until(`!$('highlight-video').paused`);
+  assert.equal(await js('S.playing'), false, 'Space in the preview does not start Film Room behind the dialog');
+  space();
+  await until(`$('highlight-video').paused`);
+  await js(`$('highlight-time').value = S.exportDraft.clips[0].trim; $('highlight-time').dispatchEvent(new Event('input'))`);
+  await until(`highlightEditor.ready()`);
   assert.equal(await js(`document.querySelectorAll('#share canvas').length`), 1, 'all editing uses one video canvas');
   assert.equal(await js(`$('highlight-section').open`), false, 'player controls do not have to be open to preview');
   assert.equal(await js(`(() => {
@@ -256,8 +279,9 @@ async function exerciseWorkflows({ app, win }) {
   const originalLength = await js(`S.exportDraft.clips[0].len`);
   assert.equal(await js(`Number($('highlight-time').max)`), originalLength);
   assert.ok(Math.abs(await js(`trimmedExportClips()[0].len`) - (originalLength - 0.75)) < 1e-9);
-  assert.ok(await js(`Number.parseFloat($('highlight-time').style.getPropertyValue('--trim-start')) > 0`));
-  assert.ok(await js(`Number.parseFloat($('highlight-time').style.getPropertyValue('--trim-end')) < 100`));
+  const trimStop = name => js(`Number($('highlight-time').style.getPropertyValue('${name}').match(/\\* ([\\d.]+)\\)$/)?.[1])`);
+  assert.ok(await trimStop('--trim-start') > 0);
+  assert.ok(await trimStop('--trim-end') < 1);
   for (const mode of ['sideline', 'endzone', 'both', 'sideline-first', 'endzone-first']) {
     await js(`$('share-angle').value = '${mode}'; $('share-angle').dispatchEvent(new Event('change'));`);
     await until(`positionFrames?.mode === '${mode}' && highlightEditor.ready()`);

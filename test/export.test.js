@@ -6,9 +6,18 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const { clipRange, trimRange, exportSequence, selectedIndices, selectionRange, safeFilename, exportFilename, dimensions, overlayPosition, overlayBounds } = require('../src/shared/export');
-const { validateRequest, segmentArgs, exportClips } = require('../src/main/export');
-const { run, probe, previewFrame } = require('../src/main/media');
-const { ffmpegPath } = require('../src/main/ffpaths');
+const { validateRequest, segmentArgs, rewindArgs, frameAlignedClip, exportClips } = require('../src/main/export');
+const { run, probe, frameStart, previewFrame } = require('../src/main/media');
+const { ffmpegPath, ffprobePath } = require('../src/main/ffpaths');
+const { suggestedDuration } = require('../src/shared/export');
+
+test('duration suggestions require three actual edits and use a recent median robust to outliers', () => {
+  assert.equal(suggestedDuration(), null);
+  assert.equal(suggestedDuration([7, 8, null, '7', -1]), null);
+  assert.equal(suggestedDuration([7, 7.5, 8]), 7.5);
+  assert.equal(suggestedDuration([7, 7.5, 8, 60]), 7.75);
+  assert.equal(suggestedDuration([...Array(30).fill(60), ...Array(30).fill(7.5)]), 7.5);
+});
 
 function cardHeader(mode) {
   const { width, height } = dimensions(mode);
@@ -80,6 +89,26 @@ test('combined decimal trims retain source starts and crop the end in all export
       assert.equal(args[args.indexOf('-t') + 1], '2.000000');
       assert.match(args[args.indexOf('-filter_complex') + 1], /enable='lt\(t,0.5\)'/);
     }
+  }
+});
+
+test('exports seek to the frame shown at each trim start while keeping the trim end', () => {
+  const range = { aStart: 10.01, bStart: 20.005, len: 2 };
+  const both = frameAlignedClip(range, 'both', { aStart: 10, bStart: 20 }, 30);
+  assert.ok(Math.abs(both.aStart - 9.9995) < 1e-9 && Math.abs(both.bStart - 19.9995) < 1e-9);
+  assert.ok(Math.abs(both.aStart + both.aLen - 12.01) < 1e-9 && Math.abs(both.bStart + both.bLen - 22.005) < 1e-9);
+  const args = segmentArgs('/film.mp4', both, 'both', true, 30, true);
+  const inputs = args.flatMap((arg, i) => arg === '-ss' ? [[args[i + 1], args[i + 3]]] : []);
+  assert.deepEqual(inputs, [['9.999500', '2.010500'], ['19.999500', '2.005500']]);
+  assert.equal(args[args.lastIndexOf('-t') + 1], (61 / 30 + 0.0005).toFixed(6), 'output keeps the partial first and last frames');
+  assert.ok(Math.abs(frameAlignedClip({ ...range, aStart: 10 }, 'sideline', { aStart: 10 }, 30).len - 2.0005) < 1e-9);
+  const endzone = frameAlignedClip(range, 'endzone', { bStart: 20 }, 30);
+  assert.equal(endzone.aStart, range.aStart);
+  const endzoneArgs = segmentArgs('/film.mp4', endzone, 'endzone', true, 30, true);
+  assert.equal(endzoneArgs[endzoneArgs.indexOf('-ss') + 1], '19.999500');
+  for (const shown of [{}, { aStart: null }, { aStart: 10.02 }, { aStart: 8 }]) {
+    const unchanged = frameAlignedClip(range, 'sideline', shown);
+    assert.deepEqual([unchanged.aStart, unchanged.len], [range.aStart, range.len]);
   }
 });
 
@@ -250,6 +279,12 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
     await fs.writeFile(previewPath, Buffer.from(preview.split(',')[1], 'base64'));
     assert.ok(isBlue(await frame(previewPath, 0, 100, 100)));
     await assert.rejects(previewFrame(file, 999), /No preview/);
+    assert.ok(Math.abs(await frameStart(file, 0.25) - 0.2) < 1e-6);
+    const firstFrame = path.join(temp, 'first-frame.mp4');
+    await exportClips({ file, mode: 'sideline', clean: true, clips: [trimRange({ aStart: 0, bStart: 4.5, len: 1 }, 0.25)] }, firstFrame);
+    const { stdout: frames } = await run(ffprobePath(), ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+      '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', firstFrame]);
+    assert.equal(Number(frames.trim()), 8, 'the frame shown at 0.25s through the trim end');
     for (const mode of ['sideline-first', 'endzone-first']) {
       const output = path.join(temp, `${mode}.mp4`);
       await exportClips({ file, mode, clean: true, clips: [
@@ -272,7 +307,7 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
       const after = await frame(output, 0.8, x, y);
       assert.ok(mode === 'both' ? after.every((v) => v < 40) : mode.startsWith('endzone') ? isBlue(after) : isRed(after));
       const info = await probe(output);
-      assert.ok(Math.abs(info.duration - (mode.endsWith('-first') ? 2 : 1)) < 0.15, `${mode}: both trims determine duration`);
+      assert.ok(Math.abs(info.duration - (mode.endsWith('-first') ? 2 : 1)) < 0.25, `${mode}: both trims determine duration`);
       if (mode.endsWith('-first')) {
         assert.ok((await frame(output, 1.2, x, y)).every(v => v > 220), 'overlay starts again at the second retained angle');
         assert.ok((mode === 'sideline-first' ? isBlue : isRed)(await frame(output, 1.8, x, y)));
@@ -377,6 +412,138 @@ test('native export: angles, 9:16 stacking, lower third timing, ordering, audio 
     }), /exited/);
     assert.equal(await fs.readFile(existing, 'utf8'), 'keep existing destination');
     assert.ok(!(await fs.readdir(temp)).some((name) => name.startsWith('.a22-export-')));
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+const rewinds = require('../src/shared/rewind');
+
+test('rewind plans replay the rewound footage once and resume from it, even when rewinds overlap', () => {
+  const fps = 20;
+  const plan = rewinds.plan([
+    { at: 3, seconds: 1, speed: 2 },
+    { at: 2, seconds: 1, speed: 1 },
+    { at: 3.5, seconds: 2, speed: 2 },
+  ], fps, 100);
+  assert.deepEqual(plan, [
+    { kind: 'forward', from: 0, to: 40 },
+    { kind: 'reverse', from: 19, to: 39, speed: 1 },
+    { kind: 'forward', from: 20, to: 60 },
+    { kind: 'reverse', from: 39, to: 59, speed: 2 },
+    { kind: 'forward', from: 40, to: 70 },
+    { kind: 'reverse', from: 29, to: 69, speed: 2 },
+    { kind: 'forward', from: 30, to: null },
+  ]);
+  assert.ok(Math.abs(rewinds.outputSeconds([{ at: 2, seconds: 1, speed: 2 }], fps, 100) - (40 + 10 + 80) / fps) < 1e-9);
+  assert.deepEqual(rewinds.plan([{ at: 0.05, seconds: 1, speed: 2 }], fps, 100), [{ kind: 'forward', from: 0, to: null }]);
+});
+
+test('new rewinds default to 2.5 seconds or the start of the trimmed play and keep one colour each', () => {
+  const fps = 20;
+  const first = rewinds.create([], 5, 0, fps);
+  assert.deepEqual([first.seconds, first.speed, first.color], [2.5, 2, 0]);
+  assert.equal(rewinds.create([], 1.5, 0.5, fps).seconds, 0.95);
+  assert.throws(() => rewinds.create([], 0.5, 0.5, fps), /footage before/);
+  const second = rewinds.create([first], 5, 0, fps);
+  const third = rewinds.create([first, second], 5, 0, fps);
+  assert.deepEqual([second.color, third.color], [1, 2]);
+  assert.equal(rewinds.create([first, third], 5, 0, fps).color, 1, 'a deleted rewind frees its colour');
+  assert.throws(() => rewinds.create(Array.from({ length: 6 }, (_v, i) => ({ color: i })), 5, 0, fps), /at most 6/);
+});
+
+test('trims reposition rewinds, shorten those that would reach removed film, and ignore those outside', () => {
+  const fps = 20;
+  const list = [{ at: 4, seconds: 2.5, speed: 2 }, { at: 1, seconds: 2.5, speed: 2 }, { at: 9, seconds: 1, speed: 2 }];
+  assert.deepEqual(rewinds.resolve(list, 0.5, 4, 10, fps), [
+    { at: 3.5, seconds: 2.5, speed: 2 },
+    { at: 0.5, seconds: 0.45, speed: 2 },
+  ]);
+  assert.deepEqual(rewinds.resolve(list, 0, 0, 10, fps).length, 3);
+});
+
+test('export requests validate rewinds for clean and annotated clips', () => {
+  const good = { at: 1, seconds: 1, speed: 2 };
+  assert.ok(validateRequest(request({ clean: true, clips: [{ ...clip, rewinds: [good] }] })));
+  for (const bad of [{ ...good, at: 0 }, { ...good, at: 3 }, { ...good, seconds: 0 }, { ...good, seconds: 7 }, { ...good, speed: 0.4 }, { ...good, speed: 5 }, { ...good, speed: NaN }, null]) {
+    assert.throws(() => validateRequest(request({ clean: true, clips: [{ ...clip, rewinds: [bad] }] })), /Invalid rewind/);
+  }
+  assert.throws(() => validateRequest(request({ clean: true, clips: [{ ...clip, rewinds: Array(7).fill(good) }] })), /at most 6/);
+  assert.throws(() => validateRequest(request({ clean: true, clips: [{ ...clip, rewinds: 'no' }] })), /at most 6/);
+});
+
+test('rewind passes read each piece with a frame-exact seek and join pieces on one frame grid', () => {
+  const plan = rewinds.plan([{ at: 3, seconds: 1, speed: 2 }, { at: 3.5, seconds: 1, speed: 0.5 }], 20, 100);
+  const args = rewindArgs('/base.mkv', 20, plan, false, 3);
+  const inputs = args.flatMap((value, i) => value === '-i' ? [args[i + 1]] : []);
+  assert.equal(inputs.filter(value => value === '/base.mkv').length, plan.length);
+  assert.deepEqual(inputs.slice(-1), ['card.png']);
+  assert.deepEqual(args.slice(args.indexOf('-ss'), args.indexOf('-ss') + 4), ['-ss', '0.000000', '-t', '3.000000']);
+  const filter = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(filter.includes('[1:v]setpts=(PTS-STARTPTS)/2,fps=20,reverse,setpts=N/(20*TB),settb=AVTB[v1]'));
+  assert.ok(filter.includes('[1:a]areverse,atempo=2,'));
+  assert.ok(filter.includes('reverse,setpts=(PTS-STARTPTS)/0.5,fps=20,setpts=N/(20*TB),settb=AVTB'), 'slow motion reverses before stretching');
+  assert.equal(filter.includes('apad'), false);
+  assert.ok(filter.includes(`concat=n=${plan.length}:v=1:a=1`));
+  assert.ok(filter.includes(`[${plan.length}:v]overlay=0:0:eof_action=repeat:enable='lt(t,3)'`));
+  assert.equal(rewindArgs('/base.mkv', 20, plan, true).includes('card.png'), false);
+  const intermediate = segmentArgs('/film.mp4', clip, 'sideline', true, 20, false, 3, undefined, [], true);
+  assert.equal(intermediate.includes('card.png'), false);
+  assert.equal(intermediate[intermediate.indexOf('-filter_complex') + 1].includes('overlay='), false);
+  assert.ok(intermediate.includes('pcm_s16le'));
+});
+
+test('native export: rewinds play forward, backward at speed, then forward again with the card on the final timeline', {
+  skip: process.env.A22_TEST_EXPORT !== '1',
+  timeout: 180000,
+}, async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'a22-rewind-test-'));
+  try {
+    const file = path.join(temp, 'source.mp4');
+    // Every frame is a flat grey that identifies it, so the output's frame order can be read back.
+    await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', 'color=black:s=320x180:r=20:d=4,geq=lum=\'20+N*2.8\':cb=128:cr=128',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=4', '-c:v', 'libx264', '-crf', '12', '-pix_fmt', 'yuv420p', '-c:a', 'aac', file]);
+    const levels = async (filePath) => {
+      const { stdout } = await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-i', filePath, '-an',
+        '-vf', 'crop=2:2:100:60,scale=1:1', '-pix_fmt', 'gray', '-f', 'rawvideo', 'pipe:1'], { binary: true });
+      return [...stdout];
+    };
+    const reference = await levels(file);
+    const indices = async (filePath) => (await levels(filePath)).map(level => {
+      let best = 0;
+      reference.forEach((value, i) => { if (Math.abs(value - level) < Math.abs(reference[best] - level)) best = i; });
+      return best;
+    });
+    const clean = path.join(temp, 'clean.mp4');
+    await exportClips({ file, mode: 'sideline', clean: true, clips: [
+      { aStart: 0, bStart: 0, len: 3, rewinds: [{ at: 2, seconds: 1, speed: 2 }] },
+    ] }, clean);
+    const order = await indices(clean);
+    const turn = order.findIndex((value, i) => i && value < order[i - 1]);
+    assert.deepEqual(order.slice(0, turn), Array.from({ length: 40 }, (_v, i) => i), 'forward to the rewind point');
+    const back = order.slice(turn, order.findIndex((value, i) => i > turn && value > order[i - 1]));
+    assert.deepEqual(back, [37, 35, 33, 31, 29, 27, 25, 23, 21, 19], 'backward at 2x skips every other frame');
+    const resumed = order.slice(turn + back.length);
+    assert.deepEqual(resumed, Array.from({ length: 40 }, (_v, i) => 20 + i), 'forward again from the rewound frame to the end');
+    const info = await probe(clean);
+    assert.ok(Math.abs(info.duration - order.length / 20) < 0.06 && info.hasAudio && info.fps > 19.9 && info.fps < 20.1);
+
+    const png = path.join(temp, 'card.png');
+    await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-f', 'lavfi', '-i',
+      'color=black@0:s=1920x1080,format=rgba,drawbox=x=0:y=760:w=iw:h=ih:color=white:t=fill:replace=1', '-frames:v', '1', png]);
+    const card = `data:image/png;base64,${(await fs.readFile(png)).toString('base64')}`;
+    const carded = path.join(temp, 'carded.mp4');
+    const progress = [];
+    await exportClips({ file, mode: 'sideline', overlaySeconds: 0.5, clips: [
+      { aStart: 0, bStart: 0, len: 3, rewinds: [{ at: 2, seconds: 1, speed: 1 }, { at: 1, seconds: 0.5, speed: 2 }], card },
+    ] }, carded, { onProgress: p => progress.push(p.fraction) });
+    const strip = async (t) => (await run(ffmpegPath(), ['-hide_banner', '-v', 'error', '-ss', String(t), '-i', carded, '-frames:v', '1',
+      '-vf', 'crop=2:2:800:900,scale=1:1', '-pix_fmt', 'gray', '-f', 'rawvideo', 'pipe:1'], { binary: true })).stdout[0];
+    assert.ok(await strip(0.2) > 220, 'card shows at the start of the output');
+    assert.ok(await strip(1.5) < 200, 'and ends by the requested output time');
+    assert.deepEqual([...progress].sort((a, b) => a - b), progress);
+    assert.equal(progress.at(-1), 1);
+    assert.ok(!(await fs.readdir(temp)).some(name => name.startsWith('.a22-export-')));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
