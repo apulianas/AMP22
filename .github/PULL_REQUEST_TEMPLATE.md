@@ -12,4 +12,7 @@
 
 ## Validation
 
+- [ ] Evaluated whether this PR's changes require new or updated tests, fixtures, or assertions; made the needed updates, or explained why none are needed.
+- [ ] Ran the relevant tests and recorded the results and any limitations below.
+
 <!-- Describe the checks performed and any limitations. -->
