@@ -129,7 +129,9 @@ test('CI verifies every Electron target against the locked package checksum mani
     assert.match(config.electronDownload.checksums[`electron-v${version}-${target}.zip`], /^[a-f0-9]{64}$/);
   }
   assert.equal(config.electronDownload.unsafelyDisableChecksums, undefined);
-  assert.equal(config.mac.identity, '-');
+  assert.equal(config.mac.identity, undefined);
+  assert.equal(config.mac.type, 'distribution');
+  assert.equal(config.mac.hardenedRuntime, true);
   assert.equal(config.mac.strictVerify, true);
   assert.deepEqual(config.asarUnpack, require('../package.json').build.asarUnpack);
 });
