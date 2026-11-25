@@ -18,27 +18,31 @@ function verifySignature(file, execute = run) {
   execute('codesign', ['--verify', '--deep', '--strict', '--verbose=2', file]);
   // codesign writes signature details to stderr, even on success.
   const details = execute('codesign', ['--display', '--verbose=4', file]);
-  assert.match(details, /^Signature=adhoc$/m, 'Expected an ad-hoc signature');
-  assert.doesNotMatch(details, /^CodeDirectory .*\bflags=.*\bruntime\b/m,
-    'Ad-hoc builds must not enable hardened runtime/library validation');
+  assert.match(details, /^Authority=Developer ID Application: .+$/m, 'Expected a Developer ID Application signature');
+  assert.match(details, /^TeamIdentifier=[A-Z0-9]{10}$/m, 'Expected an Apple Team ID');
+  assert.match(details, /^CodeDirectory .*\bflags=.*\bruntime\b/m, 'Expected hardened runtime (required for notarization)');
+  return details.match(/^TeamIdentifier=(.+)$/m)[1];
 }
 
 function verifyApp(app, arch, execute = run) {
-  verifySignature(app, execute);
+  const team = verifySignature(app, execute);
   const contents = path.join(app, 'Contents');
   const media = path.join(contents, 'Resources/app.asar.unpacked/node_modules');
-  for (const binary of [
+  const binaries = [
     path.join(contents, 'MacOS/AMP22'),
     path.join(media, 'ffmpeg-static/ffmpeg'),
     path.join(media, '@derhuerst/ffprobe-static/ffprobe'),
-  ]) {
-    verifySignature(binary, execute);
-  }
+  ];
+  if (arch === 'arm64') binaries.push(path.join(contents, 'Resources/native/amp22-foundation-models'));
   for (const name of fs.readdirSync(path.join(contents, 'Frameworks'))) {
-    if (name.endsWith('.app') || name.endsWith('.framework')) {
-      verifySignature(path.join(contents, 'Frameworks', name), execute);
-    }
+    if (name.endsWith('.app') || name.endsWith('.framework')) binaries.push(path.join(contents, 'Frameworks', name));
   }
+  for (const binary of binaries) {
+    assert.equal(verifySignature(binary, execute), team, `${path.basename(binary)} is signed by a different team`);
+  }
+  execute('xcrun', ['stapler', 'validate', app]);
+  const assessment = execute('spctl', ['--assess', '--type', 'execute', '--verbose=4', app]);
+  assert.match(assessment, /source=Notarized Developer ID/, 'Gatekeeper did not accept the app as notarized');
 }
 
 function verifyRelease(arch, execute = run) {
@@ -61,7 +65,7 @@ if (require.main === module) {
   try {
     assert.equal(process.platform, 'darwin', 'macOS release verification must run on macOS');
     verifyRelease(process.argv[2]);
-    console.log('DMG contents passed strict ad-hoc signature checks, including Electron helpers and media tools. This is not Apple notarization.');
+    console.log('DMG app is Developer ID signed (hardened runtime, one Team ID across helpers and media tools), notarized, stapled, and accepted by Gatekeeper.');
   } catch (error) {
     console.error(error.stderr?.toString() || error.message);
     process.exitCode = 1;
