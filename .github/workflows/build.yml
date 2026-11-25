@@ -83,11 +83,37 @@ jobs:
         run: node scripts/download-ci-builder.js
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Package installer (ad-hoc signing on macOS)
-        run: npx electron-builder --config scripts/ci-builder-config.js --${{ matrix.target }} --${{ matrix.arch }} --publish never
+      - name: Check Developer ID signing and notarization secrets
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret $name is not available; macOS builds must be Developer ID signed and notarized."
+              exit 1
+            fi
+          done
+      - name: Package macOS DMG (Developer ID signed and notarized)
+        if: runner.os == 'macOS'
+        run: npx electron-builder --config scripts/ci-builder-config.js --mac --${{ matrix.arch }} --publish never
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          CSC_FOR_PULL_REQUEST: true
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Package Windows installer
+        if: runner.os == 'Windows'
+        run: npx electron-builder --config scripts/ci-builder-config.js --win --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          CSC_FOR_PULL_REQUEST: true
       - name: Verify packaged macOS architectures and media tools
         if: runner.os == 'macOS'
         shell: bash
@@ -115,7 +141,7 @@ jobs:
           fi
           "$ffmpeg" -version > /dev/null
           "$ffprobe" -version > /dev/null
-      - name: Verify ad-hoc signature of the app shipped in the DMG
+      - name: Verify Developer ID signature and notarization of the app shipped in the DMG
         if: runner.os == 'macOS'
         run: node scripts/verify-mac-release.js "${{ matrix.arch }}"
       - uses: actions/upload-artifact@v4

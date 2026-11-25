@@ -12,12 +12,22 @@ const { verifySignature, verifyApp, verifyRelease } = require('../scripts/verify
 const { notice, addNotice } = require('../scripts/mac-release-notice');
 
 const root = path.join(__dirname, '..');
-const signature = 'CodeDirectory v=20400 size=123 flags=0x2(adhoc) hashes=3+2 location=embedded\nSignature=adhoc\n';
+const signature = 'CodeDirectory v=20500 size=123 flags=0x10000(runtime) hashes=3+2 location=embedded\n'
+  + 'Authority=Developer ID Application: Example Developer (ABCDE12345)\nAuthority=Developer ID Certification Authority\n'
+  + 'Authority=Apple Root CA\nTeamIdentifier=ABCDE12345\n';
+const fakeTools = (verified = []) => (command, args) => {
+  if (command === 'spctl') return 'AMP22.app: accepted\nsource=Notarized Developer ID\n';
+  if (command === 'xcrun') return 'The validate action worked!\n';
+  assert.equal(command, 'codesign');
+  if (args.includes('--verify')) verified.push(args.at(-1));
+  return signature;
+};
 
-test('macOS uses free ad-hoc signing without hardened runtime or notarization', () => {
-  assert.equal(config.build.mac.identity, '-');
-  assert.equal(config.build.mac.hardenedRuntime, false);
-  assert.equal(config.build.mac.notarize, false);
+test('macOS uses Developer ID distribution signing with hardened runtime and notarization', () => {
+  assert.equal(config.build.mac.identity, undefined);
+  assert.equal(config.build.mac.type, 'distribution');
+  assert.equal(config.build.mac.hardenedRuntime, true);
+  assert.equal(config.build.mac.notarize, undefined);
   assert.equal(config.build.mac.strictVerify, true);
   assert.equal(config.build.mac.signIgnore, undefined);
   assert.deepEqual(config.build.asarUnpack, ['node_modules/ffmpeg-static/**', 'node_modules/@derhuerst/ffprobe-static/**']);
@@ -25,7 +35,7 @@ test('macOS uses free ad-hoc signing without hardened runtime or notarization', 
   assert.equal(config.build.win.target[0].target, 'nsis');
 });
 
-test('signature verification is strict and rejects missing/ad-hoc hardened signatures', () => {
+test('signature verification is strict and rejects ad-hoc, non-Developer ID, and non-hardened signatures', () => {
   const calls = [];
   verifySignature('/AMP22.app', (command, args) => {
     calls.push([command, args]);
@@ -33,12 +43,15 @@ test('signature verification is strict and rejects missing/ad-hoc hardened signa
   });
   assert.deepEqual(calls[0], ['codesign', ['--verify', '--deep', '--strict', '--verbose=2', '/AMP22.app']]);
   assert.deepEqual(calls[1], ['codesign', ['--display', '--verbose=4', '/AMP22.app']]);
-  assert.throws(() => verifySignature('/AMP22.app', () => ''), /ad-hoc signature/);
-  assert.throws(() => verifySignature('/AMP22.app', () => signature.replace('0x2(adhoc)', '0x10002(adhoc,runtime)')), /hardened runtime/);
+  assert.equal(verifySignature('/AMP22.app', () => signature), 'ABCDE12345');
+  assert.throws(() => verifySignature('/AMP22.app', () => 'CodeDirectory flags=0x2(adhoc)\nSignature=adhoc\n'), /Developer ID Application/);
+  assert.throws(() => verifySignature('/AMP22.app', () => signature.replace('Developer ID Application', 'Apple Development')), /Developer ID Application/);
+  assert.throws(() => verifySignature('/AMP22.app', () => signature.replace('TeamIdentifier=ABCDE12345', 'TeamIdentifier=not set')), /Team ID/);
+  assert.throws(() => verifySignature('/AMP22.app', () => signature.replace('0x10000(runtime)', '0x0(none)')), /hardened runtime/);
   assert.throws(() => verifySignature('/AMP22.app', () => { throw new Error('invalid resource seal'); }), /invalid resource seal/);
 });
 
-test('checks main executable, both media tools, Electron helpers and frameworks for each architecture', (t) => {
+test('checks executable, media tools, native helper, Electron helpers/frameworks, stapling and Gatekeeper', (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'amp22-signatures-test-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const app = path.join(temp, 'AMP22.app');
@@ -49,18 +62,25 @@ test('checks main executable, both media tools, Electron helpers and frameworks 
   }
   for (const arch of ['arm64', 'x64']) {
     const verified = [];
-    verifyApp(app, arch, (command, args) => {
-      assert.equal(command, 'codesign');
-      if (args.includes('--verify')) verified.push(args.at(-1));
-      return signature;
-    });
-    assert.equal(verified.length, 7);
+    const calls = [];
+    const tools = fakeTools(verified);
+    verifyApp(app, arch, (command, args) => { calls.push(command); return tools(command, args); });
+    assert.equal(verified.length, arch === 'arm64' ? 8 : 7);
+    assert.equal(verified.includes(path.join(app, 'Contents/Resources/native/amp22-foundation-models')), arch === 'arm64');
+    assert.deepEqual(calls.slice(-2), ['xcrun', 'spctl']);
     assert.ok(verified.includes(app));
     assert.ok(verified.includes(path.join(app, 'Contents/MacOS/AMP22')));
     assert.ok(verified.includes(path.join(app, 'Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg')));
     assert.ok(verified.includes(path.join(app, 'Contents/Resources/app.asar.unpacked/node_modules/@derhuerst/ffprobe-static/ffprobe')));
     assert.ok(verified.includes(path.join(frameworks, 'AMP22 Helper (Renderer).app')));
   }
+  const tools = fakeTools();
+  assert.throws(() => verifyApp(app, 'x64', (command, args) => (command === 'spctl' ? 'source=Unnotarized Developer ID\n' : tools(command, args))),
+    /notarized/);
+  assert.throws(() => verifyApp(app, 'x64', (command, args) => {
+    if (command === 'codesign' && args.at(-1).endsWith('ffmpeg') && args.includes('--display')) return signature.replace(/ABCDE12345/g, 'ZZZZZ99999');
+    return tools(command, args);
+  }), /different team/);
 });
 
 test('DMG verifier rejects unsupported architectures before mounting anything', () => {
@@ -72,12 +92,10 @@ test('release notice preserves existing notes and links and is idempotent', () =
   const updated = addNotice(body);
   assert.ok(updated.endsWith(body));
   assert.equal(addNotice(updated), updated);
-  assert.match(notice, /not Apple Developer ID signed or notarized/);
-  assert.match(notice, /only if you trust this official AMP22 GitHub release/);
-  assert.match(notice, /Terminal.*Applications > Utilities.*Spotlight/);
-  assert.match(notice, /xattr -dr com\.apple\.quarantine \/Applications\/AMP22\.app/);
-  assert.doesNotMatch(notice, /spctl --master-disable|sudo xattr/);
-  assert.match(notice, /Previously published installers are unchanged/);
+  assert.match(notice, /^### macOS installation$/m);
+  assert.match(notice, /signed with an Apple Developer ID and notarized by Apple/);
+  assert.match(notice, /arm64.*Apple Silicon.*x64.*Intel/);
+  assert.doesNotMatch(notice, /xattr|quarantine|Gatekeeper|ad-hoc|Terminal/);
   assert.match(notice, /does not have a trusted Windows code-signing certificate/);
   assert.match(notice, /Only if you trust this official AMP22 GitHub download/);
   assert.match(notice, /More info -> Run anyway/);
@@ -92,7 +110,7 @@ test('older mac-only release notes gain Windows guidance without duplicating or 
   const macOnly = `${notice.slice(0, windowsStart).trimEnd()}\n\n## What's Changed\n* Original feature\n`;
   const updated = addNotice(macOnly);
   assert.ok(updated.endsWith(macOnly));
-  assert.equal((updated.match(/^### macOS installation and Gatekeeper$/gm) || []).length, 1);
+  assert.equal((updated.match(/^### macOS installation$/gm) || []).length, 1);
   assert.equal((updated.match(/^### Windows installation and SmartScreen$/gm) || []).length, 1);
   assert.equal(addNotice(updated), updated);
   const windowsOnly = `${notice.slice(windowsStart)}\n* Custom Windows notes\n`;
@@ -102,10 +120,12 @@ test('older mac-only release notes gain Windows guidance without duplicating or 
 
 test('manually added notices with other heading levels are preserved without duplication', () => {
   for (const heading of ['##', '###']) {
-    const body = `${heading} macOS installation and Gatekeeper\n\n${notice.split('\n').slice(2).join('\n')}\n## What's Changed\nOriginal notes\n`;
-    assert.equal(addNotice(body), body);
+    for (const title of ['macOS installation', 'macOS installation and Gatekeeper']) {
+      const body = `${heading} ${title}\n\n${notice.split('\n').slice(2).join('\n')}\n## What's Changed\nOriginal notes\n`;
+      assert.equal(addNotice(body), body);
+    }
   }
-  const changelog = '* Updated ### macOS installation and Gatekeeper documentation';
+  const changelog = '* Updated ### macOS installation documentation';
   assert.ok(addNotice(changelog).endsWith(changelog));
   assert.ok(addNotice(changelog).startsWith(notice));
 });
@@ -191,11 +211,11 @@ switch (args[1]) {
     const rerun = execute();
     assert.equal(rerun.body, first.body);
     assert.deepEqual(rerun.calls.slice(first.calls.length), ['view', 'view', 'edit', 'upload']);
-    assert.equal((rerun.body.match(/^#{1,6} macOS installation and Gatekeeper$/gm) || []).length, 1);
+    assert.equal((rerun.body.match(/^#{1,6} macOS installation$/gm) || []).length, 1);
   }
 });
 
-test('release workflow requires explicit master dispatch and final DMG verification without any Apple secrets', () => {
+test('release workflow requires explicit master dispatch, Developer ID secrets on macOS only, and final DMG verification', () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/build.yml'), 'utf8');
   assert.match(workflow, /^  pull_request:/m);
   assert.match(workflow, /^  workflow_dispatch:/m);
@@ -217,9 +237,18 @@ test('release workflow requires explicit master dispatch and final DMG verificat
     }
     assert.match(checkout, /--notes-file release-notes\.md \\\r?\n\s+--generate-notes/);
   }
-  assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: false/);
-  assert.match(workflow, /CSC_FOR_PULL_REQUEST: true/);
-  assert.doesNotMatch(workflow, /secrets\.|pull_request_target|notarize-mac-release/);
+  assert.doesNotMatch(workflow, /pull_request_target/);
+  const mac = workflow.slice(workflow.indexOf('- name: Package macOS DMG'), workflow.indexOf('- name: Package Windows installer'));
+  const win = workflow.slice(workflow.indexOf('- name: Package Windows installer'), workflow.indexOf('- name: Verify packaged macOS'));
+  assert.match(mac, /if: runner\.os == 'macOS'/);
+  for (const name of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) assert.match(mac, new RegExp(`${name}: \\$\\{\\{ secrets\\.`));
+  assert.match(mac, /CSC_FOR_PULL_REQUEST: true/);
+  assert.doesNotMatch(mac, /CSC_IDENTITY_AUTO_DISCOVERY/);
+  assert.match(win, /if: runner\.os == 'Windows'/);
+  assert.match(win, /CSC_IDENTITY_AUTO_DISCOVERY: false/);
+  assert.doesNotMatch(win, /secrets\./);
+  assert.doesNotMatch(workflow, /APPLE_API_KEY/);
+  assert.ok(workflow.indexOf('Check Developer ID signing') < workflow.indexOf('- name: Package macOS DMG'));
   assert.ok(workflow.indexOf('node scripts/verify-mac-release.js') < workflow.indexOf('actions/upload-artifact'));
   assert.match(workflow, /needs: \[version, build, extension\]/);
   assert.match(workflow, /gh release view "\$tag" --json body > release-notes\.json/);

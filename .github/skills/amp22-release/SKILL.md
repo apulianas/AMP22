@@ -1,6 +1,6 @@
 ---
 name: amp22-release
-description: Prepare and publish an AMP22 release when the user explicitly requests one. Review every commit and PR since the last published release, write feature-focused bullet notes with macOS and Windows unsigned-installation disclosures, refresh README and genuine screenshots, and confirm the version before publishing.
+description: Prepare and publish an AMP22 release when the user explicitly requests one. Review every commit and PR since the last published release, write feature-focused bullet notes with the macOS installation notice and Windows unsigned-installation disclosure, refresh README and genuine screenshots, and confirm the version before publishing.
 ---
 
 # AMP22 release
@@ -70,11 +70,10 @@ a different version or reuse an existing tag for new code.
   `node scripts/mac-release-notice.js <notes-file>` adds the shared notices without
   duplicating them:
   - macOS: Apple Silicon `arm64` versus Intel `x64` DMG, drag AMP22 to Applications,
-    quit before upgrading. Free ad-hoc signing is **not** Apple Developer ID
-    signing or notarization and does not establish Apple trust. Describe
-    Gatekeeper blocking and the app-only quarantine command from the shared notice,
-    only for a trusted official download. Never disable Gatekeeper globally or
-    suggest blindly adding `sudo`.
+    quit before upgrading. Builds are Developer ID signed and notarized, so no
+    Gatekeeper workaround is needed; do not add quarantine-removal or "Open
+    Anyway" instructions. Claim notarization only after the workflow's
+    `verify-mac-release.js` step passed for both DMGs.
   - Windows PC: use the x64 `.exe` installer; no trusted code-signing certificate,
     so SmartScreen may report an unrecognized app/unknown publisher. Only for a
     trusted official GitHub download, use **More info -> Run anyway** if offered.

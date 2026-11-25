@@ -61,9 +61,8 @@
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "icon": "build/AMP22.icon",
       "category": "public.app-category.sports",
-      "identity": "-",
-      "hardenedRuntime": false,
-      "notarize": false,
+      "type": "distribution",
+      "hardenedRuntime": true,
       "strictVerify": true,
       "target": [
         "dmg"
