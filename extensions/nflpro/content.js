@@ -1,6 +1,7 @@
 (() => {
   'use strict';
   const api = typeof browser === 'undefined' ? chrome : browser;
+  if (globalThis.AMP22ContentLoaded) return;
   let active = null;
   let pending = Promise.resolve();
   const latest = new Map();
@@ -157,4 +158,5 @@
     }
     return true;
   });
+  globalThis.AMP22ContentLoaded = true;
 })();

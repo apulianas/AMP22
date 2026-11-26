@@ -9,6 +9,13 @@ async function currentTab() {
   const game = new URL(tab.url).searchParams.get('gameId');
   if (!game || !/^[a-zA-Z0-9-]{1,80}$/.test(game)) throw new Error('Select a single game first.');
   statusKey = `capture:${tab.id}:${game}`;
+  try {
+    await api.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'ISOLATED', files: ['participation.js', 'collector.js', 'content.js'],
+    });
+  } catch (error) {
+    throw new Error(`Could not load AMP22 in this NFL Pro tab. Allow the extension access to NFL Pro, reload the tab, and try again. ${error.message}`);
+  }
   return { tab, game, tabId: tab.id };
 }
 function render(value) {

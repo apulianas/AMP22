@@ -499,7 +499,7 @@ Collection requires NFL Pro access and permission to collect the data. The exten
 
 The NGS-filter screenshot above uses the genuine Jaguars v2 capture; the earlier player/preset screenshots use the original participation-only capture. A second genuine Chrome v2 capture, Week 4 Titans at Ravens, verifies coexistence with FTN: all 159 plays match uniquely, every pre-existing FTN value remains unchanged, and 29 plays have surfaced disagreements (23 motion, five play action, four alignment; some overlap). Its source-disagreement screenshot shows a real Shotgun/Pistol difference. Motion filtering follows retained FTN values, NGS pressure filtering matches 22 plays, and both export layouts retain the effective FTN values and NFL Pro alternatives. Matching and precedence are verified; these checks do not adjudicate which provider's differing charting is correct.
 
-Extension **0.3.0** writes **schema v2**, adding verified game/play-level NGS filters: alignment, motion, play action, blitz and pressure flags, box categories, and defensive personnel groups. It uses the same Film Room filter parameters exposed by [NFL Pro](https://pro.nfl.com/film/plays), with explicit positive and negative queries; a play missing from both remains blank. It does not infer a **No** from absence in a positive playlist, interpret receiver motion as general motion, or treat a receiver's screen route as a play-level screen tag. RPO, screen, no-huddle, backfield counts, exact box/rusher/blitzer counts, and coverage are not captured by this adapter.
+Extension **0.3.1** writes **schema v2**, adding verified game/play-level NGS filters: alignment, motion, play action, blitz and pressure flags, box categories, and defensive personnel groups. It uses the same Film Room filter parameters exposed by [NFL Pro](https://pro.nfl.com/film/plays), with explicit positive and negative queries; a play missing from both remains blank. It does not infer a **No** from absence in a positive playlist, interpret receiver motion as general motion, or treat a receiver's screen route as a play-level screen tag. RPO, screen, no-huddle, backfield counts, exact box/rusher/blitzer counts, and coverage are not captured by this adapter.
 
 Update the desktop app along with the extension: the updated app accepts both original **schema v1** participation CSVs and **v2** captures; older app versions reject v2 rather than silently dropping charting. Existing v1 CSVs cannot supply the new fields—recapture the game after reloading the extension and NFL Pro tab.
 
@@ -528,6 +528,8 @@ npm run build:extension
 4. Open your signed-in NFL Pro game and reload its page before capturing.
 
 Chrome and Edge developer installs do not require a store account or signing. Keep the extracted folder in a stable location; removing it breaks the unpacked installation. After replacing the files with an updated release, click the extension's **Reload** control on the extensions page and reload the NFL Pro tab.
+
+The popup now initializes its connection even when the NFL Pro tab was already open before installation or you navigated to Film Room without a full page reload. Opening it again preserves an active capture. If an older extension reports **Could not establish connection. Receiving end does not exist**, reload the extension and the NFL Pro tab, then reopen the popup. If loading is blocked, allow the extension access to NFL Pro in your browser's extension settings.
 
 #### Install temporarily in Safari (current macOS)
 
