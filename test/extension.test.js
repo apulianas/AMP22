@@ -38,10 +38,11 @@ function page(get, chartingGet = async () => ({ count: 0, plays: [] })) {
 }
 function content(download = async () => ({ supported: true, downloadId: 7 })) {
   const saved = {}, downloads = [], anchors = [];
+  const listeners = { page: 0, runtime: 0 };
   let receive, listen;
-  const window = { postMessage() {}, addEventListener(_name, callback) { receive = callback; } };
+  const window = { postMessage() {}, addEventListener(_name, callback) { listeners.page++; receive = callback; } };
   const chrome = { runtime: { id: 'extension', getManifest: () => ({ version: extensionVersion }),
-    onMessage: { addListener(callback) { listen = callback; } },
+    onMessage: { addListener(callback) { listeners.runtime++; listen = callback; } },
     async sendMessage(message) { downloads.push(message); return download(message); },
   }, storage: { local: {
     async get(key) { return { [key]: saved[key] }; },
@@ -60,7 +61,34 @@ function content(download = async () => ({ supported: true, downloadId: 7 })) {
     data: { channel: 'amp22-participation-v1', jobId: 'job-id', ...packet } });
   const command = (action, fields = {}) => new Promise((resolve) =>
     listen({ action, game: 'source-game', tabId: 4, ...fields }, { id: 'extension' }, resolve));
-  return { context, saved, downloads, anchors, send, command };
+  return { context, saved, downloads, anchors, listeners, send, command };
+}
+function popup({ tabUrl = url, injectionError = null, restoredStatus = null } = {}) {
+  const elements = new Map(), clicks = new Map(), injected = [], started = [], messages = [];
+  let connected = false;
+  const element = (id) => {
+    if (!elements.has(id)) elements.set(id, { addEventListener: (_event, callback) => clicks.set(id, callback), removeAttribute() {} });
+    return elements.get(id);
+  };
+  const context = vm.createContext({ URL,
+    document: { getElementById: element },
+    window: { AMP22Capture: { start: (id) => started.push(id) } },
+    chrome: { storage: { onChanged: { addListener() {} } }, tabs: {
+      async query() { return [{ id: 4, url: tabUrl }]; },
+      async sendMessage(_id, message) {
+        if (!connected) throw new Error('Could not establish connection. Receiving end does not exist.');
+        messages.push(message);
+        return message.action === 'prepare-game' ? { jobId: 'job-id' } : { status: restoredStatus };
+      },
+    }, scripting: { async executeScript(options) {
+      injected.push(options);
+      if (injectionError) throw new Error(injectionError);
+      if (options.world === 'ISOLATED' && options.files?.includes('content.js')) connected = true;
+      options.func?.(...options.args);
+    } } },
+  });
+  vm.runInContext(source('popup.js'), context);
+  return { elements, clicks, injected, started, messages };
 }
 
 test('browser extension includes correctly sized PNGs for its toolbar and installation icons', () => {
@@ -258,6 +286,24 @@ test('a completed authorized job downloads once, strips private fields, and stor
   assert.ok(!JSON.stringify(r.saved).includes('Fixture'));
 });
 
+test('reinjecting the content bridge preserves an active job, registers listeners once, and downloads only once', async () => {
+  const r = content();
+  await r.command('prepare-game');
+  r.send({ kind: 'progress', total: 1, completed: 1 });
+  const participationSource = fs.readFileSync(path.join(__dirname, '../src/shared/participation.js'), 'utf8');
+  for (let i = 0; i < 2; i++) {
+    for (const script of [participationSource, source('collector.js'), source('content.js')]) {
+      vm.runInContext(script, r.context);
+    }
+    assert.equal((await r.command('capture-status')).status.phase, 'capturing');
+    assert.match((await r.command('prepare-game')).error, /already running/);
+  }
+  assert.deepEqual(r.listeners, { page: 1, runtime: 1 });
+  r.send({ kind: 'complete', playIds: ['17'], rows: collector.participation(play(17), expanded(), url) });
+  assert.equal((await r.command('capture-status')).status.phase, 'complete');
+  assert.equal(r.downloads.length, 1);
+});
+
 test('missing participation, malformed progress, duplicate coverage, and cancelled jobs never download a CSV', async () => {
   for (const packet of [
     { kind: 'progress', completed: 3, total: 2 },
@@ -343,25 +389,49 @@ test('status-storage failures remain visible and do not permanently poison the n
 });
 
 test('the popup starts the complete game sweep with one button click and never asks for manual play visits or export', async () => {
-  const elements = new Map(), clicks = new Map(), injected = [], started = [];
-  const element = (id) => {
-    if (!elements.has(id)) elements.set(id, { addEventListener: (_event, callback) => clicks.set(id, callback), removeAttribute() {} });
-    return elements.get(id);
-  };
-  const context = vm.createContext({ URL,
-    document: { getElementById: element },
-    window: { AMP22Capture: { start: (id) => started.push(id) } },
-    chrome: { storage: { onChanged: { addListener() {} } }, tabs: {
-      async query() { return [{ id: 4, url }]; },
-      async sendMessage(_id, message) { return message.action === 'prepare-game' ? { jobId: 'job-id' } : {}; },
-    }, scripting: { async executeScript(options) { injected.push(options); options.func?.(...options.args); } } },
-  });
-  vm.runInContext(source('popup.js'), context);
+  const r = popup();
   await new Promise((resolve) => setImmediate(resolve));
-  await clicks.get('capture')();
-  assert.deepEqual(started, ['job-id']);
-  assert.equal(injected.length, 2);
+  assert.equal(r.elements.get('status').textContent, 'Ready to capture the entire game.');
+  await r.clicks.get('capture')();
+  assert.deepEqual(r.started, ['job-id']);
+  assert.deepEqual(r.injected.map(options => options.world), ['ISOLATED', 'ISOLATED', 'MAIN', 'MAIN']);
+  assert.deepEqual(Array.from(r.injected[0].files), ['participation.js', 'collector.js', 'content.js']);
+  assert.ok(r.injected.every(options => options.target.tabId === 4));
+  assert.deepEqual(r.messages.map(message => message.action), ['capture-status', 'prepare-game']);
   assert.ok(!/id="(?:start|stop|export|clear)"/.test(source('popup.html')));
+});
+
+test('opening the popup reconnects before restoring an active capture without restarting it', async () => {
+  const r = popup({ restoredStatus: { phase: 'capturing', message: 'Capturing 2/148', total: 148, completed: 2 } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(r.elements.get('status').textContent, 'Capturing 2/148');
+  assert.equal(r.elements.get('capture').disabled, true);
+  assert.equal(r.elements.get('cancel').hidden, false);
+  assert.equal(r.elements.get('progress').value, 2);
+  assert.equal(r.injected.length, 1);
+  assert.equal(r.started.length, 0);
+});
+
+test('blocked bridge injection gives recovery instructions and never prepares or starts a capture', async () => {
+  const r = popup({ injectionError: 'Cannot access contents of this page.' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await r.clicks.get('capture')();
+  assert.match(r.elements.get('status').textContent, /Allow the extension access to NFL Pro, reload the tab/);
+  assert.match(r.elements.get('status').textContent, /Cannot access contents of this page/);
+  assert.equal(r.elements.get('capture').disabled, false);
+  assert.equal(r.messages.length, 0);
+  assert.equal(r.started.length, 0);
+});
+
+test('the popup never injects into an unrelated page or an NFL Pro page without a selected game', async () => {
+  for (const tabUrl of ['https://example.com/film/plays?gameId=source-game', 'https://pro.nfl.com/film/plays']) {
+    const r = popup({ tabUrl });
+    await new Promise((resolve) => setImmediate(resolve));
+    await r.clicks.get('capture')();
+    assert.match(r.elements.get('status').textContent, /Open an NFL Pro game first|Select a single game first/);
+    assert.equal(r.injected.length, 0);
+    assert.equal(r.messages.length, 0);
+  }
 });
 
 test('validation names the failed field, value, play and row without disclosing names or descriptions', () => {
